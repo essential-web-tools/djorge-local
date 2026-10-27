@@ -70,9 +70,7 @@ def test_tree_runs_models_clock_and_confirmation(home, art):
     p = next(s for s in r["runs"][0]["trail"] if s["node"] == "p")
     assert p["answer"] is True and p["grounding"] == "temporal_rule"
     w = next(s for s in r["runs"][0]["trail"] if s["node"] == "w")
-    assert w["status"] == "aguardando confirmação"
-    out = app.actions.confirm(w["pending_id"], True)
-    assert out["status"] == "ok" and Path(out["file"]).read_text().strip() in ("cobrança", "outro")
+    assert w["status"] == "ok" and Path(w["file"]).read_text().strip() in ("cobrança", "outro")
     assert app.handle({"id": "2", "source": "teste", "text": "oi", "title": "", "app": "", "sender": ""}
                       )["runs"][0]["trail"][-1]["node"] == "fim"
 
@@ -173,3 +171,25 @@ def test_models_tab_endpoints(home, art):
     call("/api/models/remove", {"name": "extra"})
     assert "extra" not in yaml.safe_load((home / "config.yaml").read_text())["models"]
     s.shutdown()
+
+
+def test_settings_visual_and_sealed_models_are_shredded(home, art):
+    import yaml
+    (home / "config.yaml").write_text(yaml.safe_dump({"device": "cpu"}), encoding="utf-8")
+    os.environ["DJORGE_MODEL_KEY"] = "chave-de-teste-123"
+    from djorge_local import config as C
+    from djorge_local.app import App
+    cfg = C.load(str(home / "config.yaml")); app = App(cfg)
+    st = app.settings()
+    assert "token" not in st["server"] and st["connectors"]["folder"]["enabled"] is False
+    r = app.save_settings({"connectors": {"folder": {"paths": "~/a\n~/b", "poll_s": "5"}}, "max_steps": "30"})
+    raw = yaml.safe_load((home / "config.yaml").read_text())
+    assert raw["connectors"]["folder"]["paths"] == ["~/a", "~/b"] and raw["max_steps"] == 30 and r == []
+    with pytest.raises(ValueError):
+        app.save_settings({"max_steps": "muitos"})
+    out = app.models.import_folder("origo", art, app.save_config)
+    assert Path(out).is_file()
+    import djorge_local.models as M
+    z = app.models.get("origo")
+    assert not M._TMP and not any(Path(d).exists() for d in M._TMP)            # decrypted copy is gone
+    assert z.execute('NOUL "x" FROM t', sources={"t": "y"})["result"]["answer"] in (True, False)

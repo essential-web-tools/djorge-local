@@ -39,7 +39,7 @@ DEFAULTS = {
     },
     "extract": {"ocr": True, "ocr_lang": "por+eng", "audio": False, "whisper_model": "small", "max_chars": 20000},
     "actions": {
-        "require_confirmation": ["command", "webhook", "write_file"],
+        "require_confirmation": ["command", "webhook"],     # actions that leave the computer / run programs
         "webhook_allow": [],              # URL prefixes allowed for the webhook action
         "command_allow": [],              # executable names allowed for the command action
         "write_dir": str(HOME / "saidas"),
@@ -48,6 +48,7 @@ DEFAULTS = {
     "trees_file": "arvores.yaml",
     "history": {"keep": 2000, "store_text": True, "mask_pii": True},
     "max_steps": 25,
+    "open_panel_on_start": True,
 }
 
 
@@ -66,6 +67,10 @@ def load(path: str = None) -> dict:
     if not cfg["server"]["token"]:
         tf = HOME / "token.txt"
         HOME.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(HOME, 0o700)                         # history, token and models: only this user
+        except OSError:
+            pass
         if not tf.is_file():
             tf.write_text(secrets.token_urlsafe(24)); os.chmod(tf, 0o600)
         cfg["server"]["token"] = tf.read_text().strip()

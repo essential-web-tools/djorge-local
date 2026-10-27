@@ -23,9 +23,27 @@ def _cleanup():
 KEYRING_SERVICE = "djorge-local"
 
 
+def _shred(d):
+    """Overwrite then delete the decrypted files (best effort; SSDs may keep old blocks)."""
+    for root, _, files in os.walk(d):
+        for f in files:
+            p = os.path.join(root, f)
+            try:
+                n = os.path.getsize(p)
+                with open(p, "r+b") as fh:
+                    for i in range(0, n, 1 << 20):
+                        fh.write(b"\0" * min(1 << 20, n - i))
+            except OSError:
+                pass
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def passphrase(cfg) -> str:
     """Key of the .djx files: env var -> system keyring (if saved) -> window (executable) -> terminal."""
     k = os.environ.get(cfg["key_env"])
+    if k:
+        return k
+    k = embedded_key()
     if k:
         return k
     try:
@@ -41,6 +59,15 @@ def passphrase(cfg) -> str:
     if not k:
         raise PermissionError("chave dos modelos não informada")
     return k
+
+
+def embedded_key():
+    """Key built into the executable (tools_make_vault.py); None in source / dev runs."""
+    try:
+        from . import _vault
+        return _vault.k()
+    except Exception:
+        return None
 
 
 class NeedKey(PermissionError):
@@ -117,7 +144,11 @@ class Models:
                 art = self._artifact(name)
                 c = DjorgeConfig(artifact=art, device=dev)
                 c.context_dir = str(HOME / "contextos" / name)
-                z = Djorge(artifact=art, config=c)
+                try:
+                    z = Djorge(artifact=art, config=c)
+                finally:
+                    if art in _TMP:                       # decrypted copy: removed as soon as it is in memory
+                        _shred(art); _TMP.remove(art)
                 self._z[name] = z
                 self.state[name] = "pronto"
                 self._start_api(name, z)
@@ -132,7 +163,16 @@ class Models:
         from djorge import server as S
         z.config.api_key = self.cfg["server"]["token"]
         S.prepare_for_serving(z, float(a.get("batch_window_ms", 8)), int(self.cfg.get("threads") or 0), warmup=False)
-        srv = S._Server((a["host"], int(port)), S.make_handler(z))
+        srv = None
+        for p in range(int(port), int(port) + 20):           # port busy -> next free one (shown in the UI)
+            try:
+                srv = S._Server((a["host"], p), S.make_handler(z)); port = p
+                break
+            except OSError:
+                continue
+        if srv is None:
+            self.state[name] = "pronto (API sem porta livre)"
+            return
         threading.Thread(target=srv.serve_forever, daemon=True, name=f"api-{name}").start()
         self._servers = getattr(self, "_servers", {})
         self._servers[name] = srv
@@ -158,6 +198,7 @@ class Models:
 
     def describe(self):
         out = []
+        self.embedded = bool(embedded_key())
         for name, m in self.cfg["models"].items():
             kind, where = self.source(name)
             st = self.state.get(name) or ("pronto" if name in self._z else ("desligado" if not m.get("enabled", True)
@@ -204,6 +245,24 @@ class Models:
         (self.cfg["api"].get("ports") or {}).pop(name, None)
         if save:
             save()
+
+    def import_folder(self, name, folder, save=None):
+        """Protects a plain model folder: seals it into ~/.djorge-local/modelos/<name>.djx with the app key and
+        points the model to it. The original folder is not touched (delete it yourself if you want)."""
+        if not self.NAME.match(name or ""):
+            raise ValueError("nome inválido")
+        src = Path(folder).expanduser()
+        if not (src / "metadata" / "djorge.json").is_file():
+            raise ValueError("essa pasta não é um modelo DJORGE (falta metadata/djorge.json)")
+        k = self._key or os.environ.get(self.cfg["key_env"]) or embedded_key()
+        if not k:
+            raise NeedKey("defina a chave antes de proteger modelos")
+        dest = HOME / "modelos"
+        dest.mkdir(parents=True, exist_ok=True)
+        out = dest / f"{name}.djx"
+        crypto.seal(str(src), str(out), k, name)
+        self.configure(name, {"path": "", "sealed": str(out), "enabled": True}, save)
+        return str(out)
 
     def set_key(self, k: str, remember: bool = False):
         if not k or len(k) < 10:

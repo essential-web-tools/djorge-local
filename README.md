@@ -108,3 +108,17 @@ Menu da bandeja: Abrir painel · Pausar conectores · Recarregar árvores · Abr
 | cofre da chave | Gerenciador de Credenciais | Keychain | Secret Service |
 | GPU | CUDA (opcional) | CPU | CUDA (opcional) |
 Sem interface gráfica (servidor), o programa roda igual, só sem a bandeja.
+
+## Proteção dos modelos e segurança
+* **Modelos protegidos:** na aba *Modelos → Proteger um modelo*, escolha a pasta do modelo; o Djorge gera o
+  `.djx` (AES-256-GCM). No executável oficial a chave vem **embutida** (segredo `DJORGE_MODEL_KEY` do
+  repositório, em *Settings → Secrets and variables → Actions*): quem instala não vê nem digita chave nenhuma.
+  Ao carregar, a cópia aberta é sobrescrita e apagada assim que o modelo está na memória.
+  Limite honesto: alguém com ferramentas de engenharia reversa e tempo ainda pode extrair os pesos da memória
+  de um programa que roda no próprio computador; a proteção impede cópia e acesso casual aos arquivos.
+* **Antivírus:** executável em pasta (sem UPX, sem autoextração), bootloader do PyInstaller compilado no
+  próprio build e informações de versão. Assinatura digital opcional: segredos `WIN_CERT_PFX_BASE64` e
+  `WIN_CERT_PASSWORD` — é o que elimina o aviso do SmartScreen.
+* **Privacidade:** tudo roda e fica neste computador (nada é enviado a servidores); painel e API só em
+  127.0.0.1 com token automático; histórico com CPF, cartão, e-mail e telefone mascarados; pasta de dados
+  só do usuário; comandos e webhooks só das listas permitidas e com confirmação.

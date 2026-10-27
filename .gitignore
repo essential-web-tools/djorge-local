@@ -6,3 +6,4 @@ build/
 dist/
 Output/
 *.djx
+djorge_local/_vault.py

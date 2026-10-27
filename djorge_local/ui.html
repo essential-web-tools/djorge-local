@@ -110,6 +110,12 @@ footer em{font-family:var(--serif);font-style:italic;text-transform:none;letter-
 .acts{display:flex;gap:8px;flex-wrap:wrap}
 .btn.sm{padding:9px 16px;font-size:12.5px}
 .keybox{border:1px solid rgba(181,101,118,.4);background:linear-gradient(180deg,var(--surface),#fbf4f6)}
+.sec{margin-bottom:22px}.sec h3{display:flex;align-items:center;gap:10px}
+.sub{border-top:1px dashed var(--line);margin-top:16px;padding-top:6px}
+.sub>.meta{margin-top:10px;color:var(--rose-deep)}
+.hint{font-size:12.5px;color:var(--ink3);margin-top:4px}
+.savebar{position:sticky;bottom:16px;display:flex;justify-content:flex-end;gap:10px;margin-top:10px;z-index:20}
+details.adv summary{cursor:pointer;font:600 10px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink3);margin-top:16px}
 @media(max-width:760px){.navpill{border-radius:26px;padding:12px 16px}.navlinks{margin-left:0;width:100%}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
@@ -124,7 +130,7 @@ footer em{font-family:var(--serif);font-style:italic;text-transform:none;letter-
 <div class="toast" id="toast"></div>
 <script>
 "use strict";
-const T={eventos:"Eventos",modelos:"Modelos",pend:"Confirmações",testar:"Testar",arvores:"Árvores",api:"API",estado:"Estado"};
+const T={eventos:"Eventos",modelos:"Modelos",pend:"Confirmações",testar:"Testar",arvores:"Árvores",api:"API",config:"Configurações",estado:"Estado"};
 let tab=(location.hash||"#eventos").slice(1); if(!T[tab]) tab="eventos";
 const $=id=>document.getElementById(id);
 const api=(p,b)=>fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{}).then(r=>r.json());
@@ -145,18 +151,23 @@ async function draw(){nav();const m=$("m");
  if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
   const st=x=>x=="pronto"?"p":"soft";
   m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","Aponte a pasta de um modelo ou um arquivo <code>.djx</code> encriptado, ligue e carregue. Cada modelo carregado ganha a própria API local.")+
-  (r.needs_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="setKey()">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
+  (r.needs_key&&!r.embedded_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="setKey()">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
   `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${esc(x.source)}${x.api?" · "+esc(x.api):""}</div>
    <h3>${esc(x.name)} <span class="chip ${st(x.state)}">${esc(x.state)}</span></h3>
    <label>descrição</label><input data-f="role" value="${esc(x.role)}">
+   <details class="adv" ${x.path?"open":""}><summary>Avançado · pasta aberta (só para desenvolvimento)</summary>
    <label>pasta do modelo</label><div class="row2"><input data-f="path" value="${esc(x.path)}" placeholder="ex.: C:\\Modelos\\O2_a75">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','path','folder')">Escolher</button>`:""}</div>
-   <label>ou arquivo .djx encriptado</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
+   </details>
+   <label>arquivo protegido (.djx)</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
    <label>ou id do arquivo no Google Drive</label><input data-f="drive_file_id" value="${esc(x.drive_file_id)}">
    <label class="switch"><input type="checkbox" data-f="enabled" ${x.enabled?"checked":""}> ligado</label>
    <div class="acts"><button class="btn btn-rose sm" onclick="saveM('${esc(x.name)}',true)">Salvar e carregar ✳</button>
    ${x.state=="pronto"?`<button class="btn btn-ghost sm" onclick="actM('unload','${esc(x.name)}')">Descarregar</button>`:""}
    ${x.drive_file_id?`<button class="btn btn-ghost sm" onclick="actM('download','${esc(x.name)}')">Baixar do Drive</button>`:""}
    <button class="btn btn-ghost sm" onclick="if(confirm('Remover ${esc(x.name)} da lista?'))actM('remove','${esc(x.name)}')">Remover</button></div></article>`).join("")}
+   <article class="card"><h3>Proteger um modelo</h3><p class="text">Escolha a pasta de um modelo: o Djorge cria a versão protegida (<code>.djx</code>), que só este programa abre, e passa a usá-la. Distribua só o <code>.djx</code>.</p>
+   <label>nome</label><input id="in" value="origo"><label>pasta do modelo</label><div class="row2"><input id="if" placeholder="pasta com metadata/djorge.json">${pick?`<button class="btn btn-ghost" onclick="pickId('if','folder')">Escolher</button>`:""}</div>
+   <button class="btn btn-rose" onclick="impM()">Proteger e usar ✳</button></article>
    <article class="card"><h3>Novo modelo</h3><p class="text">Qualquer artefato DJORGE: outra versão do Origo, um Flash, um especialista.</p><label>nome</label><input id="nn" placeholder="ex.: origo-v3"><button class="btn btn-rose" onclick="newM()">Adicionar ✳</button>
    <label>dispositivo</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
  if(tab=="pend"){const p=await api("/api/pending");
@@ -175,20 +186,48 @@ async function draw(){nav();const m=$("m");
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
   -d '{"text":"O boleto vence amanhã","labels":["cobrança","entrega","outro"]}'</pre>
   <button class="btn btn-ghost" onclick="copyTok()">Copiar token</button>`}
+ if(tab=="config"){CFG=await api("/api/config");
+  m.innerHTML=head("Cap. VII — Ajustes","Tudo <span class='it'>no seu controle</span>.","Cada opção do Djorge Local, sem editar arquivos. Salvar aplica na hora; mudanças de porta pedem reiniciar.")+
+  Object.entries(CFG).filter(([k])=>!SKIP.has(k)).map(([k,v])=>typeof v=="object"&&!Array.isArray(v)?`<article class="card sec"><h3>${esc(L(k))}</h3>${H[k]?`<p class="hint">${esc(H[k])}</p>`:""}${form(v,k)}</article>`:"").join("")+
+  `<article class="card sec"><h3>Geral</h3>${form(Object.fromEntries(Object.entries(CFG).filter(([k,v])=>typeof v!="object"||Array.isArray(v))),"")}</article>
+  <div class="savebar"><button class="btn btn-ghost" onclick="draw()">Descartar</button><button class="btn btn-rose" onclick="saveCfg()">Salvar ajustes ✳</button></div>`}
  if(tab=="estado"){const s=await api("/api/status");const ms=s.model_state||{};
-  m.innerHTML=head("Cap. VII — Por dentro","Estado do <span class='it'>sistema</span>.","")+
+  m.innerHTML=head("Cap. VIII — Por dentro","Estado do <span class='it'>sistema</span>.","")+
   `<div class="stats"><div class="stat"><div class="big">${s.loaded.length}</div><div class="cap">modelos prontos</div></div><div class="stat"><div class="big">${s.trees.length}</div><div class="cap">árvores</div></div><div class="stat"><div class="big">${Object.keys(s.connectors).length}</div><div class="cap">conectores ativos</div></div><div class="stat"><div class="big">${s.pending}</div><div class="cap">confirmações</div></div></div>
   <div class="grid"><article class="card"><h3>Modelos</h3>${Object.entries(s.models).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v.role)} <span class="chip ${ms[k]=="pronto"?"p":"soft"}">${esc(ms[k]||(v.enabled?"aguardando":"desligado"))}</span></p>`).join("")}</article>
   <article class="card"><h3>Conectores</h3>${Object.entries(s.connectors).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v)}</p>`).join("")||'<p class="text">Só a API local (ative outros no config.yaml).</p>'}</article></div>`}
  live()}
 async function live(){try{const s=await api("/api/status");const ok=s.loaded.length>0;const l=$("live");l.classList.toggle("ok",ok);
   l.querySelector("span").textContent=ok?`${s.loaded.join(" · ")} · fila ${s.queue}`:(Object.values(s.model_state||{}).includes("carregando")?"carregando…":"sem modelo")}catch(e){}}
+let CFG={};const SKIP=new Set([]);
+const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threads:"Núcleos de CPU (0 = todos)",drive_folder_id:"Pasta do Google Drive (id)",open_panel_on_start:"Abrir a janela ao iniciar",max_steps:"Máximo de passos por árvore",
+ server:"Painel",host:"Endereço",port:"Porta",api:"API local",enabled:"Ligado",batch_window_ms:"Junção de pedidos (ms)",rate_rps:"Pedidos por segundo",rate_burst:"Pico de pedidos",max_body_mb:"Tamanho máximo do pedido (MB)",
+ connectors:"Conectores",http_inbox:"Outros programas (API de eventos)",notifications:"Notificações do sistema",apps_allow:"Só destes apps (um por linha)",apps_deny:"Ignorar estes apps",poll_s:"Verificar a cada (s)",
+ folder:"Pastas observadas",paths:"Pastas (uma por linha)",patterns:"Tipos de arquivo",max_mb:"Tamanho máximo (MB)",clipboard:"Área de transferência",min_chars:"Mínimo de caracteres",
+ imap:"E-mail (IMAP, só leitura)",user:"Usuário",password_env:"Variável com a senha",command:"Programas consultados",jobs:"Tarefas",stdin:"Terminal",
+ extract:"Leitura de arquivos",ocr:"Ler imagens (OCR)",ocr_lang:"Idiomas do OCR",audio:"Transcrever áudio",whisper_model:"Modelo de transcrição",max_chars:"Máximo de caracteres por texto",
+ actions:"Ações",require_confirmation:"Pedir confirmação para",webhook_allow:"Webhooks permitidos (prefixos de URL)",command_allow:"Programas permitidos",write_dir:"Pasta para arquivos gravados",notify:"Mostrar avisos na área de trabalho",
+ history:"Histórico",keep:"Guardar últimos",store_text:"Guardar o texto",mask_pii:"Mascarar dados pessoais (CPF, cartão, e-mail…)"};
+const H={connectors:"De onde chegam os eventos. Tudo começa desligado.",actions:"O que as árvores podem fazer. Comandos e webhooks só rodam se estiverem nas listas.",history:"Fica só neste computador.",api:"A API completa de cada modelo, só nesta máquina."};
+const L=k=>LBL[k]||k.replace(/_/g," ");
+function form(o,path){return Object.entries(o).map(([k,v])=>{const id=(path?path+".":"")+k;
+  if(v&&typeof v=="object"&&!Array.isArray(v))return `<div class="sub"><div class="meta">${esc(L(k))}</div>${form(v,id)}</div>`;
+  if(typeof v=="boolean")return `<label class="switch"><input type="checkbox" data-k="${esc(id)}" ${v?"checked":""}> ${esc(L(k))}</label>`;
+  if(Array.isArray(v)){if(v.some(x=>typeof x=="object"))return `<label>${esc(L(k))}</label><textarea data-k="${esc(id)}" data-json="1" rows="3">${esc(JSON.stringify(v,null,1))}</textarea>`;
+    return `<label>${esc(L(k))}</label><textarea data-k="${esc(id)}" data-list="1" rows="${Math.max(2,v.length+1)}">${esc(v.join("\n"))}</textarea>`}
+  if(k=="device")return `<label>${esc(L(k))}</label><select data-k="${esc(id)}">${["auto","cpu","cuda"].map(d=>`<option ${d==v?"selected":""}>${d}</option>`).join("")}</select>`;
+  return `<label>${esc(L(k))}</label><input data-k="${esc(id)}" value="${esc(v)}" ${typeof v=="number"?'inputmode="decimal"':""}>`}).join("")}
+async function saveCfg(){const out={};document.querySelectorAll("[data-k]").forEach(e=>{const ks=e.dataset.k.split(".");let o=out;ks.slice(0,-1).forEach(k=>o=o[k]=o[k]||{});
+  let v=e.type=="checkbox"?e.checked:e.value;if(e.dataset.json){try{v=JSON.parse(v)}catch(x){toast("JSON inválido em "+e.dataset.k);throw x}}o[ks[ks.length-1]]=v});
+  const r=await api("/api/config",out);toast(r.error||(r.restart&&r.restart.length?"salvo · reinicie para mudar "+r.restart.join(", "):"ajustes salvos"));if(!r.error)draw()}
 function fields(n){const c=$("mc-"+n),o={name:n};c.querySelectorAll("[data-f]").forEach(e=>o[e.dataset.f]=e.type=="checkbox"?e.checked:e.value);return o}
 async function saveM(n,load){const r=await api("/api/models/save",{...fields(n),load});toast(r.error||"salvo"+(load?" · carregando…":""));draw()}
 async function actM(a,n){const r=await api("/api/models/"+a,{name:n});toast(r.error||({unload:"descarregado",download:"baixando…",remove:"removido",load:"carregando…"}[a]||"ok"));draw()}
 async function newM(){const n=$("nn").value.trim().toLowerCase();const r=await api("/api/models/save",{name:n,enabled:false});toast(r.error||"adicionado: aponte a pasta ou o .djx");draw()}
 async function setKey(){const r=await api("/api/models/key",{key:$("kk").value,remember:$("kr").checked});toast(r.error||(r.remembered?"chave guardada no cofre":"chave aceita"));draw()}
 async function setDev(){await api("/api/models/settings",{device:$("dev").value});toast("vale ao carregar de novo")}
+async function pickId(id,kind){const p=await window.pywebview.api.pick(kind);if(p)$(id).value=p}
+async function impM(){toast("protegendo… pode levar um minuto");const r=await api("/api/models/import",{name:$("in").value.trim().toLowerCase(),folder:$("if").value});toast(r.error||"protegido: "+r.file);draw()}
 async function pickTo(n,f,kind){const p=await window.pywebview.api.pick(kind);if(p){$("mc-"+n).querySelector(`[data-f="${f}"]`).value=p}}
 async function ok(id,a){await api("/api/pending/"+id,{approve:a});toast(a?"aprovado":"recusado");draw()}
 async function ev(){const r=await api("/api/event",{sync:true,title:$("ti").value,text:$("tx").value,tree:$("tr").value||undefined,source:"teste"});
