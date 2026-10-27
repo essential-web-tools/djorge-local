@@ -70,6 +70,7 @@ function render() {
   $("profile").onchange = e => save({profile: e.target.value}).then(() => toast("salvo"));
   $("mask").onchange = e => save({mask: e.target.checked});
   $("failOpen").onchange = e => save({failOpen: e.target.checked});
+  $("local").onclick = () => { $("server").value = "http://127.0.0.1:8760"; $("key").focus(); toast("cole o código de pareamento e clique em Salvar e testar"); };
   $("add").onclick = () => addSite($("custom").value);
   $("custom").onkeydown = e => { if (e.key === "Enter") addSite($("custom").value); };
   $("save").onclick = async () => {

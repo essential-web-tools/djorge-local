@@ -13,8 +13,10 @@ body{padding:34px 20px 60px}main{max-width:860px;margin:auto}
 <p class="hint" style="font-size:14px;margin:-10px 0 22px">O Sentinel só olha os sites que você ligar aqui, e só o que você marcar em cada um. Os textos vão apenas para o seu servidor Sentinel, com dados pessoais mascarados.</p>
 <div class="grid">
 <section class="card"><h2>Servidor</h2>
-<label>endereço do Sentinel <span class="qi" title="Ex.: https://sentinel.seudominio.com. É o servidor onde o modelo Sentinel roda.">?</span></label><input id="server" type="url" placeholder="https://...">
-<label>chave da API <span class="qi" title="A mesma de DJORGE_API_KEYS no servidor. Fica guardada só neste navegador.">?</span></label><input id="key" type="password" placeholder="opcional se o servidor não exigir">
+<p class="hint">Com o <b>Djorge Local</b> instalado, o Sentinel roda neste computador: clique abaixo e cole o código de pareamento (Djorge Local › Modelos › Extensão do Chrome).</p>
+<button class="btn g" id="local">Usar o Djorge Local ✳</button>
+<label>endereço do Sentinel <span class="qi" title="Djorge Local: http://127.0.0.1:8760. Ou o endereço https do seu servidor.">?</span></label><input id="server" type="url" placeholder="http://127.0.0.1:8760">
+<label>código de pareamento / chave <span class="qi" title="Djorge Local: o código copiado na aba Modelos. Servidor próprio: a chave da API. Fica só neste navegador.">?</span></label><input id="key" type="password" placeholder="cole aqui">
 <button class="btn p" id="save">Salvar e testar ✳</button> <span id="conn" class="hint"></span></section>
 <section class="card"><h2>Comportamento</h2>
 <label>rigor <span class="qi" title="Conservador avisa mais cedo; permissivo só age quando tem muita certeza.">?</span></label>

@@ -526,7 +526,7 @@ def make_handler(z: Djorge):
                     if method != "POST":
                         raise DjorgeError("METHOD_NOT_ALLOWED", "use POST")
                     return self._select(self._body(), u)
-                if parts == ["v1", "sentinel"] and os.environ.get("DJORGE_SENTINEL", "1") != "0":
+                if parts == ["v1", "sentinel"] and getattr(z.config, "sentinel_endpoint", os.environ.get("DJORGE_SENTINEL", "1") != "0"):
                     if method != "POST":
                         raise DjorgeError("METHOD_NOT_ALLOWED", "use POST")
                     return self._send(200, self._sentinel(self._body()))

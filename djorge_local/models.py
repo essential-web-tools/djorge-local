@@ -57,6 +57,7 @@ class Models:
                 c = DjorgeConfig(artifact=str(art), device=dev)
                 c.context_dir = str(HOME / "contextos" / name)
                 z = Djorge(artifact=str(art), config=c)
+                z.config.sentinel_endpoint = bool(m.get("service"))     # /v1/sentinel only on the Sentinel
                 self._z[name] = z
                 self.state[name] = "pronto"
                 self._start_api(name, z)
@@ -91,7 +92,7 @@ class Models:
     def preload(self, names=None):
         """Loads the enabled models in the background so the window appears immediately."""
         def go():
-            for n in names or [k for k, v in self.cfg["models"].items() if v.get("enabled", True)]:
+            for n in names or [k for k, v in self.cfg["models"].items() if v.get("enabled", True) and not v.get("service")]:
                 self.state[n] = "carregando"
                 try:
                     self.get(n)
@@ -105,9 +106,9 @@ class Models:
         for name, m in self.cfg["models"].items():
             p = m.get("path", "")
             found = bool(p) and is_model(model_path(self.cfg, p))
-            st = self.state.get(name) or ("pronto" if name in self._z else (
-                "desligado" if not m.get("enabled", True) else ("não carregado" if found else "sem pasta")))
-            out.append({"name": name, "enabled": m.get("enabled", True), "role": m.get("role", ""),
+            st = self.state.get(name) or ("pronto" if name in self._z else ("carrega quando a extensão pedir" if m.get("service") and found and m.get("enabled", True) else (
+                "desligado" if not m.get("enabled", True) else ("não carregado" if found else "sem pasta"))))
+            out.append({"name": name, "enabled": m.get("enabled", True), "role": m.get("role", ""), "service": bool(m.get("service")),
                         "path": "" if p.startswith("@app/") else p, "bundled": p.startswith("@app/"),
                         "found": found, "state": st, "api": self.apis.get(name),
                         "port": (self.cfg["api"].get("ports") or {}).get(name)})
@@ -142,6 +143,9 @@ class Models:
         self.state[name] = "não carregado"
         del z
         gc.collect()
+
+    def decision_models(self):
+        return [k for k, v in self.cfg["models"].items() if not v.get("service")]
 
     def remove(self, name, save=None):
         self.unload(name)

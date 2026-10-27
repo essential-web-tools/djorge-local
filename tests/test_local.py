@@ -180,5 +180,31 @@ def test_migrates_old_config(home):
         "api": {"ports": {"origo": 8750, "flash": 8751}}}), encoding="utf-8")
     from djorge_local import config as C
     cfg = C.load(str(home / "config.yaml"))
-    assert list(cfg["models"]) == ["flash"] and cfg["models"]["flash"]["path"] == "@app/modelos/flash"
+    assert list(cfg["models"]) == ["flash", "sentinel"] and cfg["models"]["flash"]["path"] == "@app/modelos/flash"
     assert cfg["models"]["flash"]["enabled"] and "drive_folder_id" not in cfg and "origo" not in cfg["api"]["ports"]
+
+
+def test_sentinel_service_for_extension(home, art):
+    import yaml
+    (home / "config.yaml").write_text(yaml.safe_dump({"device": "cpu", "models": {
+        "flash": {"path": art}, "sentinel": {"path": art, "service": True}},
+        "api": {"ports": {"flash": 18790, "sentinel": 18791}}, "sentinel": {"port": 18792}}), encoding="utf-8")
+    from djorge_local import config as C
+    from djorge_local.app import App
+    cfg = C.load(str(home / "config.yaml")); app = App(cfg); app.start()
+    port = app.sentinel_port
+    assert "sentinel" not in app.models.loaded()                      # on demand only
+    def call(body, tok=cfg["server"]["token"]):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/sentinel", data=json.dumps(body).encode(),
+                                     headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, None
+    assert call({"text": "x"}, "errado")[0] == 401
+    code, r = call({"text": "Seu Pix foi bloqueado, clique no link", "kind": "texto"})
+    assert code == 200 and r["action"] in ("permitir", "avisar", "revisar", "bloquear")
+    assert "sentinel" in app.models.loaded()
+    z = app.models.get("flash")
+    assert z.config.sentinel_endpoint is False and app.models.get("sentinel").config.sentinel_endpoint is True

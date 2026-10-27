@@ -10,3 +10,4 @@ djorge_local/_vault.py
 djorge_local/static/img/
 modelos/
 _modelo_tmp/
+_modelo_tmp_*/

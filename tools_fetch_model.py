@@ -1,6 +1,7 @@
-"""Build step: puts the Flash model INSIDE the package (modelos/flash next to the executable).
+"""Build step: puts the models INSIDE the package (modelos/<nome> next to the executable).
 
-Source in modelo-fonte.txt (one line):
+modelo-fonte.txt, one line per model:  <nome>=<fonte>   (ex.: flash=gdrive:1LIF..., sentinel=gdrive:1ceo...)
+Sources:
   gdrive:<file id>                      a .zip of the model folder shared "anyone with the link"
   gdrive-folder:<folder id>[:<subpath>] a shared Drive folder (optionally a subfolder of it)
   hf:<owner/repo>                       a Hugging Face repo (HF_TOKEN env for private repos)
@@ -15,7 +16,6 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "modelos" / "flash"
 
 
 def find_artifact(root: Path) -> Path:
@@ -26,8 +26,15 @@ def find_artifact(root: Path) -> Path:
 
 
 def main():
-    src = (HERE / "modelo-fonte.txt").read_text().strip()
-    tmp = HERE / "_modelo_tmp"
+    lines = [l.strip() for l in (HERE / "modelo-fonte.txt").read_text().splitlines() if l.strip() and not l.startswith("#")]
+    for l in lines:
+        name, _, src = l.partition("=") if "=" in l.split(":")[0] else ("flash", "", l)
+        fetch(name.strip(), src.strip())
+
+
+def fetch(name, src):
+    OUT = HERE / "modelos" / name
+    tmp = HERE / f"_modelo_tmp_{name}"
     shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir()
     kind, _, rest = src.partition(":")
     if kind == "gdrive":
@@ -65,7 +72,7 @@ def main():
     shutil.rmtree(OUT, ignore_errors=True); OUT.parent.mkdir(exist_ok=True)
     shutil.move(str(art), str(OUT)); shutil.rmtree(tmp, ignore_errors=True)
     size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file()) / 1e9
-    print(f"modelo pronto em {OUT} ({size:.2f} GB)")
+    print(f"modelo {name} pronto em {OUT} ({size:.2f} GB)")
 
 
 if __name__ == "__main__":

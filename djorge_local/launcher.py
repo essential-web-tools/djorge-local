@@ -177,6 +177,9 @@ def economy_mode(cfg):
     ram = total_ram_gb()
     if cfg.get("economy", "auto") == "off" or (cfg.get("economy", "auto") == "auto" and ram >= 8):
         return False
+    sv = cfg.setdefault("sentinel", {})
+    if not sv.get("unload_after_min"):
+        sv["unload_after_min"] = 10                    # Sentinel leaves memory after 10 idle minutes
     os.environ.setdefault("DJORGE_EMBED_INT8", "1")
     os.environ.setdefault("DJORGE_PRUNE_VOCAB", "1")
     logging.info("modo econômico ligado (%.1f GB de RAM)", ram)

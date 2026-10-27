@@ -76,7 +76,7 @@ class App:
         raw["device"], raw["threads"] = self.cfg["device"], self.cfg["threads"]
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
-    EDITABLE = ("timezone", "language", "device", "threads", "open_panel_on_start", "server", "api",
+    EDITABLE = ("timezone", "language", "device", "threads", "open_panel_on_start", "sentinel", "server", "api",
                 "connectors", "extract", "actions", "history", "max_steps", "economy")
 
     def settings(self) -> dict:
@@ -186,13 +186,18 @@ class App:
     def status(self):
         return {"models": {k: {"enabled": v.get("enabled", True), "role": v.get("role", "")}
                            for k, v in self.cfg["models"].items()}, "loaded": self.models.loaded(), "model_state": self.models.state,
-                "api": getattr(self.models, "apis", {}),
+                "api": getattr(self.models, "apis", {}), "sentinel_port": getattr(self, "sentinel_port", None),
                 "connectors": {k: c.status for k, c in self.conns.items()},
                 "trees": [t["name"] for t in self.trees], "pending": len(self.actions.pending),
                 "queue": C.EVENTS.qsize()}
 
     def start(self, workers: int = 1):
         self.conns = C.start_all(self.cfg)
+        if (self.cfg.get("sentinel") or {}).get("enabled", True) and "sentinel" in self.cfg["models"] \
+                and self.cfg["models"]["sentinel"].get("enabled", True):
+            from .sentinel_service import SentinelService
+            self.sentinel = SentinelService(self)
+            self.sentinel_port = self.sentinel.start()
         for _ in range(max(1, workers)):
             threading.Thread(target=self.worker, daemon=True).start()
 
@@ -257,7 +262,8 @@ def make_handler(app: App):
             if u.path == "/api/models":
                 ms = app.models.describe()
                 return self._send(200, {"models": ms, "device": app.cfg["device"], "threads": app.cfg["threads"],
-                                        "app_dir": str(__import__("djorge_local.models", fromlist=["x"]).app_dir())})
+                                        "app_dir": str(__import__("djorge_local.models", fromlist=["x"]).app_dir()),
+                                        "sentinel_port": getattr(app, "sentinel_port", None)})
             if u.path == "/api/config":
                 return self._send(200, app.settings())
             if u.path == "/api/token":
@@ -290,7 +296,7 @@ def make_handler(app: App):
                         return self._send(200, app.handle(ev, only=b.get("tree")))
                     return self._send(202, {"queued": ev["id"]})
                 if u.path == "/api/decide":
-                    z = app.models.get(b.get("model") or (app.models.loaded() or ["flash"])[0])
+                    z = app.models.get(b.get("model") or ([x for x in app.models.loaded() if x in app.models.decision_models()] or ["flash"])[0])
                     r = z.execute(b["query"], sources={"text": b.get("text", "")}, lang=app.cfg["language"],
                                   now=b.get("now"))
                     return self._send(200, r)

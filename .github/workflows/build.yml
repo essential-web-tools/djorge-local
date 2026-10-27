@@ -54,6 +54,10 @@ jobs:
               if ($state -eq "pronto" -or $state -like "erro*" -or $state -eq "sem pasta") { break }
             }
             Write-Host "::warning::modelo flash: $state"
+            try {
+              $sv = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8760/v1/sentinel" -Headers @{"Authorization"="Bearer $tok"} -ContentType "application/json" -Body '{"text":"Seu Pix foi bloqueado, confirme seus dados no link","kind":"texto"}' -TimeoutSec 240
+              Write-Host "::warning::sentinel: $($sv.action) ($($sv.answer))"
+            } catch { Write-Host "::warning::sentinel falhou: $($_.Exception.Message)"; $state = "sentinel falhou" }
           }
           Write-Host "---- stdout"; Get-Content "$env:RUNNER_TEMP\out.txt" -ErrorAction SilentlyContinue
           Write-Host "---- stderr"; Get-Content "$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue

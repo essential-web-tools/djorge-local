@@ -162,7 +162,8 @@ class Runner:
     def _decide(self, n: dict, ev: dict, ctx) -> dict:
         if "if" in n:
             return {"answer": _cond(n["if"], ev), "probability": 1.0, "engine": "regra"}
-        model = n.get("model") or (self.models.loaded() or list(self.cfg["models"]) or ["flash"])[0]
+        model = n.get("model") or ([x for x in self.models.loaded() if x in self.models.decision_models()]
+                                     or self.models.decision_models() or ["flash"])[0]
         z = self.models.get(model)
         q = render(build_query(n), ctx) if n.get("render_query") else build_query(n)
         r = z.execute(q, sources={"text": ev.get("text") or ""}, lang=self.cfg["language"])["result"]

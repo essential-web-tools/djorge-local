@@ -17,11 +17,15 @@ DEFAULTS = {
     "language": "pt",
     "models": {                           # the Flash ships inside the installer (@app = program folder)
         "flash": {"enabled": True, "path": "@app/modelos/flash", "role": "Origo Flash — rápido, leve, para qualquer computador"},
+        "sentinel": {"enabled": True, "path": "@app/modelos/sentinel", "role": "Sentinel — segurança para a extensão do Chrome",
+                     "service": True},
     },
+    # serviço do Sentinel para a extensão do Chrome (carrega o modelo só quando a extensão pergunta)
+    "sentinel": {"enabled": True, "port": 8760, "unload_after_min": 0},
     "server": {"host": "127.0.0.1", "port": 8765, "token": ""},
     # full DJORGE API per model (/v1/classify, /v1/aggregate, /v1/tag, /v1/decide, /v1/document, /v1/verify,
     # /v1/score, /v1/select, /v1/tools/*, /execute, /contexts, /capabilities ...). Bearer token = server.token
-    "api": {"enabled": True, "host": "127.0.0.1", "ports": {"flash": 8750}, "batch_window_ms": 8,
+    "api": {"enabled": True, "host": "127.0.0.1", "ports": {"flash": 8750, "sentinel": 8752}, "batch_window_ms": 8,
             "rate_rps": 50, "rate_burst": 200, "max_body_mb": 2},
     "connectors": {
         "http_inbox": {"enabled": True},                        # any program: POST /api/event
@@ -70,9 +74,10 @@ def _migrate(raw: dict) -> dict:
             m.pop("sealed", None); m.pop("drive_file_id", None)
             if k == "flash" and not m.get("path"):
                 m.update(path="@app/modelos/flash", enabled=True)
-            if k != "flash" and not m.get("path"):
+            if k not in ("flash", "sentinel") and not m.get("path"):
                 ms.pop(k)
         ms.setdefault("flash", dict(DEFAULTS["models"]["flash"]))
+        ms.setdefault("sentinel", dict(DEFAULTS["models"]["sentinel"]))
         ports = (raw.get("api") or {}).get("ports") or {}
         for k in list(ports):
             if k not in ms:
