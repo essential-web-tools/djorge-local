@@ -1,5 +1,5 @@
 ; Inno Setup 6 - gera "DjorgeLocal-Setup.exe" a partir de dist\Djorge Local
-#define AppVer "0.7.3"
+#define AppVer "0.7.4"
 [Setup]
 AppId={{6E0B7D2A-4C51-4E1B-9C3B-2F0E9D5A7C11}
 AppName=Djorge Local

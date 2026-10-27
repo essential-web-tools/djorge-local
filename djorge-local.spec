@@ -36,4 +36,4 @@ exe = EXE(pyz, a.scripts, *extra, [], exclude_binaries=True, name="Djorge Local"
 coll = COLLECT(exe, a.binaries, a.datas, name="Djorge Local", upx=False)
 if is_mac:
     app = BUNDLE(coll, name="Djorge Local.app", icon=icon, bundle_identifier="local.djorge.app",
-                 info_plist={"LSUIElement": True, "CFBundleShortVersionString": "0.7.3"})
+                 info_plist={"LSUIElement": True, "CFBundleShortVersionString": "0.7.4"})
