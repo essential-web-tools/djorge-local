@@ -19,3 +19,4 @@ pillow
 # winsdk         # notificações do Windows (somente Windows)
 pystray
 keyring
+pywebview>=5

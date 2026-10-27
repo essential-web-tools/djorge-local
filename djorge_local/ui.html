@@ -103,6 +103,13 @@ td.m{font-family:var(--mono);font-size:12.5px}
 .toast.on{opacity:1}
 footer{text-align:center;font:600 10px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--ink3);padding:0 0 40px}
 footer em{font-family:var(--serif);font-style:italic;text-transform:none;letter-spacing:0;font-size:14px;color:var(--rose-deep)}
+.row2{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
+.row2 .btn{margin-top:0;padding:12px 16px}
+.switch{display:flex;align-items:center;gap:10px;margin-top:14px;font:600 13px var(--sans);color:var(--ink2);cursor:pointer}
+.switch input{width:auto;accent-color:var(--rose)}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.btn.sm{padding:9px 16px;font-size:12.5px}
+.keybox{border:1px solid rgba(181,101,118,.4);background:linear-gradient(180deg,var(--surface),#fbf4f6)}
 @media(max-width:760px){.navpill{border-radius:26px;padding:12px 16px}.navlinks{margin-left:0;width:100%}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
@@ -117,7 +124,7 @@ footer em{font-family:var(--serif);font-style:italic;text-transform:none;letter-
 <div class="toast" id="toast"></div>
 <script>
 "use strict";
-const T={eventos:"Eventos",pend:"Confirmações",testar:"Testar",arvores:"Árvores",api:"API",estado:"Estado"};
+const T={eventos:"Eventos",modelos:"Modelos",pend:"Confirmações",testar:"Testar",arvores:"Árvores",api:"API",estado:"Estado"};
 let tab=(location.hash||"#eventos").slice(1); if(!T[tab]) tab="eventos";
 const $=id=>document.getElementById(id);
 const api=(p,b)=>fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{}).then(r=>r.json());
@@ -135,16 +142,33 @@ async function draw(){nav();const m=$("m");
  if(tab=="eventos"){const h=(await api("/api/history?n=80")).filter(r=>r.type=="event");
   m.innerHTML=head("Cap. I — O que chegou","Eventos e <span class='it'>decisões</span>.","Cada notificação, e-mail, arquivo ou texto enviado por outro programa passa pelas árvores. Aqui fica o caminho percorrido.")+
   (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:`<p class="empty">✳ nenhum evento ainda ✳</p>`)}
+ if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
+  const st=x=>x=="pronto"?"p":"soft";
+  m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","Aponte a pasta de um modelo ou um arquivo <code>.djx</code> encriptado, ligue e carregue. Cada modelo carregado ganha a própria API local.")+
+  (r.needs_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="setKey()">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
+  `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${esc(x.source)}${x.api?" · "+esc(x.api):""}</div>
+   <h3>${esc(x.name)} <span class="chip ${st(x.state)}">${esc(x.state)}</span></h3>
+   <label>descrição</label><input data-f="role" value="${esc(x.role)}">
+   <label>pasta do modelo</label><div class="row2"><input data-f="path" value="${esc(x.path)}" placeholder="ex.: C:\\Modelos\\O2_a75">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','path','folder')">Escolher</button>`:""}</div>
+   <label>ou arquivo .djx encriptado</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
+   <label>ou id do arquivo no Google Drive</label><input data-f="drive_file_id" value="${esc(x.drive_file_id)}">
+   <label class="switch"><input type="checkbox" data-f="enabled" ${x.enabled?"checked":""}> ligado</label>
+   <div class="acts"><button class="btn btn-rose sm" onclick="saveM('${esc(x.name)}',true)">Salvar e carregar ✳</button>
+   ${x.state=="pronto"?`<button class="btn btn-ghost sm" onclick="actM('unload','${esc(x.name)}')">Descarregar</button>`:""}
+   ${x.drive_file_id?`<button class="btn btn-ghost sm" onclick="actM('download','${esc(x.name)}')">Baixar do Drive</button>`:""}
+   <button class="btn btn-ghost sm" onclick="if(confirm('Remover ${esc(x.name)} da lista?'))actM('remove','${esc(x.name)}')">Remover</button></div></article>`).join("")}
+   <article class="card"><h3>Novo modelo</h3><p class="text">Qualquer artefato DJORGE: outra versão do Origo, um Flash, um especialista.</p><label>nome</label><input id="nn" placeholder="ex.: origo-v3"><button class="btn btn-rose" onclick="newM()">Adicionar ✳</button>
+   <label>dispositivo</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
  if(tab=="pend"){const p=await api("/api/pending");
-  m.innerHTML=head("Cap. II — Antes de agir","Ações que esperam <span class='it'>você</span>.","Comandos, webhooks e gravação de arquivos só acontecem depois da sua aprovação.")+
+  m.innerHTML=head("Cap. III — Antes de agir","Ações que esperam <span class='it'>você</span>.","Comandos, webhooks e gravação de arquivos só acontecem depois da sua aprovação.")+
   (p.length?`<div class="grid">${p.map(x=>`<article class="card"><span class="chip p">${esc(x.spec.action)}</span><h3 style="margin-top:10px">${esc(x.tree)} / ${esc(x.node)}</h3><pre>${esc(JSON.stringify(x.spec,null,1))}</pre><button class="btn btn-rose" onclick="ok('${x.id}',true)">Aprovar ✳</button> <button class="btn btn-ghost" onclick="ok('${x.id}',false)">Recusar</button></article>`).join("")}</div>`:`<p class="empty">✳ nada aguardando ✳</p>`)}
- if(tab=="testar"){m.innerHTML=head("Cap. III — Experimente","Uma decisão, <span class='it'>ao vivo</span>.","Rode um texto pelas árvores ou faça uma consulta direta a um modelo.")+
+ if(tab=="testar"){m.innerHTML=head("Cap. IV — Experimente","Uma decisão, <span class='it'>ao vivo</span>.","Rode um texto pelas árvores ou faça uma consulta direta a um modelo.")+
   `<div class="grid"><article class="card"><h3>Pelas árvores</h3><label>título</label><input id="ti" placeholder="ex.: Banco"><label>texto</label><textarea id="tx" rows="7" placeholder="Seu boleto de R$ 1.200,00 vence em 20/10."></textarea><label>árvore (vazio = todas que casarem)</label><input id="tr"><button class="btn btn-rose" onclick="ev()">Decidir ✳</button></article>
-  <article class="card"><h3>Consulta direta</h3><label>modelo</label><select id="mo"><option>origo</option><option>flash</option></select><label>consulta</label><input id="q" value='CHOICE ["urgente","normal"] FROM text ASK "Qual a prioridade?"'><label>texto</label><textarea id="tq" rows="5"></textarea><button class="btn btn-rose" onclick="dq()">Executar ✳</button></article></div><div id="out"></div>`}
- if(tab=="arvores"){const t=await api("/api/trees");m.innerHTML=head("Cap. IV — O desenho","Árvores de <span class='it'>decisões subsequentes</span>.","Cada resposta escolhe as próximas decisões. Edite, valide e salve — vale na hora, sem reiniciar.")+
+  <article class="card"><h3>Consulta direta</h3><label>modelo</label><select id="mo">${(await api("/api/models")).models.filter(x=>x.state=="pronto").map(x=>`<option>${esc(x.name)}</option>`).join("")||"<option disabled>nenhum modelo carregado</option>"}</select><label>consulta</label><input id="q" value='CHOICE ["urgente","normal"] FROM text ASK "Qual a prioridade?"'><label>texto</label><textarea id="tq" rows="5"></textarea><button class="btn btn-rose" onclick="dq()">Executar ✳</button></article></div><div id="out"></div>`}
+ if(tab=="arvores"){const t=await api("/api/trees");m.innerHTML=head("Cap. V — O desenho","Árvores de <span class='it'>decisões subsequentes</span>.","Cada resposta escolhe as próximas decisões. Edite, valide e salve — vale na hora, sem reiniciar.")+
   `<article class="card"><textarea id="ya" rows="30" spellcheck="false">${esc(t.yaml)}</textarea><button class="btn btn-rose" onclick="sv()">Validar e salvar ✳</button> <span id="sm" class="meta" style="margin-left:12px"></span></article>`}
  if(tab=="api"){const s=await api("/api/status");const eps=[["POST","/v1/classify","rótulos, multi, certainty, prediction_set"],["POST","/v1/verify","verdadeiro ou falso"],["POST","/v1/score","escala ordenada"],["POST","/v1/select","só a opção ou o trecho"],["POST","/v1/aggregate","quantidades (AGG / AGID)"],["POST","/v1/tag","trechos e entidades"],["POST","/v1/decide","regras compostas → ações sugeridas"],["POST","/v1/document","documentos longos"],["POST","/v1/tools/<nome>","pii · mask · lang · validate · math · time"],["POST","/execute","qualquer consulta da linguagem"],["GET","/capabilities","o que o modelo sabe fazer"],["GET","/health","estado"]];
-  const base=Object.entries(s.api||{});m.innerHTML=head("Cap. V — A API","Tudo, <span class='it'>localmente</span>.","Cada modelo carregado tem a API inteira do DJORGE nesta máquina. Autenticação: <code>Authorization: Bearer &lt;token&gt;</code> — o mesmo token do painel.")+
+  const base=Object.entries(s.api||{});m.innerHTML=head("Cap. VI — A API","Tudo, <span class='it'>localmente</span>.","Cada modelo carregado tem a API inteira do DJORGE nesta máquina. Autenticação: <code>Authorization: Bearer &lt;token&gt;</code> — o mesmo token do painel.")+
   `<div class="stats">${base.map(([k,u])=>`<div class="stat"><div class="big">${esc(k)}</div><div class="cap">${esc(u)}</div></div>`).join("")||`<div class="stat"><div class="big">—</div><div class="cap">nenhum modelo carregado</div></div>`}</div>
   <div class="ledger"><table><thead><tr><th>método</th><th>rota</th><th>o que faz</th></tr></thead><tbody>${eps.map(e=>`<tr><td><span class="mth ${e[0]=="GET"?"get":""}">${e[0]}</span></td><td class="m">${esc(e[1])}</td><td>${esc(e[2])}</td></tr>`).join("")}</tbody></table></div>
   <pre>curl ${esc((base[0]||["","http://127.0.0.1:8750"])[1])}/v1/classify \\
@@ -152,13 +176,20 @@ async function draw(){nav();const m=$("m");
   -d '{"text":"O boleto vence amanhã","labels":["cobrança","entrega","outro"]}'</pre>
   <button class="btn btn-ghost" onclick="copyTok()">Copiar token</button>`}
  if(tab=="estado"){const s=await api("/api/status");const ms=s.model_state||{};
-  m.innerHTML=head("Cap. VI — Por dentro","Estado do <span class='it'>sistema</span>.","")+
+  m.innerHTML=head("Cap. VII — Por dentro","Estado do <span class='it'>sistema</span>.","")+
   `<div class="stats"><div class="stat"><div class="big">${s.loaded.length}</div><div class="cap">modelos prontos</div></div><div class="stat"><div class="big">${s.trees.length}</div><div class="cap">árvores</div></div><div class="stat"><div class="big">${Object.keys(s.connectors).length}</div><div class="cap">conectores ativos</div></div><div class="stat"><div class="big">${s.pending}</div><div class="cap">confirmações</div></div></div>
   <div class="grid"><article class="card"><h3>Modelos</h3>${Object.entries(s.models).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v.role)} <span class="chip ${ms[k]=="pronto"?"p":"soft"}">${esc(ms[k]||(v.enabled?"aguardando":"desligado"))}</span></p>`).join("")}</article>
   <article class="card"><h3>Conectores</h3>${Object.entries(s.connectors).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v)}</p>`).join("")||'<p class="text">Só a API local (ative outros no config.yaml).</p>'}</article></div>`}
  live()}
 async function live(){try{const s=await api("/api/status");const ok=s.loaded.length>0;const l=$("live");l.classList.toggle("ok",ok);
   l.querySelector("span").textContent=ok?`${s.loaded.join(" · ")} · fila ${s.queue}`:(Object.values(s.model_state||{}).includes("carregando")?"carregando…":"sem modelo")}catch(e){}}
+function fields(n){const c=$("mc-"+n),o={name:n};c.querySelectorAll("[data-f]").forEach(e=>o[e.dataset.f]=e.type=="checkbox"?e.checked:e.value);return o}
+async function saveM(n,load){const r=await api("/api/models/save",{...fields(n),load});toast(r.error||"salvo"+(load?" · carregando…":""));draw()}
+async function actM(a,n){const r=await api("/api/models/"+a,{name:n});toast(r.error||({unload:"descarregado",download:"baixando…",remove:"removido",load:"carregando…"}[a]||"ok"));draw()}
+async function newM(){const n=$("nn").value.trim().toLowerCase();const r=await api("/api/models/save",{name:n,enabled:false});toast(r.error||"adicionado: aponte a pasta ou o .djx");draw()}
+async function setKey(){const r=await api("/api/models/key",{key:$("kk").value,remember:$("kr").checked});toast(r.error||(r.remembered?"chave guardada no cofre":"chave aceita"));draw()}
+async function setDev(){await api("/api/models/settings",{device:$("dev").value});toast("vale ao carregar de novo")}
+async function pickTo(n,f,kind){const p=await window.pywebview.api.pick(kind);if(p){$("mc-"+n).querySelector(`[data-f="${f}"]`).value=p}}
 async function ok(id,a){await api("/api/pending/"+id,{approve:a});toast(a?"aprovado":"recusado");draw()}
 async function ev(){const r=await api("/api/event",{sync:true,title:$("ti").value,text:$("tx").value,tree:$("tr").value||undefined,source:"teste"});
   $("out").innerHTML=`<article class="card" style="margin-top:22px"><h3>Caminho percorrido</h3>${trail(r)||'<p class="text">Nenhuma árvore casou com este evento.</p>'}<pre>${esc(JSON.stringify(r,null,1))}</pre></article>`}
@@ -167,5 +198,6 @@ async function dq(){const r=await api("/api/decide",{model:$("mo").value,query:$
 async function sv(){const r=await api("/api/trees",{yaml:$("ya").value});$("sm").textContent=r.error?r.error:`ok · ${r.trees} árvore(s)`;toast(r.error?"erro na árvore":"árvores salvas")}
 async function copyTok(){try{const t=(await api("/api/token")).token;await navigator.clipboard.writeText(t);toast("token copiado")}catch(e){toast("token em ~/.djorge-local/token.txt")}}
 window.addEventListener("hashchange",()=>{const k=location.hash.slice(1);if(T[k]&&k!=tab){tab=k;draw()}});
-draw();setInterval(()=>{if(tab=="eventos"||tab=="pend")draw();else live()},4000);
+api("/api/models").then(r=>{if(!location.hash&&!r.models.some(x=>x.path||x.sealed||x.state=="pronto"))tab="modelos";draw()});
+setInterval(()=>{if(tab=="eventos"||tab=="pend"||(tab=="modelos"&&/carregando/.test($("m").textContent)))draw();else live()},4000);
 </script></body></html>

@@ -31,9 +31,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
-      - run: sudo apt-get install -y python3-tk libayatana-appindicator3-1 || true
+      - run: sudo apt-get update && sudo apt-get install -y python3-tk libayatana-appindicator3-1 libxcb-cursor0 libegl1 || true
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
-      - run: pip install -r requirements.txt pystray keyring pyinstaller
+      - run: pip install -r requirements.txt pystray keyring pyinstaller "pywebview[qt]" PyQt6-WebEngine
       - run: python -m PyInstaller djorge-local.spec --noconfirm
       - run: cd dist && tar czf DjorgeLocal-Linux.tar.gz "Djorge Local"
       - uses: actions/upload-artifact@v4

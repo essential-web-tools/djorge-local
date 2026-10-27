@@ -8,12 +8,12 @@ icon = "assets/icon.ico" if is_win else ("assets/icon.png" if is_mac else None)
 
 hidden = collect_submodules("djorge") + collect_submodules("djorge_local") + [
     "pystray._win32" if is_win else ("pystray._darwin" if is_mac else "pystray._xorg"),
-    "keyring.backends", "plyer.platforms"] + collect_submodules("transformers.models.qwen3") + \
+    "keyring.backends", "plyer.platforms"] + collect_submodules("webview") + collect_submodules("transformers.models.qwen3") + \
     collect_submodules("transformers.models.qwen2") + ["transformers.models.auto.modeling_auto"]
 datas = [("djorge_local/ui.html", "djorge_local"), ("djorge_local/icon.png", "djorge_local"),
          ("djorge_local/static", "djorge_local/static"),
          ("config.example.yaml", "."), ("arvores.example.yaml", "."), ("assets/icon.png", "assets")]
-datas += collect_data_files("djorge") + collect_data_files("plyer") + collect_data_files("transformers")
+datas += collect_data_files("djorge") + collect_data_files("plyer") + collect_data_files("transformers") + collect_data_files("webview")
 excl = ["torchvision", "torchaudio", "matplotlib", "IPython", "jupyter", "notebook", "pandas",
         "tensorboard", "triton", "sympy.testing", "pytest", "sklearn", "tensorflow", "jax", "cv2", "gradio"]
 

@@ -64,6 +64,27 @@ class App:
         self.trees, self.conns = [], {}
         self.reload_trees()
 
+    def save_config(self):
+        """Writes back the editable parts (models, api ports, device, threads); everything else is preserved."""
+        p = Path(self.cfg["_path"])
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else {}
+        raw = raw or {}
+        raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "sealed", "drive_file_id", "role") if f in v}
+                         for k, v in self.cfg["models"].items()}
+        raw.setdefault("api", {})["ports"] = dict(self.cfg["api"].get("ports") or {})
+        raw["device"], raw["threads"] = self.cfg["device"], self.cfg["threads"]
+        p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    def load_async(self, name):
+        def go():
+            self.models.state[name] = "carregando"
+            try:
+                self.models.get(name)
+            except Exception as e:
+                from .models import NeedKey
+                self.models.state[name] = "precisa da chave" if isinstance(e, NeedKey) else f"erro: {e}"
+        threading.Thread(target=go, daemon=True).start()
+
     def trees_path(self) -> Path:
         return resolve(self.cfg, self.cfg["trees_file"])
 
@@ -167,6 +188,10 @@ def make_handler(app: App):
                 return self._send(401, {"error": "token"})
             if u.path == "/api/status":
                 return self._send(200, app.status())
+            if u.path == "/api/models":
+                ms = app.models.describe()
+                return self._send(200, {"models": ms, "device": app.cfg["device"], "threads": app.cfg["threads"],
+                                        "needs_key": any(m["state"] == "precisa da chave" for m in ms)})
             if u.path == "/api/token":
                 return self._send(200, {"token": token})
             if u.path == "/api/history":
@@ -201,6 +226,44 @@ def make_handler(app: App):
                     r = z.execute(b["query"], sources={"text": b.get("text", "")}, lang=app.cfg["language"],
                                   now=b.get("now"))
                     return self._send(200, r)
+                if u.path.startswith("/api/models/"):
+                    act, name = u.path.rsplit("/", 1)[1], b.get("name", "")
+                    M = app.models
+                    if act == "save":
+                        if name in M.loaded():
+                            M.unload(name)
+                        M.configure(name, b, app.save_config)
+                        if b.get("load") and M.cfg["models"][name].get("enabled", True):
+                            app.load_async(name)
+                    elif act == "load":
+                        M.configure(name, {"enabled": True}, app.save_config); app.load_async(name)
+                    elif act == "unload":
+                        M.unload(name)
+                    elif act == "remove":
+                        M.remove(name, app.save_config)
+                    elif act == "key":
+                        from .crypto import BadKey
+                        try:
+                            saved = M.set_key(str(b.get("key", "")), bool(b.get("remember")))
+                        except BadKey:
+                            return self._send(400, {"error": "chave errada para os modelos encriptados"})
+                        for m in M.describe():
+                            if m["state"] == "precisa da chave":
+                                app.load_async(m["name"])
+                        return self._send(200, {"ok": True, "remembered": saved})
+                    elif act == "download":
+                        from .models import download
+                        threading.Thread(target=lambda: download(app.cfg, [name] if name else None),
+                                         daemon=True).start()
+                    elif act == "settings":
+                        if b.get("device") in ("auto", "cpu", "cuda"):
+                            app.cfg["device"] = b["device"]
+                        if str(b.get("threads", "")).isdigit():
+                            app.cfg["threads"] = int(b["threads"])
+                        app.save_config()
+                    else:
+                        return self._send(404, {"error": "ação desconhecida"})
+                    return self._send(200, {"ok": True, "models": M.describe()})
                 if u.path.startswith("/api/pending/"):
                     return self._send(200, app.actions.confirm(u.path.rsplit("/", 1)[1], bool(b.get("approve"))))
                 if u.path == "/api/trees":

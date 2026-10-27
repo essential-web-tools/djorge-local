@@ -136,3 +136,40 @@ def test_full_api_per_model(home, art):
     assert call("/v1/sentinel", {"text": "x"})[0] == 404
     code, r = call("/execute", {"query": "TOTAL AGID limão FROM t", "sources": {"t": "2 limões e 3 limões"}})
     assert r["result"]["value"] == 5
+
+
+def test_models_tab_endpoints(home, art):
+    import yaml
+    (home / "config.yaml").write_text(yaml.safe_dump({"device": "cpu", "models": {"origo": {"path": ""}},
+                                                      "api": {"ports": {"origo": 18780}}}), encoding="utf-8")
+    from djorge_local import config as C
+    from djorge_local.app import App, make_handler
+    from http.server import ThreadingHTTPServer
+    cfg = C.load(str(home / "config.yaml")); app = App(cfg)
+    s = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app)); port = s.server_address[1]
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    def call(path, body=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"X-Token": cfg["server"]["token"], "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+    assert call("/api/models/save", {"name": "origo", "path": "/nao/existe"})[0] == 400
+    assert call("/api/models/save", {"name": "Bad Name"})[0] == 400
+    code, r = call("/api/models/save", {"name": "origo", "path": art, "load": True})
+    assert code == 200
+    for _ in range(100):
+        st = {m["name"]: m["state"] for m in call("/api/models")[1]["models"]}
+        if st["origo"] == "pronto":
+            break
+        time.sleep(0.2)
+    assert st["origo"] == "pronto"
+    assert yaml.safe_load((home / "config.yaml").read_text())["models"]["origo"]["path"] == art
+    call("/api/models/save", {"name": "extra", "enabled": False})
+    assert {m["name"] for m in call("/api/models")[1]["models"]} == {"origo", "flash", "extra"}
+    assert call("/api/models/unload", {"name": "origo"})[1]["models"][0]["state"] == "não carregado"
+    call("/api/models/remove", {"name": "extra"})
+    assert "extra" not in yaml.safe_load((home / "config.yaml").read_text())["models"]
+    s.shutdown()

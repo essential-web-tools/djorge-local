@@ -91,6 +91,8 @@ Executável opcional: `pip install pyinstaller && python build_exe.py`.
 * **Sem montar nada no seu PC:** suba esta pasta num repositório do GitHub e rode a ação **build**
   (aba Actions → build → Run workflow). Ela gera o instalador do Windows, o app do macOS e o pacote Linux.
 
+Abre numa **janela própria** (WebView2 no Windows, WebKit no macOS, Qt no Linux), sem navegador; a aba
+**Modelos** escolhe a pasta ou o `.djx` de cada modelo, liga, carrega, descarrega e recebe a chave.
 Por que abre rápido: modo *onedir* (nada é descompactado a cada início), ícone na bandeja e painel aparecem
 antes dos modelos; o PyTorch e os modelos carregam em segundo plano (o painel mostra "carregando" → "pronto").
 Abrir de novo só traz o painel da instância que já está rodando. A chave dos modelos é pedida numa janela e
