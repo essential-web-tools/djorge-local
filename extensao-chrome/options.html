@@ -1,0 +1,30 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Djorge Sentinel — configurações</title>
+<link rel="stylesheet" href="ui.css"><style>
+body{padding:34px 20px 60px}main{max-width:860px;margin:auto}
+.top{display:flex;align-items:center;gap:12px;margin-bottom:26px}.top h1{font-size:34px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:720px){.grid{grid-template-columns:1fr}}
+.site{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;border-top:1px dashed var(--line);padding:14px 0}
+.site:first-child{border-top:0}.site h3{font-size:17px}.site .opts{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:6px}
+.site .opts .sw{margin:2px 0;font-size:13px}.site select{width:auto;padding:6px 10px;font-size:12.5px}
+.rm{background:none;border:0;color:var(--ink3);cursor:pointer;font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font:600 12px var(--mono);opacity:0;transition:opacity .3s}
+#toast.on{opacity:1}</style></head><body><main>
+<div class="top"><img class="logo" src="icons/128.png" alt=""><div><p class="kick">Djorge · Sentinel</p><h1>Guarda <em>sob medida</em></h1></div></div>
+<p class="hint" style="font-size:14px;margin:-10px 0 22px">O Sentinel só olha os sites que você ligar aqui, e só o que você marcar em cada um. Os textos vão apenas para o seu servidor Sentinel, com dados pessoais mascarados.</p>
+<div class="grid">
+<section class="card"><h2>Servidor</h2>
+<label>endereço do Sentinel <span class="qi" title="Ex.: https://sentinel.seudominio.com. É o servidor onde o modelo Sentinel roda.">?</span></label><input id="server" type="url" placeholder="https://...">
+<label>chave da API <span class="qi" title="A mesma de DJORGE_API_KEYS no servidor. Fica guardada só neste navegador.">?</span></label><input id="key" type="password" placeholder="opcional se o servidor não exigir">
+<button class="btn p" id="save">Salvar e testar ✳</button> <span id="conn" class="hint"></span></section>
+<section class="card"><h2>Comportamento</h2>
+<label>rigor <span class="qi" title="Conservador avisa mais cedo; permissivo só age quando tem muita certeza.">?</span></label>
+<select id="profile"><option value="conservador">Conservador — avisa mais</option><option value="equilibrado">Equilibrado</option><option value="permissivo">Permissivo — avisa menos</option></select>
+<label class="sw"><input type="checkbox" id="mask"> Mascarar CPF, cartão, e-mail e telefone antes de enviar</label>
+<label class="sw"><input type="checkbox" id="failOpen"> Se o servidor não responder, mostrar as notificações normalmente</label>
+<p class="hint" id="stats"></p></section></div>
+<section class="card"><h2>Sites protegidos</h2>
+<p class="hint">Escolha um site comum ou digite qualquer endereço. O Chrome vai pedir sua permissão para cada site.</p>
+<div id="presets" style="margin:10px 0"></div>
+<div style="display:flex;gap:8px"><input id="custom" type="text" placeholder="ou digite um site, ex.: meubanco.com.br"><button class="btn g" id="add" style="margin:0">Adicionar</button></div>
+<div id="list" style="margin-top:10px"></div></section>
+</main><div id="toast"></div><script src="options.js" type="module"></script></body></html>

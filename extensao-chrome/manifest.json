@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Djorge Sentinel — Guarda",
+  "short_name": "Sentinel",
+  "version": "0.1.0",
+  "description": "Avisa, filtra e bloqueia golpes, phishing e links perigosos só nos sites, mensagens e notificações que você escolher.",
+  "minimum_chrome_version": "111",
+  "icons": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"},
+  "action": {"default_popup": "popup.html", "default_title": "Djorge Sentinel"},
+  "options_page": "options.html",
+  "background": {"service_worker": "sw.js", "type": "module"},
+  "permissions": ["storage", "scripting", "contextMenus", "activeTab"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "web_accessible_resources": [],
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"}
+}

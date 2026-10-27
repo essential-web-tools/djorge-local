@@ -1,0 +1,10 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><link rel="stylesheet" href="ui.css">
+<style>body{width:320px;padding:16px}h1{font-size:20px}.row{display:flex;align-items:center;gap:6px}.big{font:700 26px var(--serif);color:var(--rose-deep)}
+.st{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;margin-top:12px}.st div{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:8px}
+.st small{font:600 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}</style></head><body>
+<div class="row"><img class="logo" src="icons/48.png" alt=""><div><p class="kick">Sentinel</p><h1>Guarda</h1></div></div>
+<div class="card" style="margin-top:12px"><p id="host" class="hint"></p><div id="state"></div></div>
+<p id="last" class="hint"></p>
+<div class="st"><div><span class="big" id="c">0</span><br><small>verificados</small></div><div><span class="big" id="w">0</span><br><small>suspeitos</small></div><div><span class="big" id="b">0</span><br><small>perigosos</small></div></div>
+<button class="btn g" id="opt" style="width:100%;justify-content:center">Configurações</button>
+<script src="popup.js" type="module"></script></body></html>

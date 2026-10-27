@@ -96,6 +96,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {contents: write}
     steps:
+      - uses: actions/checkout@v4
+      - run: cd extensao-chrome && zip -qr ../out-ext.zip . -x "*.md" && cd .. && mkdir -p out && mv out-ext.zip out/DjorgeSentinel-Chrome.zip
       - uses: actions/download-artifact@v4
         with: {path: out}
       - uses: softprops/action-gh-release@v2
@@ -109,7 +111,9 @@ jobs:
               (se o Chrome avisar, abra Downloads › ⋮ › "Manter"; se o Windows avisar, "Mais informações" › "Executar assim mesmo").
             * **macOS:** `DjorgeLocal-macOS.zip` (abra com clique direito → Abrir na primeira vez)
             * **Linux:** `DjorgeLocal-Linux.tar.gz`
+            * **Extensão do Chrome (Sentinel):** `DjorgeSentinel-Chrome.zip` → extraia, `chrome://extensions` › Modo do desenvolvedor › Carregar sem compactação
           files: |
+            out/DjorgeSentinel-Chrome.zip
             out/DjorgeLocal-Windows/*.zip
             out/DjorgeLocal-Windows/*.exe
             out/DjorgeLocal-macOS/*.zip
