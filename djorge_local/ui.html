@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Djorge Local</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90' fill='%23b56576'>✳</text></svg>">
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
 <style>
 @font-face{font-family:Fraunces;font-weight:400;src:url(/static/fonts/fraunces-latin-400-normal.woff2) format("woff2")}
 @font-face{font-family:Fraunces;font-weight:600;src:url(/static/fonts/fraunces-latin-600-normal.woff2) format("woff2")}
@@ -12,15 +12,16 @@
 @font-face{font-family:Manrope;font-weight:500;src:url(/static/fonts/manrope-latin-500-normal.woff2) format("woff2")}
 @font-face{font-family:Manrope;font-weight:600;src:url(/static/fonts/manrope-latin-600-normal.woff2) format("woff2")}
 @font-face{font-family:Manrope;font-weight:700;src:url(/static/fonts/manrope-latin-700-normal.woff2) format("woff2")}
-@font-face{font-family:"JetBrains Mono";font-weight:400;src:url(/static/fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2")}
-@font-face{font-family:"JetBrains Mono";font-weight:600;src:url(/static/fonts/jetbrains-mono-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:"Geist Mono";font-weight:400;src:url(/static/fonts/geist-mono-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Geist Mono";font-weight:500;src:url(/static/fonts/geist-mono-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:"Geist Mono";font-weight:600;src:url(/static/fonts/geist-mono-latin-600-normal.woff2) format("woff2")}
 :root{
   --bg:#f6f3ee;--bg2:#efe9e0;--surface:#fdfcf9;
   --ink:#26221e;--ink2:#5f584f;--ink3:#968d81;
   --rose:#b56576;--rose-deep:#93485b;--rose-soft:#f5e5e9;--rose-glow:rgba(181,101,118,.16);
   --line:rgba(38,34,30,.10);--line2:rgba(38,34,30,.06);
   --sh1:0 10px 30px rgba(38,34,30,.07);--sh2:0 26px 60px rgba(38,34,30,.12);
-  --serif:'Fraunces',Georgia,serif;--sans:'Manrope',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace;
+  --serif:'Fraunces',Georgia,serif;--sans:'Manrope',system-ui,sans-serif;--mono:'Geist Mono',ui-monospace,'Cascadia Code',monospace;
   --r-lg:28px;--r-md:20px;--r-sm:14px;--ease:cubic-bezier(.22,.61,.21,1)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:var(--sans);color:var(--ink);line-height:1.6;background:var(--bg);min-height:100vh;overflow-x:hidden;
@@ -36,6 +37,8 @@ code{font-family:var(--mono);font-size:.88em;background:var(--rose-soft);color:v
   backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:var(--sh1);flex-wrap:wrap}
 .brand{font-family:var(--serif);font-weight:700;font-size:19px;white-space:nowrap}
 .brand em{font-style:italic;color:var(--rose-deep)}
+.brand{display:flex;align-items:center;gap:10px}.logo{width:34px;height:34px;flex:none;transition:transform .5s var(--ease)}.brand:hover .logo{transform:rotate(-8deg) scale(1.06)}
+.logo.big{width:110px;height:110px;animation:bob 2.4s ease-in-out infinite}@keyframes bob{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-8px) rotate(3deg)}}
 .navlinks{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
 .navlinks button{font:600 13px var(--sans);color:var(--ink2);background:none;border:0;padding:9px 14px;border-radius:999px;cursor:pointer;
   transition:background .3s var(--ease),color .3s var(--ease)}
@@ -116,12 +119,97 @@ footer em{font-family:var(--serif);font-style:italic;text-transform:none;letter-
 .hint{font-size:12.5px;color:var(--ink3);margin-top:4px}
 .savebar{position:sticky;bottom:16px;display:flex;justify-content:flex-end;gap:10px;margin-top:10px;z-index:20}
 details.adv summary{cursor:pointer;font:600 10px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink3);margin-top:16px}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,var(--rose),var(--rose-deep));border-radius:0 4px 4px 0;z-index:130;transition:width .4s var(--ease),opacity .4s}
+.progress.on{width:72%;transition:width 6s cubic-bezier(.1,.6,.2,1)}
+.progress.done{width:100%;opacity:0}
+/* abertura */
+#boot{position:fixed;inset:0;z-index:150;display:grid;place-items:center;background:var(--bg);transition:opacity .6s var(--ease),visibility .6s}
+#boot.off{opacity:0;visibility:hidden}
+#boot .in{text-align:center}
+#boot .star{font-size:64px;color:var(--rose);display:inline-block;animation:spin 3.2s linear infinite}
+#boot h2{font-family:var(--serif);font-weight:700;font-size:44px;margin:14px 0 4px}
+#boot h2 em{font-style:italic;color:var(--rose-deep)}
+#boot p{font-family:var(--serif);font-style:italic;color:var(--ink2)}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* faixa de carregamento do modelo */
+.loadband{display:none;align-items:center;gap:14px;margin-bottom:24px;padding:14px 20px;border-radius:999px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--sh1)}
+.loadband.on{display:flex}
+.loadband .star{color:var(--rose);animation:spin 2.4s linear infinite;display:inline-block}
+.loadband .bar{flex:1;height:8px;border-radius:999px;background:var(--bg2);overflow:hidden;position:relative}
+.loadband .bar i{position:absolute;inset:0;width:40%;border-radius:999px;background:linear-gradient(90deg,var(--rose),var(--rose-deep));animation:slide 1.6s var(--ease) infinite}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+/* esqueletos */
+.sk{border-radius:var(--r-lg);min-height:180px;background:linear-gradient(100deg,var(--surface) 30%,#f3ece6 50%,var(--surface) 70%);background-size:300% 100%;animation:shim 1.4s linear infinite;border:1px solid var(--line)}
+@keyframes shim{to{background-position:-150% 0}}
+/* cabeçalho com gravura */
+.hd{display:grid;grid-template-columns:1fr 230px;gap:36px;align-items:center}
+.plate{height:200px;border-radius:22px;overflow:hidden;border:1px solid var(--line);background:var(--surface);box-shadow:var(--sh2);padding:9px;transform:rotate(2deg);animation:floaty 11s ease-in-out infinite}
+.plate img{width:100%;height:100%;object-fit:cover;border-radius:14px;mix-blend-mode:multiply;display:block}
+@keyframes floaty{0%,100%{transform:translateY(0) rotate(2deg)}50%{transform:translateY(-10px) rotate(2deg)}}
+.plate.orn{display:grid;place-items:center;background:radial-gradient(circle,var(--rose-soft),var(--surface) 70%);font-size:84px;color:var(--rose)}
+.emptyart{display:grid;justify-items:center;gap:16px;padding:40px 0}
+.emptyart .plate{width:220px;height:180px;transform:rotate(-2deg)}
+.btn[aria-busy=true]{pointer-events:none;opacity:.8}
+.btn[aria-busy=true]::after{content:"";width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .8s linear infinite}
+@media(max-width:860px){.hd{grid-template-columns:1fr}.plate{display:none}}
 @media(max-width:760px){.navpill{border-radius:26px;padding:12px 16px}.navlinks{margin-left:0;width:100%}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
 <div class="grain" aria-hidden="true"></div>
+<div class="progress" id="prog" aria-hidden="true"></div>
+<div id="boot"><div class="in"><svg class="logo big" viewBox="0 0 512 512" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b56576"/><stop offset="1" stop-color="#93485b"/>
+    </linearGradient>
+    <filter id="lh2" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="7"/>
+    </filter>
+  </defs>
+  <rect x="20" y="20" width="472" height="472" rx="118" fill="url(#lg2)"/>
+  <g fill="none" stroke="#fdfcf9" stroke-linecap="round" stroke-linejoin="round" filter="url(#lh2)">
+    
+    <path d="M150 138 C147 200 151 268 149 334" stroke-width="34"/>
+    <path d="M146 140 C262 122 318 196 306 252 C296 306 236 338 152 332" stroke-width="34"/>
+    
+    <path d="M372 196 C374 250 373 300 368 344 C356 420 240 450 150 400 C140 394 133 386 130 376" stroke-width="34"/>
+    
+    <path d="M140 130 C258 112 326 190 314 252" stroke-width="5" opacity=".45"/>
+    <path d="M380 204 C383 300 380 360 352 392" stroke-width="5" opacity=".45"/>
+  </g>
+  <g fill="#fdfcf9" filter="url(#lh2)">
+    <circle cx="376" cy="136" r="24"/>            
+    <circle cx="214" cy="226" r="20"/>            
+  </g>
+</svg><h2>Djorge <em>Local</em></h2><p>toda decisão parte de uma origem</p></div></div>
 <div class="navpill">
-  <span class="brand">Djorge <em>Local</em> ✳</span>
+  <span class="brand"><svg class="logo" viewBox="0 0 512 512" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b56576"/><stop offset="1" stop-color="#93485b"/>
+    </linearGradient>
+    <filter id="lh" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="7"/>
+    </filter>
+  </defs>
+  <rect x="20" y="20" width="472" height="472" rx="118" fill="url(#lg)"/>
+  <g fill="none" stroke="#fdfcf9" stroke-linecap="round" stroke-linejoin="round" filter="url(#lh)">
+    
+    <path d="M150 138 C147 200 151 268 149 334" stroke-width="34"/>
+    <path d="M146 140 C262 122 318 196 306 252 C296 306 236 338 152 332" stroke-width="34"/>
+    
+    <path d="M372 196 C374 250 373 300 368 344 C356 420 240 450 150 400 C140 394 133 386 130 376" stroke-width="34"/>
+    
+    <path d="M140 130 C258 112 326 190 314 252" stroke-width="5" opacity=".45"/>
+    <path d="M380 204 C383 300 380 360 352 392" stroke-width="5" opacity=".45"/>
+  </g>
+  <g fill="#fdfcf9" filter="url(#lh)">
+    <circle cx="376" cy="136" r="24"/>            
+    <circle cx="214" cy="226" r="20"/>            
+  </g>
+</svg>Djorge <em>Local</em></span>
   <nav class="navlinks" id="nav"></nav>
   <span class="live" id="live"><i></i><span>—</span></span>
 </div>
@@ -133,25 +221,32 @@ details.adv summary{cursor:pointer;font:600 10px var(--mono);letter-spacing:.2em
 const T={eventos:"Eventos",modelos:"Modelos",pend:"Confirmações",testar:"Testar",arvores:"Árvores",api:"API",config:"Configurações",estado:"Estado"};
 let tab=(location.hash||"#eventos").slice(1); if(!T[tab]) tab="eventos";
 const $=id=>document.getElementById(id);
-const api=(p,b)=>fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{}).then(r=>r.json());
+let busy=0;function prog(on){const e=$("prog");if(!e)return;busy+=on?1:-1;if(busy>0){e.classList.remove("done");e.classList.add("on")}else{e.classList.remove("on");e.classList.add("done");setTimeout(()=>{if(busy<=0){e.classList.remove("done");e.style.width=""}},500)}}
+const api=(p,b,quiet)=>{if(!quiet)prog(true);return fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{}).then(r=>r.json()).finally(()=>{if(!quiet)prog(false)})};
+let IMGS=[];fetch("/static/img/index.json").then(r=>r.json()).then(x=>{IMGS=Array.isArray(x)?x:[];draw()}).catch(()=>{});
+const ART={eventos:"flores",modelos:"origem",pend:"borboletas",testar:"medusas",arvores:"colibris",api:"ceu",config:"borboletas",estado:"ceu"};
+function plate(k,cls=""){const n=ART[k];return IMGS.includes(n)?`<figure class="plate ${cls}"><img src="/static/img/${n}.webp" alt="" loading="lazy"></figure>`:`<figure class="plate orn ${cls}">✳</figure>`}
+function empty(t){return `<div class="emptyart">${plate(tab)}<p class="empty" style="padding:0">✳ ${t} ✳</p></div>`}
+async function busyBtn(btn,fn){if(btn){btn.setAttribute("aria-busy","true")}try{return await fn()}finally{if(btn)btn.removeAttribute("aria-busy")}}
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const pct=p=>p==null?"":` <span class="p">p ${(+p).toFixed(2)}</span>`;
 function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");setTimeout(()=>e.classList.remove("on"),2200)}
 function nav(){$("nav").innerHTML=Object.entries(T).map(([k,v])=>`<button class="${k==tab?"on":""}" onclick="go('${k}')">${v}</button>`).join("")}
 function go(k){tab=k;location.hash=k;draw()}
-function head(kick,title,lede){return `<p class="kicker">${kick}</p><h1>${title}</h1>${lede?`<p class="lede">${lede}</p>`:""}`}
+function head(kick,title,lede){return `<div id="lb" class="loadband"><span class="star">✳</span><span class="meta" id="lbt">carregando o modelo…</span><div class="bar"><i></i></div></div><div class="hd"><div><p class="kicker">${kick}</p><h1>${title}</h1>${lede?`<p class="lede">${lede}</p>`:""}</div>${plate(tab)}</div>`}
 function ans(s){if(s.action)return `${esc(s.action)} · ${esc(s.status)}`;
   if(s.error)return `<span class="chip soft">erro</span> ${esc(s.error)}`;
   const a=s.selected?s.selected.join(", "):(s.answer??s.value);return `${esc(a)}${pct(s.probability)}${s.abstain?' <span class="chip soft">abstém</span>':""}${s.grounding&&s.grounding!="classifier"?` <span class="chip soft">${esc(s.grounding)}</span>`:""}`}
 function trail(r){return (r.runs||[]).map(x=>`<div class="meta" style="margin-top:12px">árvore · ${esc(x.tree)}</div>${x.error?`<p class="text">${esc(x.error)}</p>`:""}<ul class="trail">${(x.trail||[]).map(s=>`<li class="${s.action?"act":""}"><b>${esc(s.node)}</b> — ${ans(s)} <span class="meta">${s.ms??""} ms</span></li>`).join("")}</ul>`).join("")}
-async function draw(){nav();const m=$("m");
+let first=true;
+async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.innerHTML=`<div class="grid">${"<div class='sk'></div>".repeat(3)}</div>`;m.dataset.tab=tab}
  if(tab=="eventos"){const h=(await api("/api/history?n=80")).filter(r=>r.type=="event");
   m.innerHTML=head("Cap. I — O que chegou","Eventos e <span class='it'>decisões</span>.","Cada notificação, e-mail, arquivo ou texto enviado por outro programa passa pelas árvores. Aqui fica o caminho percorrido.")+
-  (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:`<p class="empty">✳ nenhum evento ainda ✳</p>`)}
+  (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:empty("nenhum evento ainda"))}
  if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
   const st=x=>x=="pronto"?"p":"soft";
   m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","Aponte a pasta de um modelo ou um arquivo <code>.djx</code> encriptado, ligue e carregue. Cada modelo carregado ganha a própria API local.")+
-  (r.needs_key&&!r.embedded_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="setKey()">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
+  (r.needs_key&&!r.embedded_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="busyBtn(this,()=>setKey())">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
   `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${esc(x.source)}${x.api?" · "+esc(x.api):""}</div>
    <h3>${esc(x.name)} <span class="chip ${st(x.state)}">${esc(x.state)}</span></h3>
    <label>descrição</label><input data-f="role" value="${esc(x.role)}">
@@ -161,23 +256,23 @@ async function draw(){nav();const m=$("m");
    <label>arquivo protegido (.djx)</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
    <label>ou id do arquivo no Google Drive</label><input data-f="drive_file_id" value="${esc(x.drive_file_id)}">
    <label class="switch"><input type="checkbox" data-f="enabled" ${x.enabled?"checked":""}> ligado</label>
-   <div class="acts"><button class="btn btn-rose sm" onclick="saveM('${esc(x.name)}',true)">Salvar e carregar ✳</button>
+   <div class="acts"><button class="btn btn-rose sm" onclick="busyBtn(this,()=>saveM('${esc(x.name)}',true))">Salvar e carregar ✳</button>
    ${x.state=="pronto"?`<button class="btn btn-ghost sm" onclick="actM('unload','${esc(x.name)}')">Descarregar</button>`:""}
    ${x.drive_file_id?`<button class="btn btn-ghost sm" onclick="actM('download','${esc(x.name)}')">Baixar do Drive</button>`:""}
    <button class="btn btn-ghost sm" onclick="if(confirm('Remover ${esc(x.name)} da lista?'))actM('remove','${esc(x.name)}')">Remover</button></div></article>`).join("")}
    <article class="card"><h3>Proteger um modelo</h3><p class="text">Escolha a pasta de um modelo: o Djorge cria a versão protegida (<code>.djx</code>), que só este programa abre, e passa a usá-la. Distribua só o <code>.djx</code>.</p>
    <label>nome</label><input id="in" value="origo"><label>pasta do modelo</label><div class="row2"><input id="if" placeholder="pasta com metadata/djorge.json">${pick?`<button class="btn btn-ghost" onclick="pickId('if','folder')">Escolher</button>`:""}</div>
-   <button class="btn btn-rose" onclick="impM()">Proteger e usar ✳</button></article>
-   <article class="card"><h3>Novo modelo</h3><p class="text">Qualquer artefato DJORGE: outra versão do Origo, um Flash, um especialista.</p><label>nome</label><input id="nn" placeholder="ex.: origo-v3"><button class="btn btn-rose" onclick="newM()">Adicionar ✳</button>
+   <button class="btn btn-rose" onclick="busyBtn(this,()=>impM())">Proteger e usar ✳</button></article>
+   <article class="card"><h3>Novo modelo</h3><p class="text">Qualquer artefato DJORGE: outra versão do Origo, um Flash, um especialista.</p><label>nome</label><input id="nn" placeholder="ex.: origo-v3"><button class="btn btn-rose" onclick="busyBtn(this,()=>newM())">Adicionar ✳</button>
    <label>dispositivo</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
  if(tab=="pend"){const p=await api("/api/pending");
   m.innerHTML=head("Cap. III — Antes de agir","Ações que esperam <span class='it'>você</span>.","Comandos, webhooks e gravação de arquivos só acontecem depois da sua aprovação.")+
-  (p.length?`<div class="grid">${p.map(x=>`<article class="card"><span class="chip p">${esc(x.spec.action)}</span><h3 style="margin-top:10px">${esc(x.tree)} / ${esc(x.node)}</h3><pre>${esc(JSON.stringify(x.spec,null,1))}</pre><button class="btn btn-rose" onclick="ok('${x.id}',true)">Aprovar ✳</button> <button class="btn btn-ghost" onclick="ok('${x.id}',false)">Recusar</button></article>`).join("")}</div>`:`<p class="empty">✳ nada aguardando ✳</p>`)}
+  (p.length?`<div class="grid">${p.map(x=>`<article class="card"><span class="chip p">${esc(x.spec.action)}</span><h3 style="margin-top:10px">${esc(x.tree)} / ${esc(x.node)}</h3><pre>${esc(JSON.stringify(x.spec,null,1))}</pre><button class="btn btn-rose" onclick="ok('${x.id}',true)">Aprovar ✳</button> <button class="btn btn-ghost" onclick="ok('${x.id}',false)">Recusar</button></article>`).join("")}</div>`:empty("nada aguardando"))}
  if(tab=="testar"){m.innerHTML=head("Cap. IV — Experimente","Uma decisão, <span class='it'>ao vivo</span>.","Rode um texto pelas árvores ou faça uma consulta direta a um modelo.")+
-  `<div class="grid"><article class="card"><h3>Pelas árvores</h3><label>título</label><input id="ti" placeholder="ex.: Banco"><label>texto</label><textarea id="tx" rows="7" placeholder="Seu boleto de R$ 1.200,00 vence em 20/10."></textarea><label>árvore (vazio = todas que casarem)</label><input id="tr"><button class="btn btn-rose" onclick="ev()">Decidir ✳</button></article>
-  <article class="card"><h3>Consulta direta</h3><label>modelo</label><select id="mo">${(await api("/api/models")).models.filter(x=>x.state=="pronto").map(x=>`<option>${esc(x.name)}</option>`).join("")||"<option disabled>nenhum modelo carregado</option>"}</select><label>consulta</label><input id="q" value='CHOICE ["urgente","normal"] FROM text ASK "Qual a prioridade?"'><label>texto</label><textarea id="tq" rows="5"></textarea><button class="btn btn-rose" onclick="dq()">Executar ✳</button></article></div><div id="out"></div>`}
+  `<div class="grid"><article class="card"><h3>Pelas árvores</h3><label>título</label><input id="ti" placeholder="ex.: Banco"><label>texto</label><textarea id="tx" rows="7" placeholder="Seu boleto de R$ 1.200,00 vence em 20/10."></textarea><label>árvore (vazio = todas que casarem)</label><input id="tr"><button class="btn btn-rose" onclick="busyBtn(this,()=>ev())">Decidir ✳</button></article>
+  <article class="card"><h3>Consulta direta</h3><label>modelo</label><select id="mo">${(await api("/api/models")).models.filter(x=>x.state=="pronto").map(x=>`<option>${esc(x.name)}</option>`).join("")||"<option disabled>nenhum modelo carregado</option>"}</select><label>consulta</label><input id="q" value='CHOICE ["urgente","normal"] FROM text ASK "Qual a prioridade?"'><label>texto</label><textarea id="tq" rows="5"></textarea><button class="btn btn-rose" onclick="busyBtn(this,()=>dq())">Executar ✳</button></article></div><div id="out"></div>`}
  if(tab=="arvores"){const t=await api("/api/trees");m.innerHTML=head("Cap. V — O desenho","Árvores de <span class='it'>decisões subsequentes</span>.","Cada resposta escolhe as próximas decisões. Edite, valide e salve — vale na hora, sem reiniciar.")+
-  `<article class="card"><textarea id="ya" rows="30" spellcheck="false">${esc(t.yaml)}</textarea><button class="btn btn-rose" onclick="sv()">Validar e salvar ✳</button> <span id="sm" class="meta" style="margin-left:12px"></span></article>`}
+  `<article class="card"><textarea id="ya" rows="30" spellcheck="false">${esc(t.yaml)}</textarea><button class="btn btn-rose" onclick="busyBtn(this,()=>sv())">Validar e salvar ✳</button> <span id="sm" class="meta" style="margin-left:12px"></span></article>`}
  if(tab=="api"){const s=await api("/api/status");const eps=[["POST","/v1/classify","rótulos, multi, certainty, prediction_set"],["POST","/v1/verify","verdadeiro ou falso"],["POST","/v1/score","escala ordenada"],["POST","/v1/select","só a opção ou o trecho"],["POST","/v1/aggregate","quantidades (AGG / AGID)"],["POST","/v1/tag","trechos e entidades"],["POST","/v1/decide","regras compostas → ações sugeridas"],["POST","/v1/document","documentos longos"],["POST","/v1/tools/<nome>","pii · mask · lang · validate · math · time"],["POST","/execute","qualquer consulta da linguagem"],["GET","/capabilities","o que o modelo sabe fazer"],["GET","/health","estado"]];
   const base=Object.entries(s.api||{});m.innerHTML=head("Cap. VI — A API","Tudo, <span class='it'>localmente</span>.","Cada modelo carregado tem a API inteira do DJORGE nesta máquina. Autenticação: <code>Authorization: Bearer &lt;token&gt;</code> — o mesmo token do painel.")+
   `<div class="stats">${base.map(([k,u])=>`<div class="stat"><div class="big">${esc(k)}</div><div class="cap">${esc(u)}</div></div>`).join("")||`<div class="stat"><div class="big">—</div><div class="cap">nenhum modelo carregado</div></div>`}</div>
@@ -190,14 +285,15 @@ async function draw(){nav();const m=$("m");
   m.innerHTML=head("Cap. VII — Ajustes","Tudo <span class='it'>no seu controle</span>.","Cada opção do Djorge Local, sem editar arquivos. Salvar aplica na hora; mudanças de porta pedem reiniciar.")+
   Object.entries(CFG).filter(([k])=>!SKIP.has(k)).map(([k,v])=>typeof v=="object"&&!Array.isArray(v)?`<article class="card sec"><h3>${esc(L(k))}</h3>${H[k]?`<p class="hint">${esc(H[k])}</p>`:""}${form(v,k)}</article>`:"").join("")+
   `<article class="card sec"><h3>Geral</h3>${form(Object.fromEntries(Object.entries(CFG).filter(([k,v])=>typeof v!="object"||Array.isArray(v))),"")}</article>
-  <div class="savebar"><button class="btn btn-ghost" onclick="draw()">Descartar</button><button class="btn btn-rose" onclick="saveCfg()">Salvar ajustes ✳</button></div>`}
+  <div class="savebar"><button class="btn btn-ghost" onclick="draw()">Descartar</button><button class="btn btn-rose" onclick="busyBtn(this,()=>saveCfg())">Salvar ajustes ✳</button></div>`}
  if(tab=="estado"){const s=await api("/api/status");const ms=s.model_state||{};
   m.innerHTML=head("Cap. VIII — Por dentro","Estado do <span class='it'>sistema</span>.","")+
   `<div class="stats"><div class="stat"><div class="big">${s.loaded.length}</div><div class="cap">modelos prontos</div></div><div class="stat"><div class="big">${s.trees.length}</div><div class="cap">árvores</div></div><div class="stat"><div class="big">${Object.keys(s.connectors).length}</div><div class="cap">conectores ativos</div></div><div class="stat"><div class="big">${s.pending}</div><div class="cap">confirmações</div></div></div>
   <div class="grid"><article class="card"><h3>Modelos</h3>${Object.entries(s.models).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v.role)} <span class="chip ${ms[k]=="pronto"?"p":"soft"}">${esc(ms[k]||(v.enabled?"aguardando":"desligado"))}</span></p>`).join("")}</article>
   <article class="card"><h3>Conectores</h3>${Object.entries(s.connectors).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v)}</p>`).join("")||'<p class="text">Só a API local (ative outros no config.yaml).</p>'}</article></div>`}
  live()}
-async function live(){try{const s=await api("/api/status");const ok=s.loaded.length>0;const l=$("live");l.classList.toggle("ok",ok);
+async function live(){try{const s=await api("/api/status",null,true);if(first){first=false;setTimeout(()=>$("boot").classList.add("off"),350)}
+  const ld=Object.entries(s.model_state||{}).filter(([k,v])=>v=="carregando").map(([k])=>k);const lb=$("lb");if(lb){lb.classList.toggle("on",ld.length>0);if(ld.length)$("lbt").textContent="carregando "+ld.join(", ")+"… a primeira vez leva alguns segundos"}const ok=s.loaded.length>0;const l=$("live");l.classList.toggle("ok",ok);
   l.querySelector("span").textContent=ok?`${s.loaded.join(" · ")} · fila ${s.queue}`:(Object.values(s.model_state||{}).includes("carregando")?"carregando…":"sem modelo")}catch(e){}}
 let CFG={};const SKIP=new Set([]);
 const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threads:"Núcleos de CPU (0 = todos)",drive_folder_id:"Pasta do Google Drive (id)",open_panel_on_start:"Abrir a janela ao iniciar",max_steps:"Máximo de passos por árvore",

@@ -4,6 +4,7 @@ from __future__ import annotations
 import collections
 import hmac
 import json
+import os
 import threading
 import time
 import traceback
@@ -234,12 +235,16 @@ def make_handler(app: App):
 
         def do_GET(self):
             u = urlparse(self.path); q = parse_qs(u.query)
-            if u.path.startswith("/static/fonts/"):          # bundled OFL fonts (no token: nothing private)
-                name = u.path.rsplit("/", 1)[1]
-                f = UI.parent / "static" / "fonts" / name
-                if "/" in name or ".." in name or not name.endswith(".woff2") or not f.is_file():
-                    return self._send(404, {"error": "não encontrado"})
-                return self._send(200, f.read_bytes(), "font/woff2", {"Cache-Control": "max-age=31536000"})
+            if u.path == "/static/icon.svg":
+                return self._send(200, (UI.parent / "static" / "icon.svg").read_bytes(), "image/svg+xml")
+            if u.path.startswith(("/static/fonts/", "/static/img/")):   # bundled fonts / public-domain art
+                sub, name = u.path.split("/")[2], u.path.rsplit("/", 1)[1]
+                types = {".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json"}
+                ext = os.path.splitext(name)[1]
+                f = UI.parent / "static" / sub / name
+                if "/" in name or ".." in name or ext not in types or not f.is_file():
+                    return self._send(404 if ext != ".json" else 200, {"error": "não encontrado"} if ext != ".json" else [])
+                return self._send(200, f.read_bytes(), types[ext], {"Cache-Control": "max-age=86400"})
             if u.path == "/":
                 if not self._auth(q):
                     return self._send(401, b"<p>Abra com ?token=SEU_TOKEN (veja ~/.djorge-local/token.txt)</p>",

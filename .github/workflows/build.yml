@@ -17,6 +17,7 @@ jobs:
       # bootloader compiled here (not the shared prebuilt one): far fewer antivirus false positives
       - run: pip install --no-binary pyinstaller pyinstaller
         env: {PYINSTALLER_COMPILE_BOOTLOADER: "1"}
+      - run: python tools_fetch_images.py
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
@@ -27,6 +28,8 @@ jobs:
           [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String("${{ secrets.WIN_CERT_PFX_BASE64 }}"))
           $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
           & $st.FullName sign /f cert.pfx /p "${{ secrets.WIN_CERT_PASSWORD }}" /fd sha256 /tr http://timestamp.digicert.com /td sha256 "dist\Djorge Local\Djorge Local.exe"
+      - run: Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile assets/MicrosoftEdgeWebview2Setup.exe
+        shell: pwsh
       - run: choco install innosetup -y --no-progress
       - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
       - uses: actions/upload-artifact@v4
@@ -38,6 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
       - run: pip install torch && pip install -r requirements.txt pystray keyring pyinstaller
+      - run: python tools_fetch_images.py
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
@@ -53,6 +57,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y python3-tk libayatana-appindicator3-1 libxcb-cursor0 libegl1 || true
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
       - run: pip install -r requirements.txt pystray keyring pyinstaller "pywebview[qt]" PyQt6-WebEngine
+      - run: python tools_fetch_images.py
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
