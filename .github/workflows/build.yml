@@ -36,7 +36,12 @@ jobs:
           Write-Host "---- stderr"; Get-Content "$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue
           Write-Host "---- log"; Get-Content "$env:DJORGE_LOCAL_HOME\logs\djorge.log" -ErrorAction SilentlyContinue
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-          if (-not $ok) { throw "o executável não abriu o painel" }
+          if (-not $ok) {
+            $all = @()
+            foreach ($f in @("$env:RUNNER_TEMP\out.txt", "$env:RUNNER_TEMP\err.txt", "$env:DJORGE_LOCAL_HOME\logs\djorge.log")) { $all += Get-Content $f -ErrorAction SilentlyContinue }
+            $all | Select-Object -Last 40 | ForEach-Object { Write-Host "::warning::$($_ -replace '%','%25')" }
+            throw "o executável não abriu o painel"
+          }
           Write-Host "painel respondeu em $([int]($i*2)) s"
       - name: assinar (opcional, com certificado em WIN_CERT_PFX_BASE64 / WIN_CERT_PASSWORD)
         if: ${{ env.HAS_CERT == 'true' }}
