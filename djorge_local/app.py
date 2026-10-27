@@ -77,7 +77,7 @@ class App:
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     EDITABLE = ("timezone", "language", "device", "threads", "drive_folder_id", "open_panel_on_start", "server", "api",
-                "connectors", "extract", "actions", "history", "max_steps")
+                "connectors", "extract", "actions", "history", "max_steps", "economy")
 
     def settings(self) -> dict:
         import copy

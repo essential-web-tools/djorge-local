@@ -151,9 +151,79 @@ class WindowApi:
         return r[0] if isinstance(r, (list, tuple)) else str(r)
 
 
+def total_ram_gb() -> float:
+    try:
+        if IS_WIN:
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = MS(); m.dwLength = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return m.ullTotalPhys / 1e9
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9
+    except Exception:
+        return 0.0
+
+
+def economy_mode(cfg):
+    """Computers with little memory (< 8 GB): lossless savings only (int8 token table, unused vocabulary
+    removed), one model at a time. Measured on the Sentinel/Origo: same answers, ~0.5 GB less."""
+    import logging
+    ram = total_ram_gb()
+    if cfg.get("economy", "auto") == "off" or (cfg.get("economy", "auto") == "auto" and ram >= 8):
+        return False
+    os.environ.setdefault("DJORGE_EMBED_INT8", "1")
+    os.environ.setdefault("DJORGE_PRUNE_VOCAB", "1")
+    logging.info("modo econômico ligado (%.1f GB de RAM)", ram)
+    return True
+
+
+def _edge():
+    cands = []
+    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA")):
+        if base:
+            cands += [os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"),
+                      os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")]
+    return next((c for c in cands if os.path.isfile(c)), None)
+
+
+def _app_window_windows(url, cfg, app):
+    """Windows: the interface opens as an APP window of Edge (no tabs, no address bar, own profile in
+    ~/.djorge-local). It avoids the .NET / WebView2 embedding that crashed on some Windows 10 machines."""
+    import logging
+    import subprocess
+    from . import config as CF
+    exe = _edge()
+    if not exe:
+        return False
+    prof = str(CF.HOME / "janela")
+
+    def open_win():
+        flags = 0x08000000 if IS_WIN else 0                       # CREATE_NO_WINDOW
+        subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={prof}", "--window-size=1260,880",
+                          "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+                          "--disable-features=Translate", "--lang=pt-BR"], creationflags=flags)
+        logging.info("janela de app aberta com %s", os.path.basename(exe))
+    open_win()
+    if app is None:
+        return True
+    tray = _tray(app, cfg, show=open_win, quit_=lambda: os._exit(0))
+    if tray is None:                                   # no tray: keep serving until the user ends the process
+        threading.Event().wait()
+    threading.Event().wait()
+    return True
+
+
 def _window(url, cfg, app=None):
     """Returns True if the native window ran; False if no web view backend is available."""
     import logging
+    if IS_WIN:
+        return _app_window_windows(url, cfg, app)
     if not _webview2_ok():
         logging.warning("WebView2 ausente: usando o navegador")
         return False
@@ -253,6 +323,7 @@ def main():
         if not _window(url, cfg):
             webbrowser.open(url)
         return
+    economy_mode(cfg)
     from .app import App, serve
     app = App(cfg)
     try:

@@ -14,6 +14,7 @@ jobs:
         with: {python-version: "3.11"}
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
       - run: pip install -r requirements.txt winsdk pystray keyring
+      - run: pip uninstall -y pywebview pythonnet clr_loader
       # bootloader compiled here (not the shared prebuilt one): far fewer antivirus false positives
       - run: pip install --no-binary pyinstaller pyinstaller
         env: {PYINSTALLER_COMPILE_BOOTLOADER: "1"}

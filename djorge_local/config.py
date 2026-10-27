@@ -49,6 +49,7 @@ DEFAULTS = {
     "history": {"keep": 2000, "store_text": True, "mask_pii": True},
     "max_steps": 25,
     "open_panel_on_start": True,
+    "economy": "auto",                    # auto (liga com menos de 8 GB de RAM) | on | off
 }
 
 
