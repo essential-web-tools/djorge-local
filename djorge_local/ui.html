@@ -258,7 +258,7 @@ function nav(){$("nav").innerHTML=Object.entries(T).map(([k,v])=>`<button class=
 function go(k){tab=k;location.hash=k;draw()}
 const HOW={
 eventos:["Um evento é qualquer texto que chega: uma notificação, um e-mail, um arquivo novo numa pasta observada, o que você copia, ou o que outro programa envia.","Cada evento passa pelas árvores que combinam com ele. Cada nó é uma decisão do modelo (escolher, verificar, dar nota, contar) ou uma ação (avisar, gravar, chamar outro programa).","O caminho mostra a resposta de cada nó, a certeza (p) e o tempo. “Abstém” quer dizer que o modelo não teve certeza suficiente e seguiu o caminho de dúvida."],
-modelos:["Um modelo é a “cabeça” que decide. O Origo é o mais preciso; o Flash é a versão rápida para computadores modestos.","Proteger um modelo cria um arquivo .djx que só este programa abre. Distribua o .djx, nunca a pasta original.","Carregar leva alguns segundos na primeira vez. Depois, cada decisão leva milissegundos.","Cada modelo carregado também atende outros programas pela API local (veja a aba API)."],
+modelos:["Um modelo é a “cabeça” que decide. O Flash vem dentro do programa e é feito para computadores modestos; o Origo completo é mais preciso, mas pede mais memória.","Carregar leva alguns segundos na primeira vez. Depois, cada decisão leva milissegundos.","Cada modelo carregado também atende outros programas pela API local (veja a aba API)."],
 pend:["Comandos e chamadas para fora do computador (webhooks) esperam sua aprovação aqui.","Aprovar executa uma única vez. Para não precisar aprovar sempre, mude em Configurações › Ações."],
 testar:["“Pelas árvores” simula um evento: o texto passa pelas árvores e você vê o caminho inteiro.","“Consulta direta” pergunta a um modelo com a linguagem do Djorge, por exemplo CHOICE [opções] FROM text ASK \"pergunta\".","Prazos com data no texto são decididos pelo relógio do computador, com 100% de certeza."],
 arvores:["Cada árvore tem um nó inicial (start) e nós com tipos: choice (escolher), check (verdadeiro/falso), score (escala), multi (vários rótulos), select (quantidades e valores), if (regra sem modelo) e action (fazer algo).","branches diz para onde ir conforme a resposta: o rótulo escolhido, true/false, uma comparação como \">= 1000\", abstain (dúvida) ou default.","Use {title}, {text:80}, {assunto.answer} para montar mensagens. Salvar valida antes de aplicar."],
@@ -277,33 +277,27 @@ function ans(s){if(s.action)return `${esc(s.action)} · ${esc(s.status)}`;
   if(s.error)return `<span class="chip soft">erro</span> ${esc(s.error)}`;
   const a=s.selected?s.selected.join(", "):(s.answer??s.value);return `${esc(a)}${pct(s.probability)}${s.abstain?' <span class="chip soft">abstém</span>':""}${s.grounding&&s.grounding!="classifier"?` <span class="chip soft">${esc(s.grounding)}</span>`:""}`}
 function trail(r){return (r.runs||[]).map(x=>`<div class="meta" style="margin-top:12px">árvore · ${esc(x.tree)}</div>${x.error?`<p class="text">${esc(x.error)}</p>`:""}<ul class="trail">${(x.trail||[]).map(s=>`<li class="${s.action?"act":""}"><b>${esc(s.node)}</b> — ${ans(s)} <span class="meta">${s.ms??""} ms</span></li>`).join("")}</ul>`).join("")}
-let first=true;
+let first=true,LOADING=false;
 async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.innerHTML=`<div class="grid">${"<div class='sk'></div>".repeat(3)}</div>`;m.dataset.tab=tab}
  if(tab=="eventos"){const h=(await api("/api/history?n=80")).filter(r=>r.type=="event");const st0=await api("/api/status",null,true);
   m.innerHTML=head("Cap. I — O que chegou","Eventos e <span class='it'>decisões</span>.","Cada notificação, e-mail, arquivo ou texto enviado por outro programa passa pelas árvores. Aqui fica o caminho percorrido.")+tour(st0,h)+
   (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:empty("nenhum evento ainda"))}
  if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
   const st=x=>x=="pronto"?"p":"soft";
-  m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","Aponte a pasta de um modelo ou um arquivo <code>.djx</code> encriptado, ligue e carregue. Cada modelo carregado ganha a própria API local.")+
-  (r.needs_key&&!r.embedded_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="busyBtn(this,()=>setKey())">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
-  `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${esc(x.source)}${x.api?" · "+esc(x.api):""}</div>
+  m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","O Flash já vem dentro do programa e carrega sozinho. Para usar outro modelo, aponte a pasta dele.")+
+  `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${x.bundled?"incluído no programa":"pasta"}${x.api?" · "+esc(x.api):""}</div>
    <h3>${esc(x.name)} <span class="chip ${st(x.state)}">${esc(x.state)}</span></h3>
    <label>descrição${qi("Só para você reconhecer o modelo.")}</label><input data-f="role" value="${esc(x.role)}">
-   <details class="adv" ${x.path?"open":""}><summary>Avançado · pasta aberta (só para desenvolvimento)</summary>
-   <label>pasta do modelo</label><div class="row2"><input data-f="path" value="${esc(x.path)}" placeholder="ex.: C:\\Modelos\\O2_a75">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','path','folder')">Escolher</button>`:""}</div>
-   </details>
-   <label>arquivo protegido (.djx)${qi("O arquivo encriptado do modelo. Só este programa consegue abrir.")}</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
-   <label>ou id do arquivo no Google Drive${qi("O código do link de compartilhamento do .djx no Drive. O programa baixa uma vez e guarda encriptado.")}</label><input data-f="drive_file_id" value="${esc(x.drive_file_id)}">
+   ${x.bundled?`<p class="text">Vem com o programa — não precisa baixar nem configurar nada.</p>`:`<label>pasta do modelo${qi("A pasta que contém metadata/djorge.json.")}</label><div class="row2"><input data-f="path" value="${esc(x.path)}" placeholder="C:\\Modelos\\origo">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','path','folder')">Escolher</button>`:""}</div>`}
    <label class="switch"><input type="checkbox" data-f="enabled" ${x.enabled?"checked":""}> ligado${qi("Ligado: carrega ao abrir o programa.")}</label>
    <div class="acts"><button class="btn btn-rose sm" data-tip="Grava as mudanças e carrega o modelo agora." onclick="busyBtn(this,()=>saveM('${esc(x.name)}',true))">Salvar e carregar ✳</button>
    ${x.state=="pronto"?`<button class="btn btn-ghost sm" data-tip="Libera a memória. O modelo para de responder até carregar de novo." onclick="actM('unload','${esc(x.name)}')">Descarregar</button>`:""}
-   ${x.drive_file_id?`<button class="btn btn-ghost sm" data-tip="Baixa o .djx do Google Drive (continua encriptado)." onclick="actM('download','${esc(x.name)}')">Baixar do Drive</button>`:""}
-   <button class="btn btn-ghost sm" onclick="if(confirm('Remover ${esc(x.name)} da lista?'))actM('remove','${esc(x.name)}')">Remover</button></div></article>`).join("")}
-   <article class="card"><h3>Proteger um modelo</h3><p class="text">Escolha a pasta de um modelo: o Djorge cria a versão protegida (<code>.djx</code>), que só este programa abre, e passa a usá-la. Distribua só o <code>.djx</code>.</p>
-   <label>nome${qi("Como o modelo vai aparecer aqui e na API (ex.: origo, flash).")}</label><input id="in" value="origo"><label>pasta do modelo${qi("A pasta que contém metadata/djorge.json. Ela não é alterada.")}</label><div class="row2"><input id="if" placeholder="pasta com metadata/djorge.json">${pick?`<button class="btn btn-ghost" onclick="pickId('if','folder')">Escolher</button>`:""}</div>
-   <button class="btn btn-rose" onclick="busyBtn(this,()=>impM())">Proteger e usar ✳</button></article>
-   <article class="card"><h3>Novo modelo</h3><p class="text">Qualquer artefato DJORGE: outra versão do Origo, um Flash, um especialista.</p><label>nome</label><input id="nn" placeholder="ex.: origo-v3"><button class="btn btn-rose" onclick="busyBtn(this,()=>newM())">Adicionar ✳</button>
-   <label>dispositivo${qi("auto usa a placa de vídeo se houver. Vale ao carregar o modelo de novo.")}</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
+   ${x.bundled?"":`<button class="btn btn-ghost sm" onclick="if(confirm('Remover ${esc(x.name)} da lista?'))actM('remove','${esc(x.name)}')">Remover</button>`}</div></article>`).join("")}
+   <article class="card"><h3>Adicionar outro modelo</h3><p class="text">Outra versão do Origo ou um especialista: dê um nome e aponte a pasta.</p>
+   <label>nome${qi("Como o modelo vai aparecer aqui e na API (ex.: origo).")}</label><input id="nn" placeholder="origo">
+   <label>pasta do modelo${qi("A pasta que contém metadata/djorge.json. Ela não é alterada.")}</label><div class="row2"><input id="np" placeholder="C:\\Modelos\\origo">${pick?`<button class="btn btn-ghost" onclick="pickId('np','folder')">Escolher</button>`:""}</div>
+   <button class="btn btn-rose" onclick="busyBtn(this,()=>newM())">Adicionar e carregar ✳</button>
+   <label>processador${qi("auto usa a placa de vídeo se houver. Vale ao carregar o modelo de novo.")}</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
  if(tab=="pend"){const p=await api("/api/pending");
   m.innerHTML=head("Cap. III — Antes de agir","Ações que esperam <span class='it'>você</span>.","Comandos, webhooks e gravação de arquivos só acontecem depois da sua aprovação.")+
   (p.length?`<div class="grid">${p.map(x=>`<article class="card"><span class="chip p">${esc(x.spec.action)}</span><h3 style="margin-top:10px">${esc(x.tree)} / ${esc(x.node)}</h3><pre>${esc(JSON.stringify(x.spec,null,1))}</pre><button class="btn btn-rose" onclick="ok('${x.id}',true)">Aprovar ✳</button> <button class="btn btn-ghost" onclick="ok('${x.id}',false)">Recusar</button></article>`).join("")}</div>`:empty("nada aguardando"))}
@@ -332,10 +326,10 @@ async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.inner
   <article class="card"><h3>Conectores</h3>${Object.entries(s.connectors).map(([k,v])=>`<p class="text"><b>${esc(k)}</b> — ${esc(v)}</p>`).join("")||'<p class="text">Só a API local (ative outros no config.yaml).</p>'}</article></div>`}
  live()}
 async function live(){try{const s=await api("/api/status",null,true);if(first){first=false;setTimeout(()=>$("boot").classList.add("off"),350)}
-  const ld=Object.entries(s.model_state||{}).filter(([k,v])=>v=="carregando").map(([k])=>k);const lb=$("lb");if(lb){lb.classList.toggle("on",ld.length>0);if(ld.length)$("lbt").textContent="carregando "+ld.join(", ")+"… a primeira vez leva alguns segundos"}const ok=s.loaded.length>0;const l=$("live");l.classList.toggle("ok",ok);
+  const ld=Object.entries(s.model_state||{}).filter(([k,v])=>v=="carregando").map(([k])=>k);const was=LOADING;LOADING=ld.length>0;if(was&&!LOADING&&tab=="modelos")draw();const lb=$("lb");if(lb){lb.classList.toggle("on",ld.length>0);if(ld.length)$("lbt").textContent="carregando "+ld.join(", ")+"… a primeira vez leva alguns segundos"}const ok=s.loaded.length>0;const l=$("live");l.classList.toggle("ok",ok);
   l.querySelector("span").textContent=ok?`${s.loaded.join(" · ")} · fila ${s.queue}`:(Object.values(s.model_state||{}).includes("carregando")?"carregando…":"sem modelo")}catch(e){}}
 let CFG={};const SKIP=new Set([]);
-const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threads:"Núcleos de CPU (0 = todos)",drive_folder_id:"Pasta do Google Drive (id)",open_panel_on_start:"Abrir a janela ao iniciar",max_steps:"Máximo de passos por árvore",economy:"Modo econômico de memória",
+const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threads:"Núcleos de CPU (0 = todos)",open_panel_on_start:"Abrir a janela ao iniciar",max_steps:"Máximo de passos por árvore",economy:"Modo econômico de memória",
  server:"Painel",host:"Endereço",port:"Porta",api:"API local",enabled:"Ligado",batch_window_ms:"Junção de pedidos (ms)",rate_rps:"Pedidos por segundo",rate_burst:"Pico de pedidos",max_body_mb:"Tamanho máximo do pedido (MB)",
  connectors:"Conectores",http_inbox:"Outros programas (API de eventos)",notifications:"Notificações do sistema",apps_allow:"Só destes apps (um por linha)",apps_deny:"Ignorar estes apps",poll_s:"Verificar a cada (s)",
  folder:"Pastas observadas",paths:"Pastas (uma por linha)",patterns:"Tipos de arquivo",max_mb:"Tamanho máximo (MB)",clipboard:"Área de transferência",min_chars:"Mínimo de caracteres",
@@ -346,7 +340,7 @@ const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threa
 const H={connectors:"De onde chegam os eventos. Tudo começa desligado.",actions:"O que as árvores podem fazer. Comandos e webhooks só rodam se estiverem nas listas.",history:"Fica só neste computador.",api:"A API completa de cada modelo, só nesta máquina."};
 const L=k=>LBL[k]||k.replace(/_/g," ");
 const TIP={timezone:"Usado para entender “amanhã”, “sexta que vem” e prazos.",device:"auto usa a placa de vídeo (CUDA) se existir; senão o processador.",threads:"Quantos núcleos o modelo pode usar. 0 = todos. Diminua para deixar o computador mais livre.",
- drive_folder_id:"Pasta do Google Drive com os arquivos .djx, para baixar os modelos automaticamente.",open_panel_on_start:"Mostrar a janela assim que o programa abre. Desligado, ele inicia só na bandeja.",max_steps:"Limite de decisões por evento, para evitar ciclos.",economy:"auto liga sozinho em computadores com menos de 8 GB de RAM: mesma resposta, menos memória. Valores: auto, on, off.",
+ open_panel_on_start:"Mostrar a janela assim que o programa abre. Desligado, ele inicia só na bandeja.",max_steps:"Limite de decisões por evento, para evitar ciclos.",economy:"auto liga sozinho em computadores com menos de 8 GB de RAM: mesma resposta, menos memória. Valores: auto, on, off.",
  port:"Porta do painel local. Mude só se outro programa já usa esta.",host:"127.0.0.1 = só este computador (recomendado).",batch_window_ms:"Junta pedidos que chegam juntos numa passada só: mais rápido sob carga.",rate_rps:"Limite de pedidos por segundo de cada programa.",
  http_inbox:"Permite que outros programas enviem textos para as árvores (POST /api/event).",notifications:"Lê as notificações do sistema. No Windows pede permissão; no macOS precisa de Acesso Total ao Disco.",apps_allow:"Se preencher, só notificações destes apps entram. Ex.: WhatsApp, Outlook.",apps_deny:"Notificações destes apps são ignoradas.",
  folder:"Lê arquivos novos ou alterados nas pastas escolhidas: textos, e-mails, PDF, Word, imagens (OCR) e áudio.",paths:"Uma pasta por linha. Ex.: ~/Downloads",patterns:"Tipos de arquivo lidos, um por linha. Ex.: *.pdf",clipboard:"Lê o texto que você copia (Ctrl+C).",
@@ -365,12 +359,10 @@ async function saveCfg(){const out={};document.querySelectorAll("[data-k]").forE
   const r=await api("/api/config",out);toast(r.error||(r.restart&&r.restart.length?"salvo · reinicie para mudar "+r.restart.join(", "):"ajustes salvos"));if(!r.error)draw()}
 function fields(n){const c=$("mc-"+n),o={name:n};c.querySelectorAll("[data-f]").forEach(e=>o[e.dataset.f]=e.type=="checkbox"?e.checked:e.value);return o}
 async function saveM(n,load){const r=await api("/api/models/save",{...fields(n),load});toast(r.error||"salvo"+(load?" · carregando…":""));draw()}
-async function actM(a,n){const r=await api("/api/models/"+a,{name:n});toast(r.error||({unload:"descarregado",download:"baixando…",remove:"removido",load:"carregando…"}[a]||"ok"));draw()}
-async function newM(){const n=$("nn").value.trim().toLowerCase();const r=await api("/api/models/save",{name:n,enabled:false});toast(r.error||"adicionado: aponte a pasta ou o .djx");draw()}
-async function setKey(){const r=await api("/api/models/key",{key:$("kk").value,remember:$("kr").checked});toast(r.error||(r.remembered?"chave guardada no cofre":"chave aceita"));draw()}
+async function actM(a,n){const r=await api("/api/models/"+a,{name:n});toast(r.error||({unload:"descarregado",remove:"removido",load:"carregando…"}[a]||"ok"));draw()}
+async function newM(){const n=$("nn").value.trim().toLowerCase();const r=await api("/api/models/save",{name:n,path:$("np").value.trim(),enabled:true,load:true});toast(r.error||"adicionado · carregando…");draw()}
 async function setDev(){await api("/api/models/settings",{device:$("dev").value});toast("vale ao carregar de novo")}
 async function pickId(id,kind){const p=await window.pywebview.api.pick(kind);if(p)$(id).value=p}
-async function impM(){toast("protegendo… pode levar um minuto");const r=await api("/api/models/import",{name:$("in").value.trim().toLowerCase(),folder:$("if").value});toast(r.error||"protegido: "+r.file);draw()}
 async function pickTo(n,f,kind){const p=await window.pywebview.api.pick(kind);if(p){$("mc-"+n).querySelector(`[data-f="${f}"]`).value=p}}
 async function ok(id,a){await api("/api/pending/"+id,{approve:a});toast(a?"aprovado":"recusado");draw()}
 async function ev(){const r=await api("/api/event",{sync:true,title:$("ti").value,text:$("tx").value,tree:$("tr").value||undefined,source:"teste"});
@@ -381,5 +373,7 @@ async function sv(){const r=await api("/api/trees",{yaml:$("ya").value});$("sm")
 async function copyTok(){try{const t=(await api("/api/token")).token;await navigator.clipboard.writeText(t);toast("token copiado")}catch(e){toast("token em ~/.djorge-local/token.txt")}}
 window.addEventListener("hashchange",()=>{const k=location.hash.slice(1);if(T[k]&&k!=tab){tab=k;draw()}});
 api("/api/models").then(r=>{if(!location.hash&&!r.models.some(x=>x.path||x.sealed||x.state=="pronto"))tab="modelos";draw()});
-setInterval(()=>{if(tab=="eventos"||tab=="pend"||(tab=="modelos"&&/carregando/.test($("m").textContent)))draw();else live()},4000);
+let SIG="";
+async function sig(){const [h,s0]=await Promise.all([api("/api/history?n=1",null,true),api("/api/status",null,true)]);return (h[0]&&h[0].t||"")+"|"+(h.length)+"|"+s0.pending+"|"+s0.loaded.join(",")}
+setInterval(async()=>{try{if(tab=="eventos"||tab=="pend"){const g=await sig();if(g!==SIG){const firstSig=!SIG;SIG=g;if(!firstSig)draw();}}live()}catch(e){}},4000);
 </script></body></html>

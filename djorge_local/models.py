@@ -1,139 +1,52 @@
-"""Model loading: plain artifact folder, or encrypted .djx (local or downloaded from Google Drive)."""
+"""Models: folders with a DJORGE artifact. The Flash comes INSIDE the installer (folder "modelos/flash" next to
+the executable); other models are added by choosing their folder in the Models tab. Nothing is downloaded."""
 from __future__ import annotations
 
-import atexit
-import getpass
-import os
-import shutil
+import gc
+import re
+import sys
 import threading
 from pathlib import Path
 
-from . import crypto
 from .config import HOME, resolve
 
-_TMP = []
+
+def app_dir() -> Path:
+    """Folder of the installed program (next to the executable), or the source folder in development."""
+    if getattr(sys, "frozen", False):
+        exe = Path(sys.executable).resolve().parent
+        return exe
+    return Path(__file__).resolve().parent.parent
 
 
-@atexit.register
-def _cleanup():
-    for d in _TMP:
-        shutil.rmtree(d, ignore_errors=True)
+def model_path(cfg, p: str) -> Path:
+    """'@app/modelos/flash' -> inside the installed program; anything else -> as given (absolute or relative)."""
+    if p.startswith("@app/"):
+        return app_dir() / p[5:]
+    return resolve(cfg, p)
 
 
-KEYRING_SERVICE = "djorge-local"
-
-
-def _shred(d):
-    """Overwrite then delete the decrypted files (best effort; SSDs may keep old blocks)."""
-    for root, _, files in os.walk(d):
-        for f in files:
-            p = os.path.join(root, f)
-            try:
-                n = os.path.getsize(p)
-                with open(p, "r+b") as fh:
-                    for i in range(0, n, 1 << 20):
-                        fh.write(b"\0" * min(1 << 20, n - i))
-            except OSError:
-                pass
-    shutil.rmtree(d, ignore_errors=True)
-
-
-def passphrase(cfg) -> str:
-    """Key of the .djx files: env var -> system keyring (if saved) -> window (executable) -> terminal."""
-    k = os.environ.get(cfg["key_env"])
-    if k:
-        return k
-    k = embedded_key()
-    if k:
-        return k
-    try:
-        import keyring
-        k = keyring.get_password(KEYRING_SERVICE, "model-key")
-        if k:
-            return k
-    except Exception:
-        pass
-    if os.environ.get("DJORGE_GUI") == "1":
-        raise NeedKey("informe a chave dos modelos na aba Modelos")
-    k = getpass.getpass("Chave dos modelos: ")
-    if not k:
-        raise PermissionError("chave dos modelos não informada")
-    return k
-
-
-def embedded_key():
-    """Key built into the executable (tools_make_vault.py); None in source / dev runs."""
-    try:
-        from . import _vault
-        return _vault.k()
-    except Exception:
-        return None
-
-
-class NeedKey(PermissionError):
-    pass
-
-
-def remember_key(k: str) -> bool:
-    try:
-        import keyring
-        keyring.set_password(KEYRING_SERVICE, "model-key", k)
-        return True
-    except Exception:
-        return False
-
-
-def download(cfg, names=None) -> dict:
-    """Downloads the encrypted .djx files. Needs `pip install gdown`; the files stay encrypted on disk."""
-    import gdown
-    dest = HOME / "modelos"
-    dest.mkdir(parents=True, exist_ok=True)
-    got = {}
-    for name, m in cfg["models"].items():
-        if names and name not in names:
-            continue
-        if m.get("drive_file_id"):
-            out = dest / f"{name}.djx"
-            if not out.is_file():
-                gdown.download(id=m["drive_file_id"], output=str(out), quiet=False)
-            got[name] = str(out)
-    if cfg.get("drive_folder_id") and len(got) < len(cfg["models"]):
-        gdown.download_folder(id=cfg["drive_folder_id"], output=str(dest), quiet=False, use_cookies=False)
-        for p in dest.rglob("*.djx"):
-            for name in cfg["models"]:
-                if p.stem.lower().startswith(name) and name not in got:
-                    got[name] = str(p)
-    return got
+def is_model(p: Path) -> bool:
+    return (p / "metadata" / "djorge.json").is_file()
 
 
 class Models:
-    """Lazy loading; one lock per model (the runtime batches internally)."""
+    NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
     def __init__(self, cfg):
         self.cfg, self._z, self._lock = cfg, {}, threading.Lock()
-        self._key = None
         self.state = {}                     # name -> "carregando" | "pronto" | "erro: ..."
+        self.apis, self._servers = {}, {}
 
-    def _artifact(self, name):
-        m = self.cfg["models"][name]
-        if m.get("path"):
-            return str(resolve(self.cfg, m["path"]))
-        sealed = m.get("sealed") or (HOME / "modelos" / f"{name}.djx")
-        sealed = resolve(self.cfg, str(sealed))
-        if not sealed.is_file() and (m.get("drive_file_id") or self.cfg.get("drive_folder_id")):
-            sealed = Path(download(self.cfg, [name]).get(name, sealed))
-        if not sealed.is_file():
-            raise FileNotFoundError(f"modelo {name}: configure 'path' (pasta) ou 'sealed' (.djx) ou o Drive")
-        self._key = self._key or passphrase(self.cfg)
-        d = crypto.open_sealed(str(sealed), self._key)
-        _TMP.append(d)
-        return d
-
-    def get(self, name="origo"):
+    def get(self, name="flash"):
         if name not in self.cfg["models"] or not self.cfg["models"][name].get("enabled", True):
-            raise KeyError(f"modelo desativado ou desconhecido: {name}")
+            raise KeyError(f"modelo desligado ou desconhecido: {name}")
         with self._lock:
             if name not in self._z:
+                m = self.cfg["models"][name]
+                art = model_path(self.cfg, m.get("path", ""))
+                if not m.get("path") or not is_model(art):
+                    raise FileNotFoundError(f"modelo {name}: pasta não encontrada ({art}). Escolha a pasta na aba Modelos.")
                 import torch
                 from djorge import Djorge, DjorgeConfig
                 if self.cfg.get("threads"):
@@ -141,14 +54,9 @@ class Models:
                 dev = self.cfg["device"]
                 if dev == "auto":
                     dev = "cuda" if torch.cuda.is_available() else "cpu"
-                art = self._artifact(name)
-                c = DjorgeConfig(artifact=art, device=dev)
+                c = DjorgeConfig(artifact=str(art), device=dev)
                 c.context_dir = str(HOME / "contextos" / name)
-                try:
-                    z = Djorge(artifact=art, config=c)
-                finally:
-                    if art in _TMP:                       # decrypted copy: removed as soon as it is in memory
-                        _shred(art); _TMP.remove(art)
+                z = Djorge(artifact=str(art), config=c)
                 self._z[name] = z
                 self.state[name] = "pronto"
                 self._start_api(name, z)
@@ -174,51 +82,48 @@ class Models:
             self.state[name] = "pronto (API sem porta livre)"
             return
         threading.Thread(target=srv.serve_forever, daemon=True, name=f"api-{name}").start()
-        self._servers = getattr(self, "_servers", {})
         self._servers[name] = srv
-        self.apis = getattr(self, "apis", {})
         self.apis[name] = f"http://{a['host']}:{port}"
 
     def loaded(self):
         return sorted(self._z)
 
+    def preload(self, names=None):
+        """Loads the enabled models in the background so the window appears immediately."""
+        def go():
+            for n in names or [k for k, v in self.cfg["models"].items() if v.get("enabled", True)]:
+                self.state[n] = "carregando"
+                try:
+                    self.get(n)
+                except Exception as e:
+                    self.state[n] = f"erro: {e}"
+        threading.Thread(target=go, daemon=True, name="carregar-modelos").start()
+
     # ---------------------------------------------------------------- management (Models tab) --
-    NAME = __import__("re").compile(r"^[a-z][a-z0-9_-]{0,31}$")
-
-    def source(self, name):
-        m = self.cfg["models"][name]
-        if m.get("path"):
-            return "pasta", m["path"]
-        sealed = m.get("sealed") or str(HOME / "modelos" / f"{name}.djx")
-        if Path(resolve(self.cfg, sealed)).is_file():
-            return "djx", sealed
-        if m.get("drive_file_id") or self.cfg.get("drive_folder_id"):
-            return "drive", m.get("drive_file_id") or self.cfg.get("drive_folder_id")
-        return "nenhuma", ""
-
     def describe(self):
         out = []
-        self.embedded = bool(embedded_key())
         for name, m in self.cfg["models"].items():
-            kind, where = self.source(name)
-            st = self.state.get(name) or ("pronto" if name in self._z else ("desligado" if not m.get("enabled", True)
-                                                                             else "não carregado"))
-            out.append({"name": name, "enabled": m.get("enabled", True), "role": m.get("role", ""), "source": kind,
-                        "where": where, "path": m.get("path", ""), "sealed": m.get("sealed", ""),
-                        "drive_file_id": m.get("drive_file_id", ""), "state": st,
-                        "api": getattr(self, "apis", {}).get(name),
+            p = m.get("path", "")
+            found = bool(p) and is_model(model_path(self.cfg, p))
+            st = self.state.get(name) or ("pronto" if name in self._z else (
+                "desligado" if not m.get("enabled", True) else ("não carregado" if found else "sem pasta")))
+            out.append({"name": name, "enabled": m.get("enabled", True), "role": m.get("role", ""),
+                        "path": "" if p.startswith("@app/") else p, "bundled": p.startswith("@app/"),
+                        "found": found, "state": st, "api": self.apis.get(name),
                         "port": (self.cfg["api"].get("ports") or {}).get(name)})
         return out
 
     def configure(self, name, fields: dict, save=None):
         if not self.NAME.match(name or ""):
             raise ValueError("nome: letras minúsculas, números, - ou _ (até 32)")
-        m = self.cfg["models"].setdefault(name, {"enabled": True, "path": "", "sealed": "", "drive_file_id": "",
-                                                  "role": ""})
-        for k in ("enabled", "path", "sealed", "drive_file_id", "role"):
+        m = self.cfg["models"].setdefault(name, {"enabled": True, "path": "", "role": ""})
+        for k in ("enabled", "path", "role"):
             if k in fields:
-                m[k] = bool(fields[k]) if k == "enabled" else str(fields[k] or "").strip()
-        if m.get("path") and not (Path(resolve(self.cfg, m["path"])) / "metadata" / "djorge.json").is_file():
+                v = fields[k]
+                if k == "path" and not str(v or "").strip() and m.get("path", "").startswith("@app/"):
+                    continue                                   # empty field keeps the bundled model
+                m[k] = bool(v) if k == "enabled" else str(v or "").strip()
+        if m.get("path") and not m["path"].startswith("@app/") and not is_model(model_path(self.cfg, m["path"])):
             raise ValueError("essa pasta não é um modelo DJORGE (falta metadata/djorge.json)")
         ports = self.cfg["api"].setdefault("ports", {})
         if name not in ports:
@@ -230,13 +135,12 @@ class Models:
     def unload(self, name):
         with self._lock:
             z = self._z.pop(name, None)
-            srv = getattr(self, "_servers", {}).pop(name, None)
+            srv = self._servers.pop(name, None)
         if srv:
             threading.Thread(target=srv.shutdown, daemon=True).start()
-        getattr(self, "apis", {}).pop(name, None)
+        self.apis.pop(name, None)
         self.state[name] = "não carregado"
         del z
-        import gc
         gc.collect()
 
     def remove(self, name, save=None):
@@ -245,46 +149,3 @@ class Models:
         (self.cfg["api"].get("ports") or {}).pop(name, None)
         if save:
             save()
-
-    def import_folder(self, name, folder, save=None):
-        """Protects a plain model folder: seals it into ~/.djorge-local/modelos/<name>.djx with the app key and
-        points the model to it. The original folder is not touched (delete it yourself if you want)."""
-        if not self.NAME.match(name or ""):
-            raise ValueError("nome inválido")
-        src = Path(folder).expanduser()
-        if not (src / "metadata" / "djorge.json").is_file():
-            raise ValueError("essa pasta não é um modelo DJORGE (falta metadata/djorge.json)")
-        k = self._key or os.environ.get(self.cfg["key_env"]) or embedded_key()
-        if not k:
-            raise NeedKey("defina a chave antes de proteger modelos")
-        dest = HOME / "modelos"
-        dest.mkdir(parents=True, exist_ok=True)
-        out = dest / f"{name}.djx"
-        crypto.seal(str(src), str(out), k, name)
-        self.configure(name, {"path": "", "sealed": str(out), "enabled": True}, save)
-        return str(out)
-
-    def set_key(self, k: str, remember: bool = False):
-        if not k or len(k) < 10:
-            raise ValueError("a chave tem pelo menos 10 caracteres")
-        for name in self.cfg["models"]:
-            kind, where = self.source(name)
-            if kind == "djx":
-                crypto.info(str(resolve(self.cfg, where)), k)     # raises BadKey when wrong
-        self._key = k
-        return remember_key(k) if remember else False
-
-    def preload(self, names=None):
-        """Loads the models in the background so the window / tray appear immediately."""
-        import threading
-
-        def go():
-            for n in names or [k for k, v in self.cfg["models"].items() if v.get("enabled", True)]:
-                self.state[n] = "carregando"
-                try:
-                    self.get(n); self.state[n] = "pronto"
-                except NeedKey:
-                    self.state[n] = "precisa da chave"
-                except Exception as e:
-                    self.state[n] = f"erro: {e}"
-        threading.Thread(target=go, daemon=True, name="carregar-modelos").start()

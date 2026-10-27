@@ -145,7 +145,7 @@ class WindowApi:
         if kind == "folder":
             r = w.create_file_dialog(folder)
         else:
-            r = w.create_file_dialog(openf, file_types=("Modelo DJORGE (*.djx)", "Todos os arquivos (*.*)"))
+            r = w.create_file_dialog(openf)
         if not r:
             return None
         return r[0] if isinstance(r, (list, tuple)) else str(r)

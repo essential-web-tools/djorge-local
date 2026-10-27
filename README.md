@@ -34,15 +34,10 @@ curl -s http://127.0.0.1:8750/v1/classify -H "Authorization: Bearer SEU_TOKEN" -
 ```
 Esta versão **não inclui o Sentinel** (sem `/v1/sentinel` e sem as análises de URL/e-mail/IP).
 
-## Modelos encriptados (.djx)
-* Encriptar (no Colab ou no seu PC): `python -m djorge_local seal /caminho/O2_a75 origo.djx --name origo`
-  e, para o Flash, `... seal /caminho/DO_FLASH flash.djx --name flash`. Suba os `.djx` na pasta do Drive.
-* No PC: `drive_folder_id` (ou `drive_file_id` por modelo) no config → `python -m djorge_local download`.
-* A chave vem de `DJORGE_MODEL_KEY` ou é pedida ao iniciar. AES-256-GCM em blocos autenticados + scrypt;
-  arquivo adulterado ou chave errada → recusado. O modelo é aberto numa pasta temporária privada (0700),
-  apagada ao sair.
-* Limite honesto: protege o download e o disco. Quem tem a chave e roda o modelo consegue extrair os pesos
-  da memória — nenhuma encriptação local impede isso.
+## Modelo
+O **Origo Flash** vem dentro do instalador e carrega sozinho: não há download, chave ou configuração.
+Para usar outro modelo (o Origo completo, por exemplo), abra a aba **Modelos → Adicionar outro modelo** e aponte
+a pasta dele. A fonte do Flash usada no build fica em `modelo-fonte.txt`.
 
 ## Conectores (todos desligados, menos a API local)
 | conector | o que lê | requisitos |
@@ -109,16 +104,8 @@ Menu da bandeja: Abrir painel · Pausar conectores · Recarregar árvores · Abr
 | GPU | CUDA (opcional) | CPU | CUDA (opcional) |
 Sem interface gráfica (servidor), o programa roda igual, só sem a bandeja.
 
-## Proteção dos modelos e segurança
-* **Modelos protegidos:** na aba *Modelos → Proteger um modelo*, escolha a pasta do modelo; o Djorge gera o
-  `.djx` (AES-256-GCM). No executável oficial a chave vem **embutida** (segredo `DJORGE_MODEL_KEY` do
-  repositório, em *Settings → Secrets and variables → Actions*): quem instala não vê nem digita chave nenhuma.
-  Ao carregar, a cópia aberta é sobrescrita e apagada assim que o modelo está na memória.
-  Limite honesto: alguém com ferramentas de engenharia reversa e tempo ainda pode extrair os pesos da memória
-  de um programa que roda no próprio computador; a proteção impede cópia e acesso casual aos arquivos.
-* **Antivírus:** executável em pasta (sem UPX, sem autoextração), bootloader do PyInstaller compilado no
-  próprio build e informações de versão. Assinatura digital opcional: segredos `WIN_CERT_PFX_BASE64` e
-  `WIN_CERT_PASSWORD` — é o que elimina o aviso do SmartScreen.
-* **Privacidade:** tudo roda e fica neste computador (nada é enviado a servidores); painel e API só em
-  127.0.0.1 com token automático; histórico com CPF, cartão, e-mail e telefone mascarados; pasta de dados
-  só do usuário; comandos e webhooks só das listas permitidas e com confirmação.
+## Segurança e privacidade
+* **Antivírus:** executável em pasta (sem UPX, sem autoextração), bootloader compilado no build e informações
+  de versão. Assinatura digital opcional (segredos `WIN_CERT_PFX_BASE64` e `WIN_CERT_PASSWORD`).
+* **Privacidade:** tudo roda neste computador; painel e API só em 127.0.0.1 com token automático; histórico com
+  dados pessoais mascarados; comandos e webhooks só das listas permitidas e com confirmação.

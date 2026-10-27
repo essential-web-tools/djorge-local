@@ -15,16 +15,13 @@ DEFAULTS = {
     "threads": 0,                         # 0 = all cores
     "timezone": "America/Sao_Paulo",
     "language": "pt",
-    "models": {
-        "origo": {"enabled": True, "path": "", "sealed": "", "drive_file_id": "", "role": "Origo — base densa, máxima qualidade"},
-        "flash": {"enabled": False, "path": "", "sealed": "", "drive_file_id": "", "role": "Origo Flash — destilado, rápido em CPU"},
+    "models": {                           # the Flash ships inside the installer (@app = program folder)
+        "flash": {"enabled": True, "path": "@app/modelos/flash", "role": "Origo Flash — rápido, leve, para qualquer computador"},
     },
-    "drive_folder_id": "",                # folder with the .djx files (gdown)
-    "key_env": "DJORGE_MODEL_KEY",        # env var with the passphrase; else asked at start
     "server": {"host": "127.0.0.1", "port": 8765, "token": ""},
     # full DJORGE API per model (/v1/classify, /v1/aggregate, /v1/tag, /v1/decide, /v1/document, /v1/verify,
     # /v1/score, /v1/select, /v1/tools/*, /execute, /contexts, /capabilities ...). Bearer token = server.token
-    "api": {"enabled": True, "host": "127.0.0.1", "ports": {"origo": 8750, "flash": 8751}, "batch_window_ms": 8,
+    "api": {"enabled": True, "host": "127.0.0.1", "ports": {"flash": 8750}, "batch_window_ms": 8,
             "rate_rps": 50, "rate_burst": 200, "max_body_mb": 2},
     "connectors": {
         "http_inbox": {"enabled": True},                        # any program: POST /api/event
@@ -60,9 +57,35 @@ def _merge(a, b):
     return out
 
 
+def _migrate(raw: dict) -> dict:
+    """Configs from 0.7.x (encrypted .djx, Google Drive, origo + flash): keep only folders, bring the bundled Flash."""
+    if not raw:
+        return raw
+    raw.pop("drive_folder_id", None); raw.pop("key_env", None)
+    ms = raw.get("models")
+    if isinstance(ms, dict):
+        for k, m in list(ms.items()):
+            if not isinstance(m, dict):
+                ms.pop(k); continue
+            m.pop("sealed", None); m.pop("drive_file_id", None)
+            if k == "flash" and not m.get("path"):
+                m.update(path="@app/modelos/flash", enabled=True)
+            if k != "flash" and not m.get("path"):
+                ms.pop(k)
+        ms.setdefault("flash", dict(DEFAULTS["models"]["flash"]))
+        ports = (raw.get("api") or {}).get("ports") or {}
+        for k in list(ports):
+            if k not in ms:
+                ports.pop(k)
+    return raw
+
+
 def load(path: str = None) -> dict:
     p = Path(path or HOME / "config.yaml")
-    cfg = _merge(DEFAULTS, yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else {})
+    raw = _migrate(yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else {})
+    cfg = _merge(DEFAULTS, raw)
+    if raw and isinstance(raw.get("models"), dict):
+        cfg["models"] = raw["models"]                 # the user's list replaces the default one
     cfg["_path"] = str(p)
     cfg["_dir"] = str(p.parent)
     if not cfg["server"]["token"]:

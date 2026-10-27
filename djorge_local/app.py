@@ -70,13 +70,13 @@ class App:
         p = Path(self.cfg["_path"])
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else {}
         raw = raw or {}
-        raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "sealed", "drive_file_id", "role") if f in v}
+        raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "role") if f in v}
                          for k, v in self.cfg["models"].items()}
         raw.setdefault("api", {})["ports"] = dict(self.cfg["api"].get("ports") or {})
         raw["device"], raw["threads"] = self.cfg["device"], self.cfg["threads"]
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
-    EDITABLE = ("timezone", "language", "device", "threads", "drive_folder_id", "open_panel_on_start", "server", "api",
+    EDITABLE = ("timezone", "language", "device", "threads", "open_panel_on_start", "server", "api",
                 "connectors", "extract", "actions", "history", "max_steps", "economy")
 
     def settings(self) -> dict:
@@ -127,7 +127,7 @@ class App:
         for k in self.EDITABLE:
             raw[k] = self.cfg.get(k)
         raw["server"] = {kk: vv for kk, vv in self.cfg["server"].items() if kk != "token" or vv}
-        raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "sealed", "drive_file_id", "role") if f in v}
+        raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "role") if f in v}
                          for k, v in self.cfg["models"].items()}
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
         for c in self.conns.values():                      # connectors: restart with the new settings
@@ -144,8 +144,7 @@ class App:
             try:
                 self.models.get(name)
             except Exception as e:
-                from .models import NeedKey
-                self.models.state[name] = "precisa da chave" if isinstance(e, NeedKey) else f"erro: {e}"
+                self.models.state[name] = f"erro: {e}"
         threading.Thread(target=go, daemon=True).start()
 
     def trees_path(self) -> Path:
@@ -258,8 +257,7 @@ def make_handler(app: App):
             if u.path == "/api/models":
                 ms = app.models.describe()
                 return self._send(200, {"models": ms, "device": app.cfg["device"], "threads": app.cfg["threads"],
-                                        "embedded_key": getattr(app.models, "embedded", False),
-                                        "needs_key": any(m["state"] == "precisa da chave" for m in ms)})
+                                        "app_dir": str(__import__("djorge_local.models", fromlist=["x"]).app_dir())})
             if u.path == "/api/config":
                 return self._send(200, app.settings())
             if u.path == "/api/token":
@@ -292,7 +290,7 @@ def make_handler(app: App):
                         return self._send(200, app.handle(ev, only=b.get("tree")))
                     return self._send(202, {"queued": ev["id"]})
                 if u.path == "/api/decide":
-                    z = app.models.get(b.get("model", "origo"))
+                    z = app.models.get(b.get("model") or (app.models.loaded() or ["flash"])[0])
                     r = z.execute(b["query"], sources={"text": b.get("text", "")}, lang=app.cfg["language"],
                                   now=b.get("now"))
                     return self._send(200, r)
@@ -307,28 +305,10 @@ def make_handler(app: App):
                             app.load_async(name)
                     elif act == "load":
                         M.configure(name, {"enabled": True}, app.save_config); app.load_async(name)
-                    elif act == "import":
-                        out = M.import_folder(name, str(b.get("folder", "")), app.save_config)
-                        app.load_async(name)
-                        return self._send(200, {"ok": True, "file": out, "models": M.describe()})
                     elif act == "unload":
                         M.unload(name)
                     elif act == "remove":
                         M.remove(name, app.save_config)
-                    elif act == "key":
-                        from .crypto import BadKey
-                        try:
-                            saved = M.set_key(str(b.get("key", "")), bool(b.get("remember")))
-                        except BadKey:
-                            return self._send(400, {"error": "chave errada para os modelos encriptados"})
-                        for m in M.describe():
-                            if m["state"] == "precisa da chave":
-                                app.load_async(m["name"])
-                        return self._send(200, {"ok": True, "remembered": saved})
-                    elif act == "download":
-                        from .models import download
-                        threading.Thread(target=lambda: download(app.cfg, [name] if name else None),
-                                         daemon=True).start()
                     elif act == "settings":
                         if b.get("device") in ("auto", "cpu", "cuda"):
                             app.cfg["device"] = b["device"]
@@ -344,7 +324,7 @@ def make_handler(app: App):
                     return self._send(200, app.actions.confirm(u.path.rsplit("/", 1)[1], bool(b.get("approve"))))
                 if u.path == "/api/trees":
                     return self._send(200, {"trees": app.reload_trees(b["yaml"])})
-            except (TreeError, yaml.YAMLError, KeyError, ValueError, PermissionError) as e:
+            except (TreeError, yaml.YAMLError, KeyError, ValueError, PermissionError, FileNotFoundError) as e:
                 return self._send(400, {"error": f"{type(e).__name__}: {e}"})
             except Exception as e:
                 return self._send(500, {"error": f"{type(e).__name__}: {e}"})

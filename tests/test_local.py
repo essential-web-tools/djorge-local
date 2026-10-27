@@ -22,30 +22,11 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_seal_roundtrip_and_tamper(art, tmp_path):
-    from djorge_local import crypto
-    f = tmp_path / "m.djx"
-    man = crypto.seal(art, str(f), "chave-de-teste-123", "origo")
-    assert crypto.info(str(f), "chave-de-teste-123")["name"] == "origo"
-    with pytest.raises(crypto.BadKey):
-        crypto.info(str(f), "chave-errada-0000")
-    d = crypto.open_sealed(str(f), "chave-de-teste-123")
-    assert (Path(d) / "metadata" / "djorge.json").is_file()
-    b = bytearray(f.read_bytes()); b[-50] ^= 1; f.write_bytes(bytes(b))
-    with pytest.raises(crypto.BadKey):
-        crypto.open_sealed(str(f), "chave-de-teste-123")
-
-
 def _cfg(home, art, trees):
     import yaml
     (home / "arvores.yaml").write_text(yaml.safe_dump({"trees": trees}, allow_unicode=True), encoding="utf-8")
-    sealed = home / "origo.djx"
-    from djorge_local import crypto
-    crypto.seal(art, str(sealed), "chave-de-teste-123", "origo")
     (home / "config.yaml").write_text(yaml.safe_dump({
-        "device": "cpu", "models": {"origo": {"sealed": str(sealed)}, "flash": {"path": art}},
-        "server": {"port": 18765}}), encoding="utf-8")
-    os.environ["DJORGE_MODEL_KEY"] = "chave-de-teste-123"
+        "device": "cpu", "models": {"flash": {"path": art}}, "server": {"port": 18765}}), encoding="utf-8")
     from djorge_local import config as C
     return C.load(str(home / "config.yaml"))
 
@@ -138,7 +119,7 @@ def test_full_api_per_model(home, art):
 
 def test_models_tab_endpoints(home, art):
     import yaml
-    (home / "config.yaml").write_text(yaml.safe_dump({"device": "cpu", "models": {"origo": {"path": ""}},
+    (home / "config.yaml").write_text(yaml.safe_dump({"device": "cpu", "models": {"origo": {"path": art}},
                                                       "api": {"ports": {"origo": 18780}}}), encoding="utf-8")
     from djorge_local import config as C
     from djorge_local.app import App, make_handler
@@ -166,17 +147,16 @@ def test_models_tab_endpoints(home, art):
     assert st["origo"] == "pronto"
     assert yaml.safe_load((home / "config.yaml").read_text())["models"]["origo"]["path"] == art
     call("/api/models/save", {"name": "extra", "enabled": False})
-    assert {m["name"] for m in call("/api/models")[1]["models"]} == {"origo", "flash", "extra"}
+    assert {"origo", "extra"} <= {m["name"] for m in call("/api/models")[1]["models"]}
     assert call("/api/models/unload", {"name": "origo"})[1]["models"][0]["state"] == "não carregado"
     call("/api/models/remove", {"name": "extra"})
     assert "extra" not in yaml.safe_load((home / "config.yaml").read_text())["models"]
     s.shutdown()
 
 
-def test_settings_visual_and_sealed_models_are_shredded(home, art):
+def test_settings_visual_and_bundled_flash(home, art):
     import yaml
     (home / "config.yaml").write_text(yaml.safe_dump({"device": "cpu"}), encoding="utf-8")
-    os.environ["DJORGE_MODEL_KEY"] = "chave-de-teste-123"
     from djorge_local import config as C
     from djorge_local.app import App
     cfg = C.load(str(home / "config.yaml")); app = App(cfg)
@@ -187,9 +167,18 @@ def test_settings_visual_and_sealed_models_are_shredded(home, art):
     assert raw["connectors"]["folder"]["paths"] == ["~/a", "~/b"] and raw["max_steps"] == 30 and r == []
     with pytest.raises(ValueError):
         app.save_settings({"max_steps": "muitos"})
-    out = app.models.import_folder("origo", art, app.save_config)
-    assert Path(out).is_file()
-    import djorge_local.models as M
-    z = app.models.get("origo")
-    assert not M._TMP and not any(Path(d).exists() for d in M._TMP)            # decrypted copy is gone
-    assert z.execute('NOUL "x" FROM t', sources={"t": "y"})["result"]["answer"] in (True, False)
+    st = {m["name"]: m for m in app.models.describe()}
+    assert st["flash"]["bundled"] and not st["flash"]["found"] and st["flash"]["state"] == "sem pasta"
+    with pytest.raises(FileNotFoundError):
+        app.models.get("flash")
+
+
+def test_migrates_old_config(home):
+    import yaml
+    (home / "config.yaml").write_text(yaml.safe_dump({"drive_folder_id": "x", "key_env": "K", "models": {
+        "origo": {"enabled": True, "path": "", "sealed": "a.djx"}, "flash": {"enabled": False, "path": ""}},
+        "api": {"ports": {"origo": 8750, "flash": 8751}}}), encoding="utf-8")
+    from djorge_local import config as C
+    cfg = C.load(str(home / "config.yaml"))
+    assert list(cfg["models"]) == ["flash"] and cfg["models"]["flash"]["path"] == "@app/modelos/flash"
+    assert cfg["models"]["flash"]["enabled"] and "drive_folder_id" not in cfg and "origo" not in cfg["api"]["ports"]

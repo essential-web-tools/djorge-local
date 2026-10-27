@@ -8,3 +8,5 @@ Output/
 *.djx
 djorge_local/_vault.py
 djorge_local/static/img/
+modelos/
+_modelo_tmp/

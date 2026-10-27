@@ -5,7 +5,19 @@ on:
     inputs:
       version: {description: "versão para publicar como Release (ex.: 0.7.4); vazio = só gerar os arquivos", required: false, default: ""}
 jobs:
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -q gdown huggingface_hub
+      - run: python tools_fetch_model.py
+        env: {HF_TOKEN: "${{ secrets.HF_TOKEN }}"}
+      - uses: actions/upload-artifact@v4
+        with: {name: modelo-flash, path: modelos/, retention-days: 2}
   windows:
+    needs: model
     runs-on: windows-latest
     env: {HAS_CERT: "${{ secrets.WIN_CERT_PFX_BASE64 != '' }}"}
     steps:
@@ -22,21 +34,34 @@ jobs:
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - uses: actions/download-artifact@v4
+        with: {name: modelo-flash, path: "dist/Djorge Local/modelos"}
       - name: teste de fumaça (abre o executável e espera o painel responder)
         shell: pwsh
         run: |
           $env:DJORGE_LOCAL_HOME = "$env:RUNNER_TEMP\djhome"
           $p = Start-Process -FilePath "dist\Djorge Local\Djorge Local (diagnostico).exe" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt" -RedirectStandardError "$env:RUNNER_TEMP\err.txt"
           $ok = $false
+          $state = "?"
           for ($i = 0; $i -lt 90; $i++) {
             Start-Sleep -Seconds 2
             try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/status" -UseBasicParsing -TimeoutSec 3 } catch { if ($_.Exception.Response.StatusCode.value__ -eq 401) { $ok = $true; break } }
             if ($p.HasExited) { break }
           }
+          if ($ok) {
+            $tok = (Get-Content "$env:DJORGE_LOCAL_HOME\token.txt").Trim()
+            for ($j = 0; $j -lt 120; $j++) {
+              Start-Sleep -Seconds 3
+              try { $m = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/models" -Headers @{"X-Token"=$tok} -TimeoutSec 5; $state = ($m.models | Where-Object name -eq "flash").state } catch { $state = "?" }
+              if ($state -eq "pronto" -or $state -like "erro*" -or $state -eq "sem pasta") { break }
+            }
+            Write-Host "::warning::modelo flash: $state"
+          }
           Write-Host "---- stdout"; Get-Content "$env:RUNNER_TEMP\out.txt" -ErrorAction SilentlyContinue
           Write-Host "---- stderr"; Get-Content "$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue
           Write-Host "---- log"; Get-Content "$env:DJORGE_LOCAL_HOME\logs\djorge.log" -ErrorAction SilentlyContinue
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          if ($ok -and $state -ne "pronto") { $ok = $false }
           if (-not $ok) {
             $all = @()
             foreach ($f in @("$env:RUNNER_TEMP\out.txt", "$env:RUNNER_TEMP\err.txt", "$env:DJORGE_LOCAL_HOME\logs\djorge.log")) { $all += Get-Content $f -ErrorAction SilentlyContinue }
@@ -61,6 +86,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: {name: DjorgeLocal-Windows, path: "Output/*"}
   macos:
+    needs: model
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -71,10 +97,13 @@ jobs:
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - uses: actions/download-artifact@v4
+        with: {name: modelo-flash, path: "dist/Djorge Local.app/Contents/MacOS/modelos"}
       - run: cd dist && zip -qry DjorgeLocal-macOS.zip "Djorge Local.app"
       - uses: actions/upload-artifact@v4
         with: {name: DjorgeLocal-macOS, path: dist/DjorgeLocal-macOS.zip}
   linux:
+    needs: model
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -87,12 +116,14 @@ jobs:
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - uses: actions/download-artifact@v4
+        with: {name: modelo-flash, path: "dist/Djorge Local/modelos"}
       - run: cd dist && tar czf DjorgeLocal-Linux.tar.gz "Djorge Local"
       - uses: actions/upload-artifact@v4
         with: {name: DjorgeLocal-Linux, path: dist/DjorgeLocal-Linux.tar.gz}
   release:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
-    needs: [windows, macos, linux]
+    needs: [model, windows, macos, linux]
     runs-on: ubuntu-latest
     permissions: {contents: write}
     steps:
