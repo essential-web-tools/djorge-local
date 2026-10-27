@@ -1,0 +1,20 @@
+name: probe-drive
+on: {workflow_dispatch: {}}
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -q gdown
+      - run: |
+          python - <<'P'
+          import gdown
+          try:
+              files = gdown.download_folder(id="1n_yvqEeTMkDXjl-KCK66K2i0DPaM-jKf", skip_download=True, quiet=True, remaining_ok=True)
+              for f in files or []:
+                  print(f"::warning::{f.path} | {f.id}")
+              print(f"::warning::total {len(files or [])}")
+          except Exception as e:
+              print(f"::warning::erro {type(e).__name__}: {e}")
+          P
