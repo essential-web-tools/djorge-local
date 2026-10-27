@@ -30,4 +30,4 @@ dbg = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Djorge Local (diagnos
 coll = COLLECT(exe, dbg, a.binaries, a.datas, name="Djorge Local", upx=False)
 if is_mac:
     app = BUNDLE(coll, name="Djorge Local.app", icon=icon, bundle_identifier="local.djorge.app",
-                 info_plist={"LSUIElement": False, "CFBundleShortVersionString": "0.7.5"})
+                 info_plist={"LSUIElement": False, "CFBundleShortVersionString": "0.7.6"})

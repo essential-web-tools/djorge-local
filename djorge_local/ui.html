@@ -151,6 +151,27 @@ details.adv summary{cursor:pointer;font:600 10px var(--mono);letter-spacing:.2em
 .emptyart .plate{width:220px;height:180px;transform:rotate(-2deg)}
 .btn[aria-busy=true]{pointer-events:none;opacity:.8}
 .btn[aria-busy=true]::after{content:"";width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .8s linear infinite}
+.qi{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;background:var(--rose-soft);color:var(--rose-deep);font:700 10px var(--sans);letter-spacing:0;text-transform:none;margin-left:6px;cursor:help;vertical-align:1px;position:relative}
+[data-tip]{position:relative}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;left:50%;top:calc(100% + 10px);transform:translateX(-50%);z-index:300;
+  width:max-content;max-width:300px;white-space:normal;text-align:left;font:500 12.5px/1.5 var(--sans);letter-spacing:0;text-transform:none;color:var(--bg);background:var(--ink);
+  padding:10px 13px;border-radius:12px;box-shadow:var(--sh2);pointer-events:none;animation:fadein .18s var(--ease)}
+[data-tip]:hover::before,[data-tip]:focus-visible::before{content:"";position:absolute;left:50%;top:calc(100% + 4px);transform:translateX(-50%) rotate(45deg);width:10px;height:10px;background:var(--ink);z-index:301}
+.qi[data-tip]:hover::after{left:0;transform:none}.qi[data-tip]:hover::before{left:4px;transform:rotate(45deg)}
+details.how{margin:-12px 0 28px;max-width:820px}
+details.how summary{cursor:pointer;font:600 11px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--rose-deep);list-style:none;display:inline-flex;gap:8px;align-items:center;padding:8px 14px;border-radius:999px;background:var(--rose-soft)}
+details.how summary::before{content:"?";font-family:var(--sans)}
+details.how[open] summary{margin-bottom:12px}
+details.how ol,details.how ul{margin:0 0 0 20px;color:var(--ink2);font-size:14.5px}
+details.how li{margin:6px 0}
+.tour{border:1px solid rgba(181,101,118,.35);background:linear-gradient(135deg,var(--surface),#fbf1f3);margin-bottom:26px}
+.tour ol{list-style:none;counter-reset:t;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px}
+.tour li{counter-increment:t;position:relative;padding:14px 14px 14px 58px;border-radius:18px;background:var(--surface);border:1px solid var(--line);font-size:14px;color:var(--ink2);cursor:pointer;transition:transform .3s var(--ease),box-shadow .3s}
+.tour li:hover{transform:translateY(-3px);box-shadow:var(--sh1)}
+.tour li::before{content:counter(t);position:absolute;left:14px;top:14px;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--rose-soft);color:var(--rose-deep);font:600 15px var(--serif)}
+.tour li.done::before{content:"✓";background:linear-gradient(135deg,var(--rose),var(--rose-deep));color:#fff}
+.tour li b{display:block;color:var(--ink);font-family:var(--serif);font-weight:600;font-size:16px}
+.x{float:right;background:none;border:0;color:var(--ink3);font:600 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;cursor:pointer}
 @media(max-width:860px){.hd{grid-template-columns:1fr}.plate{display:none}}
 @media(max-width:760px){.navpill{border-radius:26px;padding:12px 16px}.navlinks{margin-left:0;width:100%}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -225,23 +246,41 @@ let busy=0;function prog(on){const e=$("prog");if(!e)return;busy+=on?1:-1;if(bus
 const api=(p,b,quiet)=>{if(!quiet)prog(true);return fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{}).then(r=>r.json()).finally(()=>{if(!quiet)prog(false)})};
 let IMGS=[];fetch("/static/img/index.json").then(r=>r.json()).then(x=>{IMGS=Array.isArray(x)?x:[];draw()}).catch(()=>{});
 const ART={eventos:"flores",modelos:"origem",pend:"borboletas",testar:"medusas",arvores:"colibris",api:"ceu",config:"borboletas",estado:"ceu"};
-function plate(k,cls=""){const n=ART[k];return IMGS.includes(n)?`<figure class="plate ${cls}"><img src="/static/img/${n}.webp" alt="" loading="lazy"></figure>`:`<figure class="plate orn ${cls}">✳</figure>`}
+const qi=t=>t?`<span class="qi" tabindex="0" data-tip="${esc(t)}">?</span>`:"";
+const NAVTIP={eventos:"Tudo que chegou (notificações, e-mails, arquivos, outros programas) e o caminho de decisões de cada um.",modelos:"Escolha, proteja e carregue os modelos que tomam as decisões.",pend:"Ações que só acontecem depois que você aprova.",testar:"Experimente um texto agora, pelas árvores ou com uma consulta direta.",arvores:"O desenho das decisões: cada resposta escolhe os próximos passos.",api:"Endereços para outros programas usarem os modelos.",config:"Todas as opções do programa, sem editar arquivos.",estado:"O que está ligado, carregado e funcionando."};
+function plate(k,cls=""){let n=ART[k];if(!IMGS.includes(n)&&IMGS.length){let h=0;for(const c of k)h=(h*31+c.charCodeAt(0))>>>0;n=IMGS[h%IMGS.length]}return IMGS.includes(n)?`<figure class="plate ${cls}"><img src="/static/img/${n}.webp" alt="" loading="lazy"></figure>`:`<figure class="plate orn ${cls}">✳</figure>`}
 function empty(t){return `<div class="emptyart">${plate(tab)}<p class="empty" style="padding:0">✳ ${t} ✳</p></div>`}
 async function busyBtn(btn,fn){if(btn){btn.setAttribute("aria-busy","true")}try{return await fn()}finally{if(btn)btn.removeAttribute("aria-busy")}}
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const pct=p=>p==null?"":` <span class="p">p ${(+p).toFixed(2)}</span>`;
 function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");setTimeout(()=>e.classList.remove("on"),2200)}
-function nav(){$("nav").innerHTML=Object.entries(T).map(([k,v])=>`<button class="${k==tab?"on":""}" onclick="go('${k}')">${v}</button>`).join("")}
+function nav(){$("nav").innerHTML=Object.entries(T).map(([k,v])=>`<button class="${k==tab?"on":""}" onclick="go('${k}')" data-tip="${esc(NAVTIP[k]||"")}">${v}</button>`).join("")}
 function go(k){tab=k;location.hash=k;draw()}
-function head(kick,title,lede){return `<div id="lb" class="loadband"><span class="star">✳</span><span class="meta" id="lbt">carregando o modelo…</span><div class="bar"><i></i></div></div><div class="hd"><div><p class="kicker">${kick}</p><h1>${title}</h1>${lede?`<p class="lede">${lede}</p>`:""}</div>${plate(tab)}</div>`}
+const HOW={
+eventos:["Um evento é qualquer texto que chega: uma notificação, um e-mail, um arquivo novo numa pasta observada, o que você copia, ou o que outro programa envia.","Cada evento passa pelas árvores que combinam com ele. Cada nó é uma decisão do modelo (escolher, verificar, dar nota, contar) ou uma ação (avisar, gravar, chamar outro programa).","O caminho mostra a resposta de cada nó, a certeza (p) e o tempo. “Abstém” quer dizer que o modelo não teve certeza suficiente e seguiu o caminho de dúvida."],
+modelos:["Um modelo é a “cabeça” que decide. O Origo é o mais preciso; o Flash é a versão rápida para computadores modestos.","Proteger um modelo cria um arquivo .djx que só este programa abre. Distribua o .djx, nunca a pasta original.","Carregar leva alguns segundos na primeira vez. Depois, cada decisão leva milissegundos.","Cada modelo carregado também atende outros programas pela API local (veja a aba API)."],
+pend:["Comandos e chamadas para fora do computador (webhooks) esperam sua aprovação aqui.","Aprovar executa uma única vez. Para não precisar aprovar sempre, mude em Configurações › Ações."],
+testar:["“Pelas árvores” simula um evento: o texto passa pelas árvores e você vê o caminho inteiro.","“Consulta direta” pergunta a um modelo com a linguagem do Djorge, por exemplo CHOICE [opções] FROM text ASK \"pergunta\".","Prazos com data no texto são decididos pelo relógio do computador, com 100% de certeza."],
+arvores:["Cada árvore tem um nó inicial (start) e nós com tipos: choice (escolher), check (verdadeiro/falso), score (escala), multi (vários rótulos), select (quantidades e valores), if (regra sem modelo) e action (fazer algo).","branches diz para onde ir conforme a resposta: o rótulo escolhido, true/false, uma comparação como \">= 1000\", abstain (dúvida) ou default.","Use {title}, {text:80}, {assunto.answer} para montar mensagens. Salvar valida antes de aplicar."],
+api:["Outros programas podem usar os modelos daqui, sem internet.","Toda chamada precisa do token: Authorization: Bearer <token>. O botão abaixo copia o token."],
+config:["As mudanças valem ao salvar. Só as portas pedem reiniciar o programa.","Passe o mouse no ? de cada campo para ver o que ele faz."],
+estado:["Resumo do que está ligado. Se um modelo mostrar erro, a aba Modelos diz o motivo."]};
+function head(kick,title,lede){const how=HOW[tab];return `<div id="lb" class="loadband"><span class="star">✳</span><span class="meta" id="lbt">carregando o modelo…</span><div class="bar"><i></i></div></div><div class="hd"><div><p class="kicker">${kick}</p><h1>${title}</h1>${lede?`<p class="lede">${lede}</p>`:""}</div>${plate(tab)}</div>${how?`<details class="how" ${localStorage&&!seen(tab)?"open":""} ontoggle="markSeen('${tab}')"><summary>Como funciona</summary><ol>${how.map(x=>`<li>${x}</li>`).join("")}</ol></details>`:""}`}
+function tour(st,h){try{if(localStorage.getItem("djtour")=="0")return ""}catch(e){}
+  const steps=[["modelos","Escolha um modelo","Proteja e carregue o Origo na aba Modelos.",st.loaded.length>0],["testar","Faça um teste","Mande um texto pelas árvores e veja a decisão.",h.length>0],
+   ["config","Ligue uma fonte","Notificações, pastas, e-mail ou outro programa, em Configurações.",Object.keys(st.connectors||{}).length>0],["arvores","Ajuste as árvores","Diga o que fazer com cada resposta.",false]];
+  if(steps.slice(0,3).every(x=>x[3]))return "";
+  return `<article class="card tour"><button class="x" onclick="try{localStorage.setItem('djtour','0')}catch(e){};draw()" data-tip="Esconde este guia. Ele não volta.">fechar ✕</button><h3>Comece por aqui</h3><p class="text">Quatro passos para o Djorge começar a decidir por você.</p><ol>${steps.map(x=>`<li class="${x[3]?"done":""}" onclick="go('${x[0]}')"><b>${x[1]}</b>${x[2]}</li>`).join("")}</ol></article>`}
+function seen(k){try{return localStorage.getItem("djhow-"+k)=="1"}catch(e){return true}}
+function markSeen(k){try{localStorage.setItem("djhow-"+k,"1")}catch(e){}}
 function ans(s){if(s.action)return `${esc(s.action)} · ${esc(s.status)}`;
   if(s.error)return `<span class="chip soft">erro</span> ${esc(s.error)}`;
   const a=s.selected?s.selected.join(", "):(s.answer??s.value);return `${esc(a)}${pct(s.probability)}${s.abstain?' <span class="chip soft">abstém</span>':""}${s.grounding&&s.grounding!="classifier"?` <span class="chip soft">${esc(s.grounding)}</span>`:""}`}
 function trail(r){return (r.runs||[]).map(x=>`<div class="meta" style="margin-top:12px">árvore · ${esc(x.tree)}</div>${x.error?`<p class="text">${esc(x.error)}</p>`:""}<ul class="trail">${(x.trail||[]).map(s=>`<li class="${s.action?"act":""}"><b>${esc(s.node)}</b> — ${ans(s)} <span class="meta">${s.ms??""} ms</span></li>`).join("")}</ul>`).join("")}
 let first=true;
 async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.innerHTML=`<div class="grid">${"<div class='sk'></div>".repeat(3)}</div>`;m.dataset.tab=tab}
- if(tab=="eventos"){const h=(await api("/api/history?n=80")).filter(r=>r.type=="event");
-  m.innerHTML=head("Cap. I — O que chegou","Eventos e <span class='it'>decisões</span>.","Cada notificação, e-mail, arquivo ou texto enviado por outro programa passa pelas árvores. Aqui fica o caminho percorrido.")+
+ if(tab=="eventos"){const h=(await api("/api/history?n=80")).filter(r=>r.type=="event");const st0=await api("/api/status",null,true);
+  m.innerHTML=head("Cap. I — O que chegou","Eventos e <span class='it'>decisões</span>.","Cada notificação, e-mail, arquivo ou texto enviado por outro programa passa pelas árvores. Aqui fica o caminho percorrido.")+tour(st0,h)+
   (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:empty("nenhum evento ainda"))}
  if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
   const st=x=>x=="pronto"?"p":"soft";
@@ -249,22 +288,22 @@ async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.inner
   (r.needs_key&&!r.embedded_key?`<article class="card keybox" style="margin-bottom:22px"><h3>Chave dos modelos encriptados</h3><p class="text">A chave é a que você criou ao encriptar os <code>.djx</code>.</p><div class="row2"><input id="kk" type="password" placeholder="chave (mín. 10 caracteres)"><button class="btn btn-rose" onclick="busyBtn(this,()=>setKey())">Abrir ✳</button></div><label class="switch"><input type="checkbox" id="kr" checked> lembrar neste computador (cofre do sistema)</label></article>`:"")+
   `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${esc(x.source)}${x.api?" · "+esc(x.api):""}</div>
    <h3>${esc(x.name)} <span class="chip ${st(x.state)}">${esc(x.state)}</span></h3>
-   <label>descrição</label><input data-f="role" value="${esc(x.role)}">
+   <label>descrição${qi("Só para você reconhecer o modelo.")}</label><input data-f="role" value="${esc(x.role)}">
    <details class="adv" ${x.path?"open":""}><summary>Avançado · pasta aberta (só para desenvolvimento)</summary>
    <label>pasta do modelo</label><div class="row2"><input data-f="path" value="${esc(x.path)}" placeholder="ex.: C:\\Modelos\\O2_a75">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','path','folder')">Escolher</button>`:""}</div>
    </details>
-   <label>arquivo protegido (.djx)</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
-   <label>ou id do arquivo no Google Drive</label><input data-f="drive_file_id" value="${esc(x.drive_file_id)}">
-   <label class="switch"><input type="checkbox" data-f="enabled" ${x.enabled?"checked":""}> ligado</label>
-   <div class="acts"><button class="btn btn-rose sm" onclick="busyBtn(this,()=>saveM('${esc(x.name)}',true))">Salvar e carregar ✳</button>
-   ${x.state=="pronto"?`<button class="btn btn-ghost sm" onclick="actM('unload','${esc(x.name)}')">Descarregar</button>`:""}
-   ${x.drive_file_id?`<button class="btn btn-ghost sm" onclick="actM('download','${esc(x.name)}')">Baixar do Drive</button>`:""}
+   <label>arquivo protegido (.djx)${qi("O arquivo encriptado do modelo. Só este programa consegue abrir.")}</label><div class="row2"><input data-f="sealed" value="${esc(x.sealed)}" placeholder="${esc(x.name)}.djx">${pick?`<button class="btn btn-ghost" onclick="pickTo('${esc(x.name)}','sealed','file')">Escolher</button>`:""}</div>
+   <label>ou id do arquivo no Google Drive${qi("O código do link de compartilhamento do .djx no Drive. O programa baixa uma vez e guarda encriptado.")}</label><input data-f="drive_file_id" value="${esc(x.drive_file_id)}">
+   <label class="switch"><input type="checkbox" data-f="enabled" ${x.enabled?"checked":""}> ligado${qi("Ligado: carrega ao abrir o programa.")}</label>
+   <div class="acts"><button class="btn btn-rose sm" data-tip="Grava as mudanças e carrega o modelo agora." onclick="busyBtn(this,()=>saveM('${esc(x.name)}',true))">Salvar e carregar ✳</button>
+   ${x.state=="pronto"?`<button class="btn btn-ghost sm" data-tip="Libera a memória. O modelo para de responder até carregar de novo." onclick="actM('unload','${esc(x.name)}')">Descarregar</button>`:""}
+   ${x.drive_file_id?`<button class="btn btn-ghost sm" data-tip="Baixa o .djx do Google Drive (continua encriptado)." onclick="actM('download','${esc(x.name)}')">Baixar do Drive</button>`:""}
    <button class="btn btn-ghost sm" onclick="if(confirm('Remover ${esc(x.name)} da lista?'))actM('remove','${esc(x.name)}')">Remover</button></div></article>`).join("")}
    <article class="card"><h3>Proteger um modelo</h3><p class="text">Escolha a pasta de um modelo: o Djorge cria a versão protegida (<code>.djx</code>), que só este programa abre, e passa a usá-la. Distribua só o <code>.djx</code>.</p>
-   <label>nome</label><input id="in" value="origo"><label>pasta do modelo</label><div class="row2"><input id="if" placeholder="pasta com metadata/djorge.json">${pick?`<button class="btn btn-ghost" onclick="pickId('if','folder')">Escolher</button>`:""}</div>
+   <label>nome${qi("Como o modelo vai aparecer aqui e na API (ex.: origo, flash).")}</label><input id="in" value="origo"><label>pasta do modelo${qi("A pasta que contém metadata/djorge.json. Ela não é alterada.")}</label><div class="row2"><input id="if" placeholder="pasta com metadata/djorge.json">${pick?`<button class="btn btn-ghost" onclick="pickId('if','folder')">Escolher</button>`:""}</div>
    <button class="btn btn-rose" onclick="busyBtn(this,()=>impM())">Proteger e usar ✳</button></article>
    <article class="card"><h3>Novo modelo</h3><p class="text">Qualquer artefato DJORGE: outra versão do Origo, um Flash, um especialista.</p><label>nome</label><input id="nn" placeholder="ex.: origo-v3"><button class="btn btn-rose" onclick="busyBtn(this,()=>newM())">Adicionar ✳</button>
-   <label>dispositivo</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
+   <label>dispositivo${qi("auto usa a placa de vídeo se houver. Vale ao carregar o modelo de novo.")}</label><select id="dev" onchange="setDev()">${["auto","cpu","cuda"].map(d=>`<option ${d==r.device?"selected":""}>${d}</option>`).join("")}</select></article></div>`}
  if(tab=="pend"){const p=await api("/api/pending");
   m.innerHTML=head("Cap. III — Antes de agir","Ações que esperam <span class='it'>você</span>.","Comandos, webhooks e gravação de arquivos só acontecem depois da sua aprovação.")+
   (p.length?`<div class="grid">${p.map(x=>`<article class="card"><span class="chip p">${esc(x.spec.action)}</span><h3 style="margin-top:10px">${esc(x.tree)} / ${esc(x.node)}</h3><pre>${esc(JSON.stringify(x.spec,null,1))}</pre><button class="btn btn-rose" onclick="ok('${x.id}',true)">Aprovar ✳</button> <button class="btn btn-ghost" onclick="ok('${x.id}',false)">Recusar</button></article>`).join("")}</div>`:empty("nada aguardando"))}
@@ -306,13 +345,21 @@ const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threa
  history:"Histórico",keep:"Guardar últimos",store_text:"Guardar o texto",mask_pii:"Mascarar dados pessoais (CPF, cartão, e-mail…)"};
 const H={connectors:"De onde chegam os eventos. Tudo começa desligado.",actions:"O que as árvores podem fazer. Comandos e webhooks só rodam se estiverem nas listas.",history:"Fica só neste computador.",api:"A API completa de cada modelo, só nesta máquina."};
 const L=k=>LBL[k]||k.replace(/_/g," ");
+const TIP={timezone:"Usado para entender “amanhã”, “sexta que vem” e prazos.",device:"auto usa a placa de vídeo (CUDA) se existir; senão o processador.",threads:"Quantos núcleos o modelo pode usar. 0 = todos. Diminua para deixar o computador mais livre.",
+ drive_folder_id:"Pasta do Google Drive com os arquivos .djx, para baixar os modelos automaticamente.",open_panel_on_start:"Mostrar a janela assim que o programa abre. Desligado, ele inicia só na bandeja.",max_steps:"Limite de decisões por evento, para evitar ciclos.",
+ port:"Porta do painel local. Mude só se outro programa já usa esta.",host:"127.0.0.1 = só este computador (recomendado).",batch_window_ms:"Junta pedidos que chegam juntos numa passada só: mais rápido sob carga.",rate_rps:"Limite de pedidos por segundo de cada programa.",
+ http_inbox:"Permite que outros programas enviem textos para as árvores (POST /api/event).",notifications:"Lê as notificações do sistema. No Windows pede permissão; no macOS precisa de Acesso Total ao Disco.",apps_allow:"Se preencher, só notificações destes apps entram. Ex.: WhatsApp, Outlook.",apps_deny:"Notificações destes apps são ignoradas.",
+ folder:"Lê arquivos novos ou alterados nas pastas escolhidas: textos, e-mails, PDF, Word, imagens (OCR) e áudio.",paths:"Uma pasta por linha. Ex.: ~/Downloads",patterns:"Tipos de arquivo lidos, um por linha. Ex.: *.pdf",clipboard:"Lê o texto que você copia (Ctrl+C).",
+ imap:"Lê e-mails não lidos sem marcá-los como lidos. A senha fica numa variável do sistema, nunca no arquivo.",command:"Roda programas que você lista e lê a resposta deles.",ocr:"Lê o texto de imagens (precisa do Tesseract instalado).",audio:"Transcreve áudios para texto antes de decidir.",
+ require_confirmation:"Ações que esperam sua aprovação. Recomendado: command e webhook.",webhook_allow:"Endereços que as árvores podem chamar. Um prefixo por linha, ex.: https://meu-sistema.com/",command_allow:"Programas que as árvores podem executar. Só o nome, ex.: notepad",write_dir:"As árvores só gravam arquivos dentro desta pasta.",
+ keep:"Quantos eventos guardar no histórico.",store_text:"Desligado, o histórico guarda só o tamanho do texto.",mask_pii:"Esconde CPF, cartão, e-mail e telefone no histórico."};
 function form(o,path){return Object.entries(o).map(([k,v])=>{const id=(path?path+".":"")+k;
-  if(v&&typeof v=="object"&&!Array.isArray(v))return `<div class="sub"><div class="meta">${esc(L(k))}</div>${form(v,id)}</div>`;
-  if(typeof v=="boolean")return `<label class="switch"><input type="checkbox" data-k="${esc(id)}" ${v?"checked":""}> ${esc(L(k))}</label>`;
-  if(Array.isArray(v)){if(v.some(x=>typeof x=="object"))return `<label>${esc(L(k))}</label><textarea data-k="${esc(id)}" data-json="1" rows="3">${esc(JSON.stringify(v,null,1))}</textarea>`;
-    return `<label>${esc(L(k))}</label><textarea data-k="${esc(id)}" data-list="1" rows="${Math.max(2,v.length+1)}">${esc(v.join("\n"))}</textarea>`}
-  if(k=="device")return `<label>${esc(L(k))}</label><select data-k="${esc(id)}">${["auto","cpu","cuda"].map(d=>`<option ${d==v?"selected":""}>${d}</option>`).join("")}</select>`;
-  return `<label>${esc(L(k))}</label><input data-k="${esc(id)}" value="${esc(v)}" ${typeof v=="number"?'inputmode="decimal"':""}>`}).join("")}
+  if(v&&typeof v=="object"&&!Array.isArray(v))return `<div class="sub"><div class="meta">${esc(L(k))}${qi(TIP[k])}</div>${form(v,id)}</div>`;
+  if(typeof v=="boolean")return `<label class="switch"><input type="checkbox" data-k="${esc(id)}" ${v?"checked":""}> ${esc(L(k))}${qi(TIP[k])}</label>`;
+  if(Array.isArray(v)){if(v.some(x=>typeof x=="object"))return `<label>${esc(L(k))}${qi(TIP[k])}</label><textarea data-k="${esc(id)}" data-json="1" rows="3">${esc(JSON.stringify(v,null,1))}</textarea>`;
+    return `<label>${esc(L(k))}${qi(TIP[k])}</label><textarea data-k="${esc(id)}" data-list="1" rows="${Math.max(2,v.length+1)}">${esc(v.join("\n"))}</textarea>`}
+  if(k=="device")return `<label>${esc(L(k))}${qi(TIP[k])}</label><select data-k="${esc(id)}">${["auto","cpu","cuda"].map(d=>`<option ${d==v?"selected":""}>${d}</option>`).join("")}</select>`;
+  return `<label>${esc(L(k))}${qi(TIP[k])}</label><input data-k="${esc(id)}" value="${esc(v)}" ${typeof v=="number"?'inputmode="decimal"':""}>`}).join("")}
 async function saveCfg(){const out={};document.querySelectorAll("[data-k]").forEach(e=>{const ks=e.dataset.k.split(".");let o=out;ks.slice(0,-1).forEach(k=>o=o[k]=o[k]||{});
   let v=e.type=="checkbox"?e.checked:e.value;if(e.dataset.json){try{v=JSON.parse(v)}catch(x){toast("JSON inválido em "+e.dataset.k);throw x}}o[ks[ks.length-1]]=v});
   const r=await api("/api/config",out);toast(r.error||(r.restart&&r.restart.length?"salvo · reinicie para mudar "+r.restart.join(", "):"ajustes salvos"));if(!r.error)draw()}

@@ -32,8 +32,11 @@ jobs:
         shell: pwsh
       - run: choco install innosetup -y --no-progress
       - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+      # zip: o Chrome bloqueia .exe sem assinatura com mais frequência do que um .zip
+      - run: Compress-Archive -Path Output\*.exe -DestinationPath Output\DjorgeLocal-Windows.zip
+        shell: pwsh
       - uses: actions/upload-artifact@v4
-        with: {name: DjorgeLocal-Windows, path: Output/*.exe}
+        with: {name: DjorgeLocal-Windows, path: "Output/*"}
   macos:
     runs-on: macos-14
     steps:
@@ -79,10 +82,12 @@ jobs:
           target_commitish: ${{ github.sha }}
           body: |
             Instale o arquivo do seu sistema:
-            * **Windows:** `DjorgeLocal-Setup-*.exe`
+            * **Windows:** `DjorgeLocal-Windows.zip` → extraia e rode o `DjorgeLocal-Setup-*.exe`
+              (se o Chrome avisar, abra Downloads › ⋮ › "Manter"; se o Windows avisar, "Mais informações" › "Executar assim mesmo").
             * **macOS:** `DjorgeLocal-macOS.zip` (abra com clique direito → Abrir na primeira vez)
             * **Linux:** `DjorgeLocal-Linux.tar.gz`
           files: |
+            out/DjorgeLocal-Windows/*.zip
             out/DjorgeLocal-Windows/*.exe
             out/DjorgeLocal-macOS/*.zip
             out/DjorgeLocal-Linux/*.tar.gz
