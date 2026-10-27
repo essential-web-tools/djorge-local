@@ -11,7 +11,7 @@ jobs:
           python - <<'P'
           import gdown
           try:
-              files = gdown.download_folder(id="1n_yvqEeTMkDXjl-KCK66K2i0DPaM-jKf", skip_download=True, quiet=True, remaining_ok=True)
+              files = gdown.download_folder(id="1n_yvqEeTMkDXjl-KCK66K2i0DPaM-jKf", skip_download=True, quiet=True)
               for f in files or []:
                   print(f"::warning::{f.path} | {f.id}")
               print(f"::warning::total {len(files or [])}")
