@@ -1,0 +1,79 @@
+# Djorge Local - configuração. Tudo que lê ou age fora do programa começa DESLIGADO.
+device: auto            # auto | cpu | cuda
+threads: 0              # 0 = todos os núcleos
+timezone: America/Sao_Paulo
+language: pt
+
+models:
+  origo:                # catalogação, julgamento e decisão
+    enabled: true
+    path: ""            # pasta do artefato (sem encriptação), OU:
+    sealed: ""          # arquivo .djx encriptado (padrão: ~/.djorge-local/modelos/origo.djx)
+    drive_file_id: ""   # id do .djx no Google Drive (baixa uma vez; continua encriptado no disco)
+  flash:                # segundo modelo (rápido); ligue quando tiver o artefato
+    enabled: false
+    path: ""
+    sealed: ""
+    drive_file_id: ""
+
+drive_folder_id: "1n_yvqEeTMkDXjl-KCK66K2i0DPaM-jKf"   # pasta com origo*.djx e flash*.djx (compartilhada por link)
+key_env: DJORGE_MODEL_KEY   # variável com a chave; sem ela, a chave é pedida ao iniciar
+
+server:
+  host: 127.0.0.1       # só esta máquina
+  port: 8765
+  token: ""             # vazio = gera em ~/.djorge-local/token.txt
+
+api:                    # API completa do DJORGE, uma porta por modelo (Bearer = token do painel)
+  enabled: true
+  host: 127.0.0.1
+  ports: {origo: 8750, flash: 8751}
+  batch_window_ms: 8    # junta pedidos simultâneos numa passada
+  rate_rps: 50
+  rate_burst: 200
+  max_body_mb: 2
+
+connectors:
+  http_inbox: {enabled: true}          # qualquer programa: POST /api/event
+  notifications:                        # Windows (pede permissão), Linux (D-Bus), macOS (Acesso Total ao Disco)
+    enabled: false
+    apps_allow: []                      # ex.: ["WhatsApp", "Outlook"]; vazio = todos
+    apps_deny: []
+    poll_s: 2
+  folder:
+    enabled: false
+    paths: []                           # ex.: ["~/Downloads", "~/Documentos/entrada"]
+    patterns: ["*.txt", "*.md", "*.eml", "*.pdf", "*.docx", "*.png", "*.jpg"]
+    poll_s: 3
+    max_mb: 20
+  clipboard: {enabled: false, poll_s: 1.5, min_chars: 8}
+  imap:
+    enabled: false
+    host: ""            # ex.: imap.gmail.com (senha de app)
+    port: 993
+    user: ""
+    password_env: DJORGE_IMAP_PASSWORD
+    folder: INBOX
+    poll_s: 60
+  command:
+    enabled: false
+    jobs: []            # ex.: [{name: tarefas, argv: ["meu_cli", "listar"], every_s: 120}]
+  stdin: {enabled: false}
+
+extract:
+  ocr: true             # imagens: pytesseract + Tesseract
+  ocr_lang: por+eng
+  audio: false          # faster-whisper
+  whisper_model: small
+  max_chars: 20000
+
+actions:
+  require_confirmation: [command, webhook, write_file]   # esperam aprovação no painel
+  webhook_allow: []     # prefixos de URL permitidos
+  command_allow: []     # nomes de programas permitidos
+  write_dir: ~/.djorge-local/saidas
+  notify: true
+
+trees_file: arvores.yaml
+history: {keep: 2000, store_text: true, mask_pii: true}
+max_steps: 25

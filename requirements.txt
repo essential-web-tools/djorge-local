@@ -1,0 +1,21 @@
+# núcleo
+torch>=2.2
+transformers>=4.51
+safetensors
+tokenizers
+numpy
+pyyaml
+cryptography>=42
+# download do Google Drive
+gdown>=5
+# opcionais (instale só o que for usar)
+plyer            # notificações na área de trabalho
+pyperclip        # conector clipboard
+pypdf            # PDF
+python-docx      # DOCX
+pytesseract      # imagens (OCR) + instale o Tesseract no sistema
+pillow
+# faster-whisper # áudio
+# winsdk         # notificações do Windows (somente Windows)
+pystray
+keyring

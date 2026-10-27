@@ -1,0 +1,40 @@
+name: build
+on: {workflow_dispatch: {}, push: {tags: ["v*"]}}
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - run: pip install -r requirements.txt winsdk pystray keyring pyinstaller
+      - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - run: choco install innosetup -y --no-progress
+      - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+      - uses: actions/upload-artifact@v4
+        with: {name: DjorgeLocal-Windows, path: Output/*.exe}
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install torch && pip install -r requirements.txt pystray keyring pyinstaller
+      - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - run: cd dist && zip -qry DjorgeLocal-macOS.zip "Djorge Local.app"
+      - uses: actions/upload-artifact@v4
+        with: {name: DjorgeLocal-macOS, path: dist/DjorgeLocal-macOS.zip}
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: sudo apt-get install -y python3-tk libayatana-appindicator3-1 || true
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - run: pip install -r requirements.txt pystray keyring pyinstaller
+      - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - run: cd dist && tar czf DjorgeLocal-Linux.tar.gz "Djorge Local"
+      - uses: actions/upload-artifact@v4
+        with: {name: DjorgeLocal-Linux, path: dist/DjorgeLocal-Linux.tar.gz}

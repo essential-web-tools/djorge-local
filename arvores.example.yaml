@@ -1,0 +1,47 @@
+# Árvores de decisão. Cada evento (notificação, e-mail, arquivo, texto enviado por outro programa) passa pelas
+# árvores cujo `when` casar. Cada resposta escolhe as decisões seguintes.
+trees:
+  - name: triagem
+    when: {source_in: [notifications, email, folder, http, teste, clipboard]}
+    start: assunto
+    nodes:
+      assunto:                         # modelo origo: catalogar
+        choice: [cobrança, entrega, trabalho, pessoal, outro]
+        ask: "Do que se trata?"
+        min_probability: 0.55
+        branches:
+          cobrança: [prazo, valor]     # duas decisões seguintes
+          entrega: registrar
+          trabalho: urgencia
+          abstain: registrar
+          default: fim
+      prazo:                           # resolvido pelo relógio quando há data no texto
+        check: "o prazo já venceu"
+        branches: {true: aviso_vencido, false: fim}
+      valor:
+        select: "TOTAL TYPE money"
+        branches: {">= 1000": aviso_valor, default: fim}
+      aviso_vencido:
+        action: notify
+        title: "Cobrança vencida"
+        message: "{title}: {text:100}"
+        then: registrar
+      aviso_valor:
+        action: notify
+        title: "Cobrança alta"
+        message: "Valor total {valor.value}"
+      urgencia:
+        score: [baixa, média, alta, crítica]
+        ask: "Qual a urgência?"
+        branches: {">= 2": aviso_urgente, default: fim}
+      aviso_urgente:
+        action: notify
+        title: "Urgente ({urgencia.answer})"
+        message: "{title} — {text:100}"
+      registrar:
+        action: write_file              # espera confirmação (actions.require_confirmation)
+        file: registro.txt
+        content: "{time} | {source} | {assunto.answer} | {title}"
+        then: fim
+      fim:
+        action: stop
