@@ -31,8 +31,6 @@ jobs:
       - run: pip install --no-binary pyinstaller pyinstaller
         env: {PYINSTALLER_COMPILE_BOOTLOADER: "1"}
       - run: python tools_fetch_images.py
-      - run: python tools_make_vault.py
-        env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
       - uses: actions/download-artifact@v4
         with: {name: modelo-flash, path: "dist/Djorge Local/modelos"}
@@ -94,8 +92,6 @@ jobs:
         with: {python-version: "3.11"}
       - run: pip install torch && pip install -r requirements.txt pystray keyring pyinstaller
       - run: python tools_fetch_images.py
-      - run: python tools_make_vault.py
-        env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
       - uses: actions/download-artifact@v4
         with: {name: modelo-flash, path: "dist/Djorge Local.app/Contents/MacOS/modelos"}
@@ -113,8 +109,6 @@ jobs:
       - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
       - run: pip install -r requirements.txt pystray keyring pyinstaller "pywebview[qt]" PyQt6-WebEngine
       - run: python tools_fetch_images.py
-      - run: python tools_make_vault.py
-        env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
       - uses: actions/download-artifact@v4
         with: {name: modelo-flash, path: "dist/Djorge Local/modelos"}
