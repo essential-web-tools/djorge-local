@@ -21,6 +21,23 @@ jobs:
       - run: python tools_make_vault.py
         env: {DJORGE_MODEL_KEY: "${{ secrets.DJORGE_MODEL_KEY }}"}
       - run: python -m PyInstaller djorge-local.spec --noconfirm
+      - name: teste de fumaça (abre o executável e espera o painel responder)
+        shell: pwsh
+        run: |
+          $env:DJORGE_LOCAL_HOME = "$env:RUNNER_TEMP\djhome"
+          $p = Start-Process -FilePath "dist\Djorge Local\Djorge Local (diagnostico).exe" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt" -RedirectStandardError "$env:RUNNER_TEMP\err.txt"
+          $ok = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep -Seconds 2
+            try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/status" -UseBasicParsing -TimeoutSec 3 } catch { if ($_.Exception.Response.StatusCode.value__ -eq 401) { $ok = $true; break } }
+            if ($p.HasExited) { break }
+          }
+          Write-Host "---- stdout"; Get-Content "$env:RUNNER_TEMP\out.txt" -ErrorAction SilentlyContinue
+          Write-Host "---- stderr"; Get-Content "$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue
+          Write-Host "---- log"; Get-Content "$env:DJORGE_LOCAL_HOME\logs\djorge.log" -ErrorAction SilentlyContinue
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          if (-not $ok) { throw "o executável não abriu o painel" }
+          Write-Host "painel respondeu em $([int]($i*2)) s"
       - name: assinar (opcional, com certificado em WIN_CERT_PFX_BASE64 / WIN_CERT_PASSWORD)
         if: ${{ env.HAS_CERT == 'true' }}
         shell: pwsh
