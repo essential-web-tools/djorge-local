@@ -248,3 +248,36 @@ def test_security_check_on_every_event(home, art):
     app.cfg["seguranca"]["enabled"] = False
     assert "seguranca" not in app.handle({"id": "11", "source": "teste", "title": "", "app": "", "sender": "",
                                           "text": "texto comprido o bastante"})["event"]
+
+
+def test_rule_from_text_and_add(home, art):
+    cfg = _cfg(home, art, TREES)
+    from djorge_local.app import App
+    app = App(cfg)
+    r = app.rules.from_text('Faça com que todos os e-mails de ana@empresa.com sejam movidos para a pasta "Trabalho"')
+    t = r["tree"]
+    assert t["when"]["sender_has"] == ["ana@empresa.com"] and r["summary"]
+    assert set(r["decisions"]) == {"source", "action", "security"}
+    t["nodes"]["acao"] = {"action": "email_move", "folder": "", "uid": "{uid}", "mailbox": "{mailbox}"}
+    t["when"]["source_in"] = ["email"]
+    import pytest as _p
+    with _p.raises(ValueError):
+        app.add_rule(t)
+    out = app.add_rule(t, {"folder": "Trabalho"})
+    assert out["trees"] == 2 and (home / "arvores.yaml.bak").is_file()
+    names = [x["name"] for x in app.trees]
+    assert out["added"] in names
+    # the moved rule only fires for e-mails, and moving stays off until allow_move
+    res = app.handle({"id": "e1", "source": "email", "title": "Oi", "text": "relatório", "app": "imap",
+                      "sender": "Ana <ana@empresa.com>", "uid": "7", "mailbox": "INBOX"})
+    run = next(x for x in res["runs"] if x["tree"] == out["added"])
+    assert run["trail"][0]["status"] == "negado"
+    assert not any(x["tree"] == out["added"] for x in app.handle({"id": "e2", "source": "email", "title": "", "text": "x y z",
+                   "app": "", "sender": "bob@x.com"})["runs"])
+
+
+def test_rule_folder_hint():
+    from djorge_local.rules import FOLDER_HINT, EMAIL
+    assert FOLDER_HINT.search("mova para a pasta Trabalho").group(1) == "Trabalho"
+    assert FOLDER_HINT.search("coloque na pasta Notas Fiscais, por favor").group(1) == "Notas Fiscais"
+    assert EMAIL.findall("de ana.souza@empresa.com.br") == ["ana.souza@empresa.com.br"]

@@ -37,7 +37,7 @@ DEFAULTS = {
                                                                 "*.png", "*.jpg"], "poll_s": 3, "max_mb": 20},
         "clipboard": {"enabled": False, "poll_s": 1.5, "min_chars": 8},
         "imap": {"enabled": False, "host": "", "port": 993, "user": "", "password_env": "DJORGE_IMAP_PASSWORD",
-                 "folder": "INBOX", "poll_s": 60},
+                 "folder": "INBOX", "poll_s": 60, "allow_move": False},
         "command": {"enabled": False, "jobs": []},           # [{name, argv: [...], every_s}]
         "stdin": {"enabled": False},
     },

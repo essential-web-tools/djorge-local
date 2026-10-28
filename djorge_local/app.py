@@ -65,6 +65,8 @@ class App:
         from .actions import desktop_notify
         from .security import SecurityCheck
         self.security = SecurityCheck(cfg, self.models, desktop_notify)
+        from .rules import RuleBuilder
+        self.rules = RuleBuilder(cfg, self.models)
         self.trees, self.conns = [], {}
         self.reload_trees()
 
@@ -161,6 +163,30 @@ class App:
             p.write_text(text, encoding="utf-8")
         self.trees = trees
         return len(trees)
+
+    def add_rule(self, tree: dict, answers: dict = None) -> dict:
+        """Appends a rule made by RuleBuilder (after the person saw the summary) to arvores.yaml."""
+        import copy
+        from .rules import summarize
+        t = copy.deepcopy(tree)
+        node = t["nodes"][t["start"]]
+        a = answers or {}
+        if a.get("folder") and node.get("action") == "email_move":
+            node["folder"] = str(a["folder"]).strip()[:100]
+        if node.get("action") == "email_move" and not node.get("folder"):
+            raise ValueError("falta a pasta de destino")
+        p = self.trees_path()
+        data = (yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else None) or {}
+        if p.is_file():                                   # the old file (with its comments) stays as .bak
+            p.with_suffix(p.suffix + ".bak").write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        trees = data.setdefault("trees", [])
+        names = {x.get("name") for x in trees}
+        base, i = t["name"], 2
+        while t["name"] in names:
+            t["name"] = f"{base}-{i}"; i += 1
+        trees.append(t)
+        self.reload_trees(yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+        return {"added": t["name"], "summary": summarize(t), "trees": len(self.trees)}
 
     def handle(self, ev: dict, only: str = None) -> dict:
         out = []
@@ -335,6 +361,10 @@ def make_handler(app: App):
                     return self._send(200, app.actions.confirm(u.path.rsplit("/", 1)[1], bool(b.get("approve"))))
                 if u.path == "/api/trees":
                     return self._send(200, {"trees": app.reload_trees(b["yaml"])})
+                if u.path == "/api/rules/preview":            # text -> proposed tree (nothing is saved)
+                    return self._send(200, app.rules.from_text(b.get("text", "")))
+                if u.path == "/api/rules/add":                # the person approved the summary
+                    return self._send(200, app.add_rule(b["tree"], b.get("answers")))
             except (TreeError, yaml.YAMLError, KeyError, ValueError, PermissionError, FileNotFoundError) as e:
                 return self._send(400, {"error": f"{type(e).__name__}: {e}"})
             except Exception as e:

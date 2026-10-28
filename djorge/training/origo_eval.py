@@ -135,7 +135,7 @@ def eval_broad(eng, path, n_max=4000, suite="broad", key="provenance", split=Non
     return items
 
 
-def eval_spans(eng, path, n_max=1500):
+def eval_spans(eng, path, n_max=1500, suite="spans"):
     from ..runtime.semantic import SemReq
     recs = [json.loads(l) for l in open(path, encoding="utf-8") if '"test"' in l]
     recs = [r for r in recs if r.get("split") == "test" and r.get("task") == "resolve"][:n_max]
@@ -146,7 +146,7 @@ def eval_spans(eng, path, n_max=1500):
         gold = {tuple(s) for s in r["spans"]}
         tp = len(pred & gold)
         f1 = 1.0 if not pred and not gold else (2 * tp / (len(pred) + len(gold)) if (pred or gold) else 0.0)
-        items.append({"suite": "spans", "task": r["target"], "id": f"s{i}", "ok": f1 >= 0.5, "p": None,
+        items.append({"suite": suite, "task": r["target"], "id": f"s{i}", "ok": f1 >= 0.5, "p": None,
                       "f1": round(f1, 4), "tp": tp, "n_pred": len(pred), "n_gold": len(gold)})
     return items
 
@@ -160,12 +160,12 @@ def summarize(items):
                 x["hc_err"] += 1
     out = {k: {"n": v["n"], "accuracy": round(v["ok"] / v["n"], 4), "high_conf_errors": v["hc_err"]}
            for k, v in sorted(g.items())}
-    sp = [it for it in items if it["suite"] == "spans"]
-    if sp:
+    for suite in sorted({it["suite"] for it in items if "tp" in it}):
+        sp = [it for it in items if it["suite"] == suite]
         tp = sum(i["tp"] for i in sp); npred = sum(i["n_pred"] for i in sp); ngold = sum(i["n_gold"] for i in sp)
         pr, rc = tp / max(1, npred), tp / max(1, ngold)
-        out["spans"]["micro_precision"], out["spans"]["micro_recall"] = round(pr, 4), round(rc, 4)
-        out["spans"]["micro_f1"] = round(2 * pr * rc / max(1e-9, pr + rc), 4)
+        out[suite]["micro_precision"], out[suite]["micro_recall"] = round(pr, 4), round(rc, 4)
+        out[suite]["micro_f1"] = round(2 * pr * rc / max(1e-9, pr + rc), 4)
     return out
 
 
@@ -176,6 +176,7 @@ def main(argv=None):
     ap.add_argument("--broad", default=None)
     ap.add_argument("--spans", default=None)
     ap.add_argument("--security", default=None, help="security test jsonl (sentinel_data): suite 'seguranca' per threat")
+    ap.add_argument("--commands", default=None, help="commands test jsonl (commands_data): intent + slots")
     ap.add_argument("--real-split", default="dev", choices=["dev", "hidden", "all"])
     ap.add_argument("--agg-n", type=int, default=320)
     ap.add_argument("--device", default="cuda")
@@ -192,6 +193,9 @@ def main(argv=None):
         items += eval_spans(eng, a.spans)
     if a.security and os.path.exists(a.security):
         items += eval_broad(eng, a.security, n_max=3000, suite="seguranca", key="threat")
+    if a.commands and os.path.exists(a.commands):
+        items += eval_broad(eng, a.commands, n_max=2000, suite="comandos", key="provenance")
+        items += eval_spans(eng, a.commands, n_max=2000, suite="comandos_campos")
     rep = {"artifact": a.artifact, "seconds": round(time.time() - t0, 1), "summary": summarize(items), "items": items}
     json.dump(rep, open(a.out, "w"), ensure_ascii=False, indent=1)
     print(json.dumps({k: v for k, v in rep["summary"].items() if "/" not in k}, ensure_ascii=False))

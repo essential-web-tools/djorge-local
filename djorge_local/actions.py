@@ -6,6 +6,7 @@ in the dashboard (actions.require_confirmation). Nothing here sends anything any
   write_file  append text to a file inside actions.write_dir (file, content)
   webhook     POST JSON to a URL whose prefix is in actions.webhook_allow (url, body)
   command     run an executable listed in actions.command_allow, argv as a list (no shell)
+  email_move  move the e-mail of this event to another folder (IMAP; needs connectors.imap.allow_move)
   stop        end this path
 """
 from __future__ import annotations
@@ -114,6 +115,34 @@ class Actions:
                     return {"action": kind, "status": "negado", "reason": "programa fora de actions.command_allow"}
                 p = subprocess.run(argv, capture_output=True, text=True, timeout=int(s.get("timeout", 30)))
                 return {"action": kind, "status": p.returncode, "stdout": p.stdout[-2000:], "stderr": p.stderr[-1000:]}
+            if kind == "email_move":
+                return self._email_move(s)
         except Exception as e:
             return {"action": kind, "status": "erro", "error": f"{type(e).__name__}: {e}"}
         return {"action": kind, "status": "desconhecida"}
+
+    def _email_move(self, s: dict) -> dict:
+        import imaplib
+        c = (self.cfg.get("connectors") or {}).get("imap") or {}
+        uid, folder = str(s.get("uid") or "").strip(), str(s.get("folder") or "").strip()
+        if not c.get("allow_move"):
+            return {"action": "email_move", "status": "negado", "reason": "ligue connectors.imap.allow_move"}
+        if not uid.isdigit() or not folder or len(folder) > 100 or any(ch in folder for ch in '\r\n"'):
+            return {"action": "email_move", "status": "negado", "reason": "e-mail ou pasta inválidos"}
+        pw = os.environ.get(c.get("password_env", "DJORGE_IMAP_PASSWORD"))
+        with imaplib.IMAP4_SSL(c["host"], int(c.get("port", 993))) as M:
+            M.login(c["user"], pw)
+            M.select(s.get("mailbox") or c.get("folder", "INBOX"))
+            q = f'"{folder}"'
+            if M.list('""', q)[1] in ([None], []):
+                M.create(q)
+            caps = {x.decode().upper() if isinstance(x, bytes) else str(x).upper() for x in (M.capabilities or ())}
+            if "MOVE" in caps:
+                typ, _ = M.uid("MOVE", uid, q)
+            else:                                       # COPY + mark; expunge only this message when possible
+                typ, _ = M.uid("COPY", uid, q)
+                if typ == "OK":
+                    M.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+                    if "UIDPLUS" in caps:
+                        M.uid("EXPUNGE", uid)
+        return {"action": "email_move", "status": "ok" if typ == "OK" else "erro", "folder": folder}

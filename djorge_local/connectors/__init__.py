@@ -5,7 +5,8 @@
                  Notification Center database; needs Full Disk Access granted by you)
   folder         new / changed files in chosen folders (text, e-mail, PDF, DOCX, images by OCR, audio)
   clipboard      text you copy (pyperclip)
-  imap           new e-mails, read-only (BODY.PEEK: they stay unread)
+  imap           new e-mails, read-only (BODY.PEEK: they stay unread); the email_move action can move them
+                 when connectors.imap.allow_move is on
   command        runs a program you list and reads its output (e.g. a CLI of another app)
   stdin          lines typed / piped into the program
 """
@@ -257,7 +258,7 @@ class Imap(Base):
                 with imaplib.IMAP4_SSL(c["host"], int(c.get("port", 993))) as M:
                     M.login(c["user"], pw)
                     M.select(c.get("folder", "INBOX"), readonly=True)
-                    _, data = M.search(None, "UNSEEN")
+                    _, data = M.uid("SEARCH", None, "UNSEEN")
                     ids = data[0].split()[-50:]
                     self.status = f"ativo ({len(ids)} não lidos)"
                     for i in ids:
@@ -266,11 +267,11 @@ class Imap(Base):
                         seen.add(i)
                         if first:
                             continue
-                        _, msg = M.fetch(i, "(BODY.PEEK[])")
+                        _, msg = M.uid("FETCH", i, "(BODY.PEEK[])")
                         raw = next((x[1] for x in msg if isinstance(x, tuple)), b"")
                         d = extract.from_eml(raw)
                         emit("email", d["text"][: self.cfg["extract"]["max_chars"]], title=d["title"],
-                             sender=d["sender"], app=c["host"])
+                             sender=d["sender"], app=c["host"], uid=i.decode(), mailbox=c.get("folder", "INBOX"))
                 first = False
             except Exception as e:
                 self.status = f"erro: {type(e).__name__}"
