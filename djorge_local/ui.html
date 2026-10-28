@@ -285,7 +285,7 @@ async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.inner
  if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
   const st=x=>x=="pronto"?"p":"soft";
   m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","O Flash já vem dentro do programa e carrega sozinho. Para usar outro modelo, aponte a pasta dele.")+
-  `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${x.bundled?"incluído no programa":"pasta"}${x.api?" · "+esc(x.api):""}</div>
+  `<div class="grid">${r.models.map(x=>`<article class="card" id="mc-${esc(x.name)}"><div class="meta">${x.bundled?"incluído no programa":"pasta"}${x.profile?" · roda em "+esc(x.profile):""}${x.api?" · "+esc(x.api):""}</div>
    <h3>${esc(x.name)} <span class="chip ${st(x.state)}">${esc(x.state)}</span></h3>
    <label>descrição${qi("Só para você reconhecer o modelo.")}</label><input data-f="role" value="${esc(x.role)}">
    ${x.service?`<p class="text">Usado só pela extensão do Chrome. Carrega quando a extensão pergunta algo${qi("Não aparece nas árvores. Em computadores com pouca memória, sai da memória depois de alguns minutos sem uso.")}.</p>`:""}

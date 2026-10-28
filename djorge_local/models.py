@@ -30,6 +30,31 @@ def is_model(p: Path) -> bool:
     return (p / "metadata" / "djorge.json").is_file()
 
 
+GPU_PROVIDERS = ("WebGpuExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider", "CUDAExecutionProvider")
+
+
+def pick_profile(art: Path, cfg) -> dict:
+    """How this computer runs this model. Local packages (local_profiles.json) use ONNX Runtime:
+    fp16 on a GPU of any brand when available (and not turned off), int8 on the CPU otherwise.
+    Plain artifacts fall back to PyTorch (with the economy settings on small machines)."""
+    lp = art / "local_profiles.json"
+    if not lp.is_file():
+        return {"engine": "pytorch", "label": "PyTorch"}
+    import json as _j
+    prof = _j.load(open(lp))["profiles"]
+    try:
+        import onnxruntime as ort
+        avail = ort.get_available_providers()
+    except Exception:
+        return {"engine": "pytorch", "label": "PyTorch (ONNX Runtime ausente)"}
+    want_gpu = cfg.get("device", "auto") in ("auto", "cuda")
+    gpu = [p for p in GPU_PROVIDERS if p in avail]
+    if want_gpu and gpu and "gpu" in prof and (art / "onnx" / "encoder.fp16.onnx").is_file():
+        return {"engine": "onnx", "onnx": "fp16", "providers": gpu + ["CPUExecutionProvider"],
+                "label": f"GPU · {gpu[0].replace('ExecutionProvider', '')} · fp16"}
+    return {"engine": "onnx", "onnx": "int8", "providers": ["CPUExecutionProvider"], "label": "CPU · int8 (ONNX)"}
+
+
 class Models:
     NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
@@ -37,6 +62,7 @@ class Models:
         self.cfg, self._z, self._lock = cfg, {}, threading.Lock()
         self.state = {}                     # name -> "carregando" | "pronto" | "erro: ..."
         self.apis, self._servers = {}, {}
+        self.profile = {}                   # name -> how this machine runs it (GPU fp16 / CPU int8 / PyTorch)
 
     def get(self, name="flash"):
         if name not in self.cfg["models"] or not self.cfg["models"][name].get("enabled", True):
@@ -54,9 +80,31 @@ class Models:
                 dev = self.cfg["device"]
                 if dev == "auto":
                     dev = "cuda" if torch.cuda.is_available() else "cpu"
+                prof = pick_profile(art, self.cfg)
+                import os as _os
+                for k in ("DJORGE_ONNX", "DJORGE_ONNX_PROVIDERS"):
+                    _os.environ.pop(k, None)
+                if prof["engine"] == "onnx":
+                    _os.environ["DJORGE_ONNX"] = prof["onnx"]
+                    _os.environ["DJORGE_ONNX_PROVIDERS"] = ",".join(prof["providers"])
+                    _os.environ.setdefault("DJORGE_THREADS", str(int(self.cfg.get("threads") or 0) or (_os.cpu_count() or 2)))
+                    dev = "cpu"
                 c = DjorgeConfig(artifact=str(art), device=dev)
                 c.context_dir = str(HOME / "contextos" / name)
-                z = Djorge(artifact=str(art), config=c)
+                try:
+                    z = Djorge(artifact=str(art), config=c)
+                except Exception:
+                    if prof.get("onnx") == "fp16":            # GPU path failed on this machine -> CPU int8
+                        _os.environ["DJORGE_ONNX"], _os.environ["DJORGE_ONNX_PROVIDERS"] = "int8", "CPUExecutionProvider"
+                        prof = {"engine": "onnx", "onnx": "int8", "label": "CPU · int8 (ONNX, GPU falhou)"}
+                        z = Djorge(artifact=str(art), config=c)
+                    else:
+                        raise
+                eng = getattr(z.semantic, "engine", z.semantic)
+                ox = (getattr(eng, "meta", {}) or {}).get("onnx")
+                if ox:
+                    prof["label"] = prof["label"].split(" · ")[0] + f" · {ox['file'].split('.')[-2]} · {ox['provider'].replace('ExecutionProvider', '')}"
+                self.profile[name] = prof["label"]
                 z.config.sentinel_endpoint = bool(m.get("service"))     # /v1/sentinel only on the Sentinel
                 self._z[name] = z
                 self.state[name] = "pronto"
@@ -110,7 +158,7 @@ class Models:
                 "desligado" if not m.get("enabled", True) else ("não carregado" if found else "sem pasta"))))
             out.append({"name": name, "enabled": m.get("enabled", True), "role": m.get("role", ""), "service": bool(m.get("service")),
                         "path": "" if p.startswith("@app/") else p, "bundled": p.startswith("@app/"),
-                        "found": found, "state": st, "api": self.apis.get(name),
+                        "found": found, "state": st, "api": self.apis.get(name), "profile": self.profile.get(name),
                         "port": (self.cfg["api"].get("ports") or {}).get(name)})
         return out
 

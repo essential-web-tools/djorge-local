@@ -208,3 +208,21 @@ def test_sentinel_service_for_extension(home, art):
     assert "sentinel" in app.models.loaded()
     z = app.models.get("flash")
     assert z.config.sentinel_endpoint is False and app.models.get("sentinel").config.sentinel_endpoint is True
+
+
+def test_local_package_runs_on_onnx_cpu(home, art, tmp_path):
+    pytest.importorskip("onnxruntime")
+    import subprocess, yaml
+    pkg = str(tmp_path / "flash_local")
+    r = subprocess.run([sys.executable, str(ROOT.parent / "djorge" / "tools" / "export_local.py"), "--artifact", art,
+                        "--out", pkg], capture_output=True, text=True, cwd=str(ROOT.parent / "djorge"))
+    assert r.returncode == 0, r.stderr[-2000:]
+    (home / "config.yaml").write_text(yaml.safe_dump({"models": {"flash": {"path": pkg}},
+                                                      "api": {"ports": {"flash": 18795}}}), encoding="utf-8")
+    from djorge_local import config as C
+    from djorge_local.models import Models
+    m = Models(C.load(str(home / "config.yaml")))
+    z = m.get("flash")
+    assert "CPU" in m.profile["flash"] and "int8" in m.profile["flash"]
+    out = z.execute('CHOICE ["cobrança", "outro"] FROM text ASK "assunto?"', sources={"text": "boleto vence amanhã"})
+    assert out["result"]["answer"] in ("cobrança", "outro")

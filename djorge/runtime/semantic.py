@@ -62,6 +62,32 @@ class SemanticEngine:
         from ..model.backbone import load_backbone, pick_device, tiny_qwen3
         meta = json.load(open(os.path.join(path, "metadata", "djorge.json")))
         mc = meta["model_config"]
+        want_onnx = kw.pop("onnx", None) or os.environ.get("DJORGE_ONNX", "")
+        if want_onnx and want_onnx != "0":                  # ONNX Runtime encoder (local package)
+            from .onnx_backend import OnnxEncoder, build_model_without_backbone, onnx_file_for
+            f = onnx_file_for(path, "fp16" if want_onnx == "fp16" else ("fp32" if want_onnx == "fp32" else "int8"))
+            if f:
+                from transformers import AutoTokenizer
+                tdir = next((os.path.join(path, d) for d in ("tokenizer", "backbone") if
+                             os.path.exists(os.path.join(path, d, "tokenizer_config.json"))), None)
+                tok = AutoTokenizer.from_pretrained(tdir)
+                model = build_model_without_backbone(path, meta)
+                prov = [p for p in os.environ.get("DJORGE_ONNX_PROVIDERS", "").split(",") if p] or None
+                enc = OnnxEncoder(f, prov, int(os.environ.get("DJORGE_THREADS", "0") or 0))
+                model.encode = enc
+                meta["onnx"] = {"file": os.path.relpath(f, path), "provider": enc.provider}
+                for k in ("linear_int8", "prune_vocab", "embed_int8"):
+                    kw.pop(k, None)
+                ctp = os.path.join(path, "calibration", "certainty.json")
+                if os.path.exists(ctp):
+                    meta["certainty"] = json.load(open(ctp))
+                cp = os.path.join(path, "calibration", "calibration.json")
+                cal = CalibrationTable.from_json(open(cp).read()) if os.path.exists(cp) else CalibrationTable()
+                eng = cls(model, tok, cal, meta, device="cpu", max_tokens=meta.get("max_tokens", 512), **kw)
+                eng.artifact_path = path
+                from .refcal import Conformal
+                eng.conformal = Conformal.load(path)
+                return eng
         device = pick_device(device)
         if meta.get("backbone_kind") == "tiny":
             from transformers import PreTrainedTokenizerFast

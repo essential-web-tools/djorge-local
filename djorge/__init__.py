@@ -19,7 +19,7 @@ from .runtime.context import ContextStore
 from .runtime.executor import Executor
 from .version import DJORGE_VERSION
 
-__version__ = "0.7.3"
+__version__ = "0.8.0"
 
 
 class Djorge:
