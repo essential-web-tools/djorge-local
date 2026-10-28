@@ -226,3 +226,25 @@ def test_local_package_runs_on_onnx_cpu(home, art, tmp_path):
     assert "CPU" in m.profile["flash"] and "int8" in m.profile["flash"]
     out = z.execute('CHOICE ["cobrança", "outro"] FROM text ASK "assunto?"', sources={"text": "boleto vence amanhã"})
     assert out["result"]["answer"] in ("cobrança", "outro")
+
+
+def test_security_check_on_every_event(home, art):
+    trees = [{"name": "alerta", "when": {"seguranca_in": ["golpe", "phishing", "spam", "malware", "seguro"]},
+              "start": "x", "nodes": {"x": {"action": "log", "message": "{seguranca} {seguranca_p}"}}}]
+    cfg = _cfg(home, art, trees)
+    from djorge_local.app import App
+    app = App(cfg)
+    sent = []
+    app.security.notify = lambda t, m: sent.append((t, m))
+    app.cfg["seguranca"]["min_probability"] = 0.0
+    app.cfg["seguranca"]["alert_on"] = ["seguro", "spam", "golpe", "phishing", "malware"]
+    r = app.handle({"id": "9", "source": "teste", "title": "Banco", "app": "WhatsApp", "sender": "",
+                    "text": "Sua conta será bloqueada, confirme seus dados em http://banco-seguro.xyz"})
+    assert r["event"]["seguranca"] in ("seguro", "spam", "golpe", "phishing", "malware")
+    assert 0 <= r["event"]["seguranca_p"] <= 1 and r["runs"] and r["runs"][0]["tree"] == "alerta"
+    assert sent and app.security.stats["checked"] == 1
+    short = app.handle({"id": "10", "source": "teste", "title": "", "app": "", "sender": "", "text": "oi"})
+    assert "seguranca" not in short["event"]
+    app.cfg["seguranca"]["enabled"] = False
+    assert "seguranca" not in app.handle({"id": "11", "source": "teste", "title": "", "app": "", "sender": "",
+                                          "text": "texto comprido o bastante"})["event"]

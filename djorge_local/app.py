@@ -62,6 +62,9 @@ class App:
         self.models = Models(cfg)
         self.actions = Actions(cfg, self.hist)
         self.runner = Runner(cfg, self.models, self.actions)
+        from .actions import desktop_notify
+        from .security import SecurityCheck
+        self.security = SecurityCheck(cfg, self.models, desktop_notify)
         self.trees, self.conns = [], {}
         self.reload_trees()
 
@@ -76,7 +79,7 @@ class App:
         raw["device"], raw["threads"] = self.cfg["device"], self.cfg["threads"]
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
-    EDITABLE = ("timezone", "language", "device", "threads", "open_panel_on_start", "sentinel", "server", "api",
+    EDITABLE = ("timezone", "language", "device", "threads", "open_panel_on_start", "seguranca", "sentinel", "server", "api",
                 "connectors", "extract", "actions", "history", "max_steps", "economy")
 
     def settings(self) -> dict:
@@ -161,6 +164,8 @@ class App:
 
     def handle(self, ev: dict, only: str = None) -> dict:
         out = []
+        if not ev.get("skipped"):
+            self.security.check(ev)                 # every event: seguro | spam | golpe | phishing | malware
         for t in self.trees:
             if only and t["name"] != only:
                 continue
@@ -189,7 +194,7 @@ class App:
                 "api": getattr(self.models, "apis", {}), "sentinel_port": getattr(self, "sentinel_port", None),
                 "connectors": {k: c.status for k, c in self.conns.items()},
                 "trees": [t["name"] for t in self.trees], "pending": len(self.actions.pending),
-                "queue": C.EVENTS.qsize()}
+                "queue": C.EVENTS.qsize(), "security": self.security.stats}
 
     def start(self, workers: int = 1):
         self.conns = C.start_all(self.cfg)

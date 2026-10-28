@@ -45,8 +45,8 @@ def pick_profile(art: Path, cfg) -> dict:
     try:
         import onnxruntime as ort
         avail = ort.get_available_providers()
-    except Exception:
-        return {"engine": "pytorch", "label": "PyTorch (ONNX Runtime ausente)"}
+    except Exception:                       # local packages carry no PyTorch backbone: ONNX Runtime is required
+        raise RuntimeError("este modelo é um pacote Local e precisa do ONNX Runtime (reinstale o Djorge Local)")
     want_gpu = cfg.get("device", "auto") in ("auto", "cuda")
     gpu = [p for p in GPU_PROVIDERS if p in avail]
     if want_gpu and gpu and "gpu" in prof and (art / "onnx" / "encoder.fp16.onnx").is_file():

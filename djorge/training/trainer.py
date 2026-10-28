@@ -304,6 +304,8 @@ def main(argv=None):
     ap.add_argument("--teacher", default=None, help="artifact used as teacher: knowledge distillation on every record")
     ap.add_argument("--distill-weight", type=float, default=0.5, help="share of the loss from the teacher (0..1)")
     ap.add_argument("--distill-t", type=float, default=2.0, help="distillation temperature")
+    ap.add_argument("--no-distill-areas", default="", help="comma list of meta.area learned from labels only "
+                    "(e.g. security: a skill the teacher does not have)")
     ap.add_argument("--ema", type=float, default=0.0, help="EMA decay of trainable weights (e.g. 0.999); 0 = off")
     ap.add_argument("--ema-start", type=float, default=0.1, help="fraction of training after which EMA starts")
     ap.add_argument("--llrd", type=float, default=1.0, help="layer-wise LR decay for unfrozen backbone layers (e.g. 0.85)")
@@ -469,6 +471,7 @@ def main(argv=None):
             depth = 0 if li >= 10_000 else top - li                 # top layer (and final norm) get the full LR
             groups.append({"params": ps, "lr": a.bb_lr * (a.llrd ** depth)})
     teacher = None
+    no_kd = {x.strip() for x in a.no_distill_areas.split(",") if x.strip()}
     if a.teacher:
         from ..runtime.semantic import SemanticEngine
         teacher = SemanticEngine.from_artifact(a.teacher, device=dev).model.eval()
@@ -558,18 +561,25 @@ def main(argv=None):
         ids, roles, mask = model.collate(rows, dev)
         X = model.encode(ids, roles, mask)
         tls = model.token_logits(X, rows)
-        per = [record_loss(model, X, i, rows[i], r, built[i][1], tls[i], dev, a.soft_weight) for i, r in enumerate(batch)]
-        per = [x for x in per if x is not None]
+        per = [(i, record_loss(model, X, i, rows[i], r, built[i][1], tls[i], dev, a.soft_weight)) for i, r in enumerate(batch)]
+        per = [(i, x) for i, x in per if x is not None]
         if not per:
             continue
-        loss = torch.stack(per).mean()
         if teacher is not None:
             with torch.no_grad():
                 Xt = teacher.encode(ids, roles, mask)
                 tlt = teacher.token_logits(Xt, rows)
-            kd = torch.stack([distill_loss(model, X, teacher, Xt, i, rows[i], r, tls[i], tlt[i], a.distill_t)
-                              for i, r in enumerate(batch)]).mean()
-            loss = (1 - a.distill_weight) * loss + a.distill_weight * kd
+            mixed = []
+            for i, x in per:
+                r = batch[i]
+                if (r.get("meta") or {}).get("area") in no_kd:       # skill the teacher never learned: labels only
+                    mixed.append(x)
+                else:
+                    kd = distill_loss(model, X, teacher, Xt, i, rows[i], r, tls[i], tlt[i], a.distill_t)
+                    mixed.append((1 - a.distill_weight) * x + a.distill_weight * kd)
+            loss = torch.stack(mixed).mean()
+        else:
+            loss = torch.stack([x for _, x in per]).mean()
         lp = torch.tensor(0.0)
         if a.stage in ("lora", "full") and a.preserve > 0:
             lp = preservation_loss(model, tok, rng.sample(plain, 8), dev, ref=ref)

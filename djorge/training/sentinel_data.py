@@ -299,7 +299,9 @@ def _hf_rows(hf, config, splits):
             yield r
 
 
-def build(out_dir: str, per_source: int = 3000, test_per_source: int = 150, allow_nc: bool = False, seed: int = 0):
+def build(out_dir: str, per_source: int = 3000, test_per_source: int = 150, allow_nc: bool = False, seed: int = 0,
+          public_only: bool = False):
+    """public_only: only published datasets (Hugging Face) - no feeds, no built-in generators."""
     rng = random.Random(seed)
     train, test, stats, rep = [], [], {}, defaultdict(set)
     seen = set()
@@ -347,7 +349,7 @@ def build(out_dir: str, per_source: int = 3000, test_per_source: int = 150, allo
                 except Exception:
                     continue
         take(sid, gen(), lic, com)
-    for sid, url, parser, roles, lic, com, need in FEEDS:
+    for sid, url, parser, roles, lic, com, need in ([] if public_only else FEEDS):
         if need and not os.environ.get(need):
             stats[sid] = {"skipped": f"set {need} (free key) to use this feed"}
             print(f"{sid:<34} skipped (needs {need})", flush=True)
@@ -376,7 +378,7 @@ def build(out_dir: str, per_source: int = 3000, test_per_source: int = 150, allo
                 rep["url"].update(p.get("url", [])); rep["domain"].update(p.get("domain", []))
         stats.setdefault(sid, {})["reputation_items"] = sum(len(v) for v in p.values())
         time.sleep(1)
-    for sid, (recs, lic) in _gen_sources(rng, per_source).items():
+    for sid, (recs, lic) in ({} if public_only else _gen_sources(rng, per_source)).items():
         take(sid, recs, lic, True)
         held = {"gen_scams_br": "generate", "gen_hard_negatives": "hard_negatives", "gen_spoofed_senders": "spoofed_senders"}[sid]
         from . import scams_br
@@ -408,8 +410,9 @@ def main(argv=None):
     ap.add_argument("--per-source", type=int, default=3000)
     ap.add_argument("--test", type=int, default=150)
     ap.add_argument("--allow-nc", action="store_true", help="include non-commercial sources (research only)")
+    ap.add_argument("--public-only", action="store_true", help="only published datasets: no feeds, no generators")
     a = ap.parse_args(argv)
-    build(a.out_dir, a.per_source, a.test, a.allow_nc)
+    build(a.out_dir, a.per_source, a.test, a.allow_nc, public_only=a.public_only)
 
 
 if __name__ == "__main__":

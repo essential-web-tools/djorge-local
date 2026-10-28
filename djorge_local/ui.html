@@ -276,12 +276,14 @@ function markSeen(k){try{localStorage.setItem("djhow-"+k,"1")}catch(e){}}
 function ans(s){if(s.action)return `${esc(s.action)} · ${esc(s.status)}`;
   if(s.error)return `<span class="chip soft">erro</span> ${esc(s.error)}`;
   const a=s.selected?s.selected.join(", "):(s.answer??s.value);return `${esc(a)}${pct(s.probability)}${s.abstain?' <span class="chip soft">abstém</span>':""}${s.grounding&&s.grounding!="classifier"?` <span class="chip soft">${esc(s.grounding)}</span>`:""}`}
+function seg(e){if(!e.seguranca)return "";const ok=e.seguranca=="seguro";
+ return `<span class="chip ${ok?"soft":"p"}" data-tip="Verificação automática de segurança feita pelo Flash em todo evento.">${ok?"✓ ":"⚠ "}${esc(e.seguranca)}${e.seguranca_p!=null?" "+Math.round(e.seguranca_p*100)+"%":""}</span>`}
 function trail(r){return (r.runs||[]).map(x=>`<div class="meta" style="margin-top:12px">árvore · ${esc(x.tree)}</div>${x.error?`<p class="text">${esc(x.error)}</p>`:""}<ul class="trail">${(x.trail||[]).map(s=>`<li class="${s.action?"act":""}"><b>${esc(s.node)}</b> — ${ans(s)} <span class="meta">${s.ms??""} ms</span></li>`).join("")}</ul>`).join("")}
 let first=true,LOADING=false;
 async function draw(){nav();const m=$("m");if(first||m.dataset.tab!=tab){m.innerHTML=`<div class="grid">${"<div class='sk'></div>".repeat(3)}</div>`;m.dataset.tab=tab}
  if(tab=="eventos"){const h=(await api("/api/history?n=80")).filter(r=>r.type=="event");const st0=await api("/api/status",null,true);
   m.innerHTML=head("Cap. I — O que chegou","Eventos e <span class='it'>decisões</span>.","Cada notificação, e-mail, arquivo ou texto enviado por outro programa passa pelas árvores. Aqui fica o caminho percorrido.")+tour(st0,h)+
-  (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:empty("nenhum evento ainda"))}
+  (h.length?`<div class="grid">${h.map(r=>`<article class="card"><div class="meta">${esc(String(r.t).replace("T"," "))} · ${esc(r.event.source)}${r.event.app?" · "+esc(r.event.app):""}</div><h3>${esc(r.event.title||"(sem título)")} ${seg(r.event)}</h3><p class="text">${esc((r.event.text||"").slice(0,320))}</p>${trail(r)}</article>`).join("")}</div>`:empty("nenhum evento ainda"))}
  if(tab=="modelos"){const r=await api("/api/models");const pick=!!(window.pywebview&&window.pywebview.api);
   const st=x=>x=="pronto"?"p":"soft";
   m.innerHTML=head("Cap. II — Os modelos","Escolha <span class='it'>quem decide</span>.","O Flash já vem dentro do programa e carrega sozinho. Para usar outro modelo, aponte a pasta dele.")+
@@ -340,8 +342,9 @@ const LBL={timezone:"Fuso horário",language:"Idioma",device:"Processador",threa
  imap:"E-mail (IMAP, só leitura)",user:"Usuário",password_env:"Variável com a senha",command:"Programas consultados",jobs:"Tarefas",stdin:"Terminal",
  extract:"Leitura de arquivos",ocr:"Ler imagens (OCR)",ocr_lang:"Idiomas do OCR",audio:"Transcrever áudio",whisper_model:"Modelo de transcrição",max_chars:"Máximo de caracteres por texto",
  actions:"Ações",require_confirmation:"Pedir confirmação para",webhook_allow:"Webhooks permitidos (prefixos de URL)",command_allow:"Programas permitidos",write_dir:"Pasta para arquivos gravados",notify:"Mostrar avisos na área de trabalho",
+ seguranca:"Segurança automática",model:"Modelo que verifica",alert:"Avisar na área de trabalho",alert_on:"Avisar quando for (um por linha)",min_probability:"Certeza mínima para avisar (0 a 1)",
  history:"Histórico",keep:"Guardar últimos",store_text:"Guardar o texto",mask_pii:"Mascarar dados pessoais (CPF, cartão, e-mail…)"};
-const H={connectors:"De onde chegam os eventos. Tudo começa desligado.",actions:"O que as árvores podem fazer. Comandos e webhooks só rodam se estiverem nas listas.",history:"Fica só neste computador.",api:"A API completa de cada modelo, só nesta máquina."};
+const H={seguranca:"Todo evento passa antes por uma verificação: seguro, spam, golpe, phishing ou malware.",connectors:"De onde chegam os eventos. Tudo começa desligado.",actions:"O que as árvores podem fazer. Comandos e webhooks só rodam se estiverem nas listas.",history:"Fica só neste computador.",api:"A API completa de cada modelo, só nesta máquina."};
 const L=k=>LBL[k]||k.replace(/_/g," ");
 const TIP={timezone:"Usado para entender “amanhã”, “sexta que vem” e prazos.",device:"auto usa a placa de vídeo (CUDA) se existir; senão o processador.",threads:"Quantos núcleos o modelo pode usar. 0 = todos. Diminua para deixar o computador mais livre.",
  open_panel_on_start:"Mostrar a janela assim que o programa abre. Desligado, ele inicia só na bandeja.",max_steps:"Limite de decisões por evento, para evitar ciclos.",economy:"auto liga sozinho em computadores com menos de 8 GB de RAM: mesma resposta, menos memória. Valores: auto, on, off.",
@@ -350,6 +353,8 @@ const TIP={timezone:"Usado para entender “amanhã”, “sexta que vem” e pr
  folder:"Lê arquivos novos ou alterados nas pastas escolhidas: textos, e-mails, PDF, Word, imagens (OCR) e áudio.",paths:"Uma pasta por linha. Ex.: ~/Downloads",patterns:"Tipos de arquivo lidos, um por linha. Ex.: *.pdf",clipboard:"Lê o texto que você copia (Ctrl+C).",
  imap:"Lê e-mails não lidos sem marcá-los como lidos. A senha fica numa variável do sistema, nunca no arquivo.",command:"Roda programas que você lista e lê a resposta deles.",ocr:"Lê o texto de imagens (precisa do Tesseract instalado).",audio:"Transcreve áudios para texto antes de decidir.",
  require_confirmation:"Ações que esperam sua aprovação. Recomendado: command e webhook.",webhook_allow:"Endereços que as árvores podem chamar. Um prefixo por linha, ex.: https://meu-sistema.com/",command_allow:"Programas que as árvores podem executar. Só o nome, ex.: notepad",write_dir:"As árvores só gravam arquivos dentro desta pasta.",
+ seguranca:"O Flash olha cada notificação, e-mail, arquivo ou texto antes das árvores e marca se parece golpe, phishing, malware ou spam. Tudo fica neste computador.",
+ alert_on:"Rótulos que geram aviso: golpe, phishing, malware, spam.",min_probability:"Abaixo desta certeza, o evento é só marcado, sem aviso. 0.7 = 70%.",alert:"Mostra um aviso quando a verificação encontra uma ameaça.",
  keep:"Quantos eventos guardar no histórico.",store_text:"Desligado, o histórico guarda só o tamanho do texto.",mask_pii:"Esconde CPF, cartão, e-mail e telefone no histórico."};
 function form(o,path){return Object.entries(o).map(([k,v])=>{const id=(path?path+".":"")+k;
   if(v&&typeof v=="object"&&!Array.isArray(v))return `<div class="sub"><div class="meta">${esc(L(k))}${qi(TIP[k])}</div>${form(v,id)}</div>`;

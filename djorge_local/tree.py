@@ -7,11 +7,12 @@ Node kinds (one key decides the kind):
   multi:   [rótulos] (+ ask)          -> SET     ; every selected label's branch runs (several follow-ups)
   select:  "TOTAL AGID limão"         -> any selector (FROM text is added); branches like ">= 10", "== 0"
   query:   "<DSL completo>"           -> raw DJORGE query (use FROM text)
-  if:      {contains_any, contains_all, regex, source_in, app_in, sender_has}   -> branches true / false
+  if:      {contains_any, contains_all, regex, source_in, app_in, sender_has, seguranca_in}   -> branches true / false
   action:  notify | log | write_file | webhook | command | stop   (see actions.py)
 
 Common keys: model (origo | flash), min_probability (below it -> branch 'abstain'), branches {answer: next},
 then (next for actions), next can be a node id or a list of ids (all run, in order).
+Every event is checked first (security.py): {seguranca} = seguro|spam|golpe|phishing|malware, {seguranca_p}.
 Text placeholders in strings: {text} {title} {source} {app} {sender} {time} {<node>.answer} {<node>.probability}
 {<node>.value}; {text:80} truncates. Placeholders are plain substitution (no code is evaluated).
 """
@@ -76,7 +77,8 @@ def matches(tree: dict, ev: dict) -> bool:
         return False
     if w.get("app_in") and not any(a.casefold() in (ev.get("app") or "").casefold() for a in w["app_in"]):
         return False
-    return _cond(w, ev) if any(k in w for k in ("contains_any", "contains_all", "regex", "sender_has")) else True
+    return _cond(w, ev) if any(k in w for k in ("contains_any", "contains_all", "regex", "sender_has",
+                                                "seguranca_in")) else True
 
 
 def _cond(c: dict, ev: dict) -> bool:
@@ -94,6 +96,8 @@ def _cond(c: dict, ev: dict) -> bool:
         ok &= any(x.casefold() in (ev.get("sender") or "").casefold() for x in c["sender_has"])
     if c.get("source_in"):
         ok &= ev.get("source") in c["source_in"]
+    if c.get("seguranca_in"):                       # verdict of the automatic security check
+        ok &= str(ev.get("seguranca") or "").casefold() in [str(x).casefold() for x in c["seguranca_in"]]
     if c.get("app_in"):
         ok &= any(a.casefold() in (ev.get("app") or "").casefold() for a in c["app_in"])
     return bool(ok)

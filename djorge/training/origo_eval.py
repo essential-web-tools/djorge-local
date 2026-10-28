@@ -105,10 +105,10 @@ def eval_real(z, split):
     return items
 
 
-def eval_broad(eng, path, n_max=4000):
+def eval_broad(eng, path, n_max=4000, suite="broad", key="provenance", split=None):
     from .calibrate import req_of
     recs = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
-    recs = [r for r in recs if r["task"] in ("CHOICE", "NOUL", "SCORE", "SET")]
+    recs = [r for r in recs if r["task"] in ("CHOICE", "NOUL", "SCORE", "SET") and (split is None or r.get("split") == split)]
     random.Random(0).shuffle(recs)
     keep = []
     for r in recs[:n_max]:
@@ -131,7 +131,7 @@ def eval_broad(eng, path, n_max=4000):
         else:
             sel, gold = set(o["selected"]), set(r["label"])
             ok, p = len(sel & gold) / max(len(sel | gold), 1) >= 0.5, o.get("probability")
-        items.append({"suite": "broad", "task": r["meta"].get("provenance", "?"), "id": f"b{i}", "ok": bool(ok), "p": p})
+        items.append({"suite": suite, "task": r["meta"].get(key, "?"), "id": f"{suite[0]}{i}", "ok": bool(ok), "p": p})
     return items
 
 
@@ -175,6 +175,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--broad", default=None)
     ap.add_argument("--spans", default=None)
+    ap.add_argument("--security", default=None, help="security test jsonl (sentinel_data): suite 'seguranca' per threat")
     ap.add_argument("--real-split", default="dev", choices=["dev", "hidden", "all"])
     ap.add_argument("--agg-n", type=int, default=320)
     ap.add_argument("--device", default="cuda")
@@ -189,6 +190,8 @@ def main(argv=None):
         items += eval_broad(eng, a.broad)
     if a.spans and os.path.exists(a.spans):
         items += eval_spans(eng, a.spans)
+    if a.security and os.path.exists(a.security):
+        items += eval_broad(eng, a.security, n_max=3000, suite="seguranca", key="threat")
     rep = {"artifact": a.artifact, "seconds": round(time.time() - t0, 1), "summary": summarize(items), "items": items}
     json.dump(rep, open(a.out, "w"), ensure_ascii=False, indent=1)
     print(json.dumps({k: v for k, v in rep["summary"].items() if "/" not in k}, ensure_ascii=False))

@@ -22,6 +22,9 @@ DEFAULTS = {
     },
     # serviço do Sentinel para a extensão do Chrome (carrega o modelo só quando a extensão pergunta)
     "sentinel": {"enabled": True, "port": 8760, "unload_after_min": 0},
+    # verificação automática de segurança: todo evento recebe seguro | spam | golpe | phishing | malware
+    "seguranca": {"enabled": True, "model": "flash", "alert": True, "alert_on": ["golpe", "phishing", "malware"],
+                  "min_probability": 0.7, "min_chars": 12},
     "server": {"host": "127.0.0.1", "port": 8765, "token": ""},
     # full DJORGE API per model (/v1/classify, /v1/aggregate, /v1/tag, /v1/decide, /v1/document, /v1/verify,
     # /v1/score, /v1/select, /v1/tools/*, /execute, /contexts, /capabilities ...). Bearer token = server.token
