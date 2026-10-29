@@ -37,15 +37,21 @@ def main(argv=None):
     ap.add_argument("--per-task", type=int, default=1500)
     ap.add_argument("--recalibrate", action="store_true")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--data", default=None, help="held-out labelled jsonl to calibrate on (default: the artifact's "
+                    "dataset.jsonl calibration split)")
     a = ap.parse_args(argv)
     from ..runtime.semantic import SemanticEngine, SemReq
     from ..runtime.calibration import bucket
     from ..runtime.refcal import fit_conformal
     from . import calibrate as CAL
 
-    recs = [json.loads(l) for l in open(os.path.join(a.artifact, "dataset.jsonl"), encoding="utf-8")
-            if '"calibration"' in l]
-    recs = [r for r in recs if r.get("split") == "calibration" and r.get("label") is not None]
+    if a.data:
+        recs = [json.loads(l) for l in open(a.data, encoding="utf-8") if l.strip()]
+        recs = [r for r in recs if r.get("label") is not None and r.get("known") is None]
+    else:
+        recs = [json.loads(l) for l in open(os.path.join(a.artifact, "dataset.jsonl"), encoding="utf-8")
+                if '"calibration"' in l]
+        recs = [r for r in recs if r.get("split") == "calibration" and r.get("label") is not None]
     rep = {}
     if a.recalibrate:
         eng = SemanticEngine.from_artifact(a.artifact, device=a.device)

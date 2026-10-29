@@ -48,7 +48,11 @@ class SecurityCheck:
             from djorge.runtime.semantic import SemReq
             eng = getattr(z.semantic, "engine", z.semantic)
             t0 = time.perf_counter()
-            r = eng.run([SemReq("CHOICE", text[:2000], options=LABELS, descriptions=DESC, ask=ASK)])[0]
+            from djorge.runtime.clean import clean       # the same cleaning the DOFL was trained with
+            c = clean(text[:2000])
+            if c.signals:
+                ev["seguranca_sinais"] = c.signals
+            r = eng.run([SemReq("CHOICE", c.text, options=LABELS, descriptions=DESC, ask=ASK)])[0]
             ms = (time.perf_counter() - t0) * 1000
         except Exception as e:                       # the check never blocks the event
             ev["seguranca_erro"] = f"{type(e).__name__}: {e}"[:200]

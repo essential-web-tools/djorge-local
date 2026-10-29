@@ -177,6 +177,9 @@ def main(argv=None):
     ap.add_argument("--spans", default=None)
     ap.add_argument("--security", default=None, help="security test jsonl (sentinel_data): suite 'seguranca' per threat")
     ap.add_argument("--commands", default=None, help="commands test jsonl (commands_data): intent + slots")
+    ap.add_argument("--suite", action="append", default=[], help="extra decision suite: name=path[:meta_key] "
+                    "(e.g. ferramentas=checagem_ferramentas.jsonl:group)")
+    ap.add_argument("--skip-real", action="store_true", help="skip the djorge-real dev set and the AGG suite")
     ap.add_argument("--real-split", default="dev", choices=["dev", "hidden", "all"])
     ap.add_argument("--agg-n", type=int, default=320)
     ap.add_argument("--device", default="cuda")
@@ -186,7 +189,7 @@ def main(argv=None):
     cfg = DjorgeConfig(artifact=a.artifact, device=a.device); cfg.context_dir = "/tmp/djorge-eval-ctx"
     z = Djorge(artifact=a.artifact, config=cfg)
     eng = getattr(z.semantic, "engine", z.semantic)
-    items = eval_real(z, a.real_split) + eval_agg(z, build_agg(a.agg_n))
+    items = [] if a.skip_real else eval_real(z, a.real_split) + eval_agg(z, build_agg(a.agg_n))
     if a.broad and os.path.exists(a.broad):
         items += eval_broad(eng, a.broad)
     if a.spans and os.path.exists(a.spans):
@@ -196,6 +199,11 @@ def main(argv=None):
     if a.commands and os.path.exists(a.commands):
         items += eval_broad(eng, a.commands, n_max=2000, suite="comandos", key="provenance")
         items += eval_spans(eng, a.commands, n_max=2000, suite="comandos_campos")
+    for spec in a.suite:
+        name, rest = spec.split("=", 1)
+        path, key = (rest.rsplit(":", 1) + ["provenance"])[:2] if ":" in rest and not rest.endswith(".jsonl") else (rest, "provenance")
+        if os.path.exists(path):
+            items += eval_broad(eng, path, n_max=4000, suite=name, key=key)
     rep = {"artifact": a.artifact, "seconds": round(time.time() - t0, 1), "summary": summarize(items), "items": items}
     json.dump(rep, open(a.out, "w"), ensure_ascii=False, indent=1)
     print(json.dumps({k: v for k, v in rep["summary"].items() if "/" not in k}, ensure_ascii=False))

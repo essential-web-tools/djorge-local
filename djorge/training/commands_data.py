@@ -73,6 +73,18 @@ SLOT_PT = {
 ASK = {"pt": ["O que a pessoa está pedindo?", "Qual é a ordem dada?", "O que deve ser feito?"],
        "es": ["¿Qué está pidiendo la persona?", "¿Qué hay que hacer?"],
        "en": ["What is the person asking for?", "What should be done?"]}
+INTENTS = ['datetime_query', 'iot_hue_lightchange', 'transport_ticket', 'takeaway_query', 'qa_stock', 'general_greet',
+           'recommendation_events', 'music_dislikeness', 'iot_wemo_off', 'cooking_recipe', 'qa_currency',
+           'transport_traffic', 'general_quirky', 'weather_query', 'audio_volume_up', 'email_addcontact', 'takeaway_order',
+           'email_querycontact', 'iot_hue_lightup', 'recommendation_locations', 'play_audiobook', 'lists_createoradd',
+           'news_query', 'alarm_query', 'iot_wemo_on', 'general_joke', 'qa_definition', 'social_query', 'music_settings',
+           'audio_volume_other', 'calendar_remove', 'iot_hue_lightdim', 'calendar_query', 'email_sendemail', 'iot_cleaning',
+           'audio_volume_down', 'play_radio', 'cooking_query', 'datetime_convert', 'qa_maths', 'iot_hue_lightoff',
+           'iot_hue_lighton', 'transport_query', 'music_likeness', 'email_query', 'play_music', 'audio_volume_mute',
+           'social_post', 'alarm_set', 'qa_factoid', 'calendar_set', 'play_game', 'alarm_remove', 'lists_remove',
+           'transport_taxi', 'recommendation_movies', 'iot_coffee', 'music_query', 'play_podcasts', 'lists_query']
+SCENARIOS = ['social', 'transport', 'calendar', 'play', 'news', 'datetime', 'recommendation', 'email', 'iot', 'general',
+             'audio', 'lists', 'qa', 'cooking', 'takeaway', 'music', 'alarm', 'weather']
 SLOT_RE = re.compile(r"\[\s*([a-z_]+)\s*:\s*([^\]]*?)\s*\]")
 
 
@@ -169,13 +181,52 @@ def build(out_dir, langs=("pt-PT", "es-ES", "en-US"), per_lang=12000, seed=0, ca
     return man
 
 
+def ptbr(out_path, split="train", seed=1, neg_share=0.3):
+    """MASSIVE pt-BR (Magurofg/massive-pt-br, CC BY 4.0): an LLM localisation of MASSIVE pt-PT with the slot marks
+    kept. TRAINING ONLY (the checks stay on the human-verified MASSIVE), and only when the user approves it."""
+    from datasets import load_dataset
+    rng = random.Random(seed)
+    ds = load_dataset("Magurofg/massive-pt-br", split=split)
+    by_scn = {}
+    for k in INTENT_PT:
+        by_scn.setdefault(k.split("_")[0], []).append(k)
+    out = []
+    for row in ds:
+        intent = INTENTS[int(row["intent"])] if 0 <= int(row["intent"]) < len(INTENTS) else None
+        if intent not in INTENT_PT:
+            continue
+        text, spans = parse(row.get("annot_utt_br") or row["utt_br"])
+        if len(text.strip()) < 3:
+            continue
+        meta = {"area": "commands", "lang": "pt", "provenance": "massive:pt-BR(llm)", "license": "CC BY 4.0",
+                "intent": intent, "synthetic_text": "llm-localized"}
+        scn = intent.split("_")[0]
+        same = [x for x in by_scn[scn] if x != intent]
+        other = [x for x in INTENT_PT if x.split("_")[0] != scn]
+        keys = [intent] + rng.sample(same, min(2, len(same))) + rng.sample(other, 5 - min(2, len(same)))
+        rng.shuffle(keys)
+        out.append({"task": "CHOICE", "split": "train", "source": text, "options": [INTENT_PT[k] for k in keys],
+                    "label": INTENT_PT[intent], "ask": rng.choice(ASK["pt"]), "meta": meta})
+        for slot, sp in spans.items():
+            out.append({"task": "resolve", "split": "train", "mode": "ENTITY", "target": SLOT_PT.get(slot, slot),
+                        "source": text, "spans": sorted(sp), "polarity": ["asserted"] * len(sp), "meta": dict(meta, slot=slot)})
+    with open(out_path, "w", encoding="utf-8") as f:
+        for r in out:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(json.dumps({"ptbr_records": len(out)}))
+    return out_path
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--langs", default="pt-PT,es-ES,en-US")
     ap.add_argument("--per-lang", type=int, default=12000)
     ap.add_argument("--cache", default=None, help="where to keep the downloaded archive (e.g. on Drive)")
+    ap.add_argument("--ptbr-out", default=None, help="also write MASSIVE pt-BR (LLM-localised) training records here")
     a = ap.parse_args(argv)
+    if a.ptbr_out:
+        ptbr(a.ptbr_out)
     build(a.out_dir, tuple(x.strip() for x in a.langs.split(",") if x.strip()), a.per_lang, cache=a.cache)
 
 

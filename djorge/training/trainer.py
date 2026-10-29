@@ -167,15 +167,18 @@ def distill_loss(model, X, teacher, Xt, i, row, r, tl_s, tl_t, T=2.0):
     (Hinton et al.; KL scaled by T^2). Spans: soft membership/begin; decisions: soft distributions."""
     t = r["task"]
     if t in ("resolve", "answer"):
-        s, q = tl_s[:, :2].float(), tl_t[:, :2].float()
+        s, q = tl_s[:, :2].float(), tl_t[:, :2].float().to(tl_s.device)
         return F.binary_cross_entropy_with_logits(s / T, torch.sigmoid(q / T)) * T
     if t == "NOUL":
-        zs, zt = model.binary_logit(X, i, row).float(), teacher.binary_logit(Xt, i, row).float()
+        zs = model.binary_logit(X, i, row).float()
+        zt = teacher.binary_logit(Xt, i, row).float().to(zs.device)
         return F.binary_cross_entropy_with_logits(zs / T, torch.sigmoid(zt / T)) * T
     if t == "SCORE":
-        ls, lt = model.ordinal_logprobs(X, i, row).float(), teacher.ordinal_logprobs(Xt, i, row).float()
+        ls = model.ordinal_logprobs(X, i, row).float()
+        lt = teacher.ordinal_logprobs(Xt, i, row).float().to(ls.device)
         return F.kl_div(ls, lt, log_target=True, reduction="sum")
-    zs, zt = model.slot_logits(X, i, row).float(), teacher.slot_logits(Xt, i, row).float()
+    zs = model.slot_logits(X, i, row).float()
+    zt = teacher.slot_logits(Xt, i, row).float().to(zs.device)
     if t == "SET":
         return F.binary_cross_entropy_with_logits(zs / T, torch.sigmoid(zt / T)) * T
     return F.kl_div(F.log_softmax(zs / T, -1), F.log_softmax(zt / T, -1), log_target=True, reduction="sum") * T * T
@@ -188,7 +191,8 @@ def preservation_loss(model, tok, texts, dev, ref=None):
     ids, mask = enc["input_ids"].to(dev), enc["attention_mask"].to(dev)
     with torch.no_grad():
         if ref is not None:
-            hb = ref(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state.float()
+            rdev = next(ref.parameters()).device
+            hb = ref(input_ids=ids.to(rdev), attention_mask=mask.to(rdev), use_cache=False).last_hidden_state.float().to(dev)
         else:
             with lora.disabled(model.backbone):
                 hb = model.backbone(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state.float()
@@ -230,7 +234,7 @@ def _fits(ser, r) -> bool:
     try:
         build_rows(ser, r, random.Random(0))
         return True
-    except ValueError:
+    except (ValueError, KeyError, TypeError):
         return False
 
 
@@ -280,6 +284,8 @@ def main(argv=None):
     ap.add_argument("--save-every", type=int, default=250)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--data-scale", type=float, default=1.0)
+    ap.add_argument("--amp", default="none", choices=["none", "fp16", "bf16"],
+                    help="mixed precision for the forward (fp32 master weights). fp16 + loss scaling: 2-3x on T4/P100")
     ap.add_argument("--dtype", default="auto", help="auto = bf16 if supported else float32 (fp16 training is avoided)")
     ap.add_argument("--public", action="store_true", help="mix in public datasets (needs `datasets` + hub access)")
     ap.add_argument("--keep-layers", type=int, default=None, help="truncate the Qwen stack to the first N layers")
@@ -319,7 +325,23 @@ def main(argv=None):
     ap.add_argument("--soft-weight", type=float, default=0.5, help="share of soft (large-teacher) targets when present")
     ap.add_argument("--val-only", action="store_true", help="checkpoint selection on --select-val records only (no Origo dev set)")
     ap.add_argument("--no-synthetic", action="store_true", help="train only on --public-file records (no Origo generator)")
+    ap.add_argument("--teacher-device", default="auto", help="auto = second GPU when present (teachers, anchor, ref)")
+    ap.add_argument("--anchor", default=None, help="the model being replaced (Flash atual): focal distillation keeps "
+                    "what it already gets right (Positive-Congruent Training)")
+    ap.add_argument("--anchor-weight", type=float, default=0.5, help="weight of the focal distillation term")
+    ap.add_argument("--anchor-alpha", type=float, default=0.2, help="distillation weight where the anchor is WRONG")
+    ap.add_argument("--anchor-tau", type=float, default=0.35, help="anchor loss below this = anchor got it right")
+    ap.add_argument("--loss-norm", action="store_true", help="normalise each group's loss by its running mean")
+    ap.add_argument("--balance-file", default=None, help="validacao.jsonl: rebalance groups vs the anchor while training")
+    ap.add_argument("--balance-every", type=int, default=150)
+    ap.add_argument("--balance-n", type=int, default=48, help="validation records per group for balancing")
+    ap.add_argument("--balance-k", type=float, default=2.0)
+    ap.add_argument("--select-file", default=None, help="escolha.jsonl: checkpoint = fewest groups below the anchor, "
+                    "then best mean (replaces the 27-item dev set)")
+    ap.add_argument("--select-n", type=int, default=120, help="records per group used for selection")
     a = ap.parse_args(argv)
+    if a.select_file:
+        a.select_on_dev, a.val_only = True, True
     if a.val_only or a.select_val:            # validation-based selection needs the evaluation loop
         a.select_on_dev = True
     init_meta, cut_to = None, None
@@ -472,9 +494,26 @@ def main(argv=None):
             groups.append({"params": ps, "lr": a.bb_lr * (a.llrd ** depth)})
     teacher = None
     no_kd = {x.strip() for x in a.no_distill_areas.split(",") if x.strip()}
+    tdev = a.teacher_device
+    if tdev == "auto":
+        tdev = "cuda:1" if dev.startswith("cuda") and torch.cuda.device_count() > 1 else dev
+    if ref is not None and tdev != dev:
+        ref = ref.to(tdev)
+        torch.cuda.empty_cache()
+    print(f"student on {dev}, teachers on {tdev}", flush=True)
+    anchor = None
+    if a.anchor:
+        from ..runtime.semantic import SemanticEngine
+        anchor = SemanticEngine.from_artifact(a.anchor, device=tdev,
+                                              dtype="float16" if a.amp == "fp16" else "auto").model.eval()
+        for p_ in anchor.parameters():
+            p_.requires_grad = False
+        meta["anchor"] = {"artifact": a.anchor, "weight": a.anchor_weight, "alpha": a.anchor_alpha, "tau": a.anchor_tau}
+        print(f"focal distillation from anchor {a.anchor}", flush=True)
     if a.teacher:
         from ..runtime.semantic import SemanticEngine
-        teacher = SemanticEngine.from_artifact(a.teacher, device=dev).model.eval()
+        teacher = SemanticEngine.from_artifact(a.teacher, device=tdev,
+                                               dtype="float16" if a.amp == "fp16" else "auto").model.eval()
         for p_ in teacher.parameters():
             p_.requires_grad = False
         meta["teacher"] = a.teacher
@@ -488,7 +527,7 @@ def main(argv=None):
         for r in train:
             try:
                 build_rows(ser, r, frng); fit.append(r)
-            except ValueError:
+            except (ValueError, KeyError, TypeError):
                 pass
         if len(fit) < len(train):
             print(f"window filter: dropped {len(train) - len(fit)} records that do not fit {a.max_tokens} tokens", flush=True)
@@ -505,6 +544,28 @@ def main(argv=None):
         val_recs = [r for r in val_recs if _fits(ser, r) and r.get("label") is not None and r.get("known") is None]
         print(f"selection: {'' if a.val_only else 'real dev + '}{len(val_recs)} held-out validation records", flush=True)
     plain = [r["source"] for r in train]
+    from .selfreg import group_of as _gof, load_groups, group_scores, group_losses, balance_weights
+    by_group = {}
+    for r in train:
+        by_group.setdefault(_gof(r), []).append(r)
+    gnames = sorted(by_group)
+    base_share = {g: len(by_group[g]) / len(train) for g in gnames}
+    gweights = dict(base_share)
+    gema = {}
+    bal_groups, anchor_bal, sel_groups, anchor_sel = None, {}, None, {}
+    fits = lambda r: _fits(ser, r)
+    if a.balance_file and anchor is not None:
+        bal_groups = {g: v for g, v in load_groups(a.balance_file, a.balance_n, fits, seed=3).items() if g in by_group}
+        anchor_bal = group_losses(anchor, ser, bal_groups, tdev, build_rows, record_loss, a.soft_weight)
+        print("balance: anchor loss per group", {g: round(v, 3) for g, v in anchor_bal.items()}, flush=True)
+    if a.select_file:
+        from ..runtime.semantic import SemanticEngine
+        sel_groups = load_groups(a.select_file, a.select_n, fits, seed=5)
+        if anchor is not None:
+            anchor_sel = group_scores(SemanticEngine(anchor, tok, None, {"model_id": "anchor"}, device=tdev,
+                                                     max_tokens=a.max_tokens), sel_groups)
+            print("selection: anchor per group", {g: round(v, 3) for g, v in anchor_sel.items()}, flush=True)
+        meta["selection_groups"] = {g: len(v) for g, v in sel_groups.items()}
     rng = random.Random(a.seed)
     step0 = 0
     ck = os.path.join(a.out, "checkpoint.pt")
@@ -545,6 +606,13 @@ def main(argv=None):
                 for p_, w in zip(train_params, backup):
                     p_.copy_(w)
     model.train()
+    import contextlib
+    use_amp = a.amp != "none" and dev.startswith("cuda")
+    amp_dt = torch.float16 if a.amp == "fp16" else torch.bfloat16
+    amp_ctx = (lambda: torch.autocast("cuda", dtype=amp_dt)) if use_amp else contextlib.nullcontext
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp and a.amp == "fp16")
+    if use_amp:
+        print(f"mixed precision: {a.amp} (fp32 master weights{', loss scaling' if a.amp == 'fp16' else ''})", flush=True)
     log, t0, ema = [], time.time(), None
     best, best_key, dev_curve = None, None, []
     loss, lp = torch.tensor(0.0), torch.tensor(0.0)
@@ -554,39 +622,68 @@ def main(argv=None):
         if a.public_weight is not None and train_pub and train_syn:
             n_pub = sum(rng.random() < a.public_weight for _ in range(a.batch))
             batch = rng.sample(train_pub, n_pub) + rng.sample(train_syn, a.batch - n_pub)
+        elif bal_groups is not None or a.loss_norm:
+            gs = rng.choices(gnames, weights=[gweights[g] for g in gnames], k=a.batch)
+            batch = [rng.choice(by_group[g]) for g in gs]
         else:
             batch = rng.sample(train, a.batch)
         built = [build_rows(ser, r, rng) for r in batch]
         rows = [b[0][0] for b in built]
-        ids, roles, mask = model.collate(rows, dev)
-        X = model.encode(ids, roles, mask)
-        tls = model.token_logits(X, rows)
-        per = [(i, record_loss(model, X, i, rows[i], r, built[i][1], tls[i], dev, a.soft_weight)) for i, r in enumerate(batch)]
-        per = [(i, x) for i, x in per if x is not None]
-        if not per:
-            continue
-        if teacher is not None:
-            with torch.no_grad():
-                Xt = teacher.encode(ids, roles, mask)
-                tlt = teacher.token_logits(Xt, rows)
-            mixed = []
-            for i, x in per:
-                r = batch[i]
-                if (r.get("meta") or {}).get("area") in no_kd:       # skill the teacher never learned: labels only
-                    mixed.append(x)
-                else:
-                    kd = distill_loss(model, X, teacher, Xt, i, rows[i], r, tls[i], tlt[i], a.distill_t)
-                    mixed.append((1 - a.distill_weight) * x + a.distill_weight * kd)
-            loss = torch.stack(mixed).mean()
-        else:
-            loss = torch.stack([x for _, x in per]).mean()
-        lp = torch.tensor(0.0)
-        if a.stage in ("lora", "full") and a.preserve > 0:
-            lp = preservation_loss(model, tok, rng.sample(plain, 8), dev, ref=ref)
-            loss = loss + a.preserve * lp
-        (loss / max(1, a.accum)).backward()
+        with amp_ctx():
+            ids, roles, mask = model.collate(rows, dev)
+            X = model.encode(ids, roles, mask)
+            tls = model.token_logits(X, rows)
+            per = [(i, record_loss(model, X, i, rows[i], r, built[i][1], tls[i], dev, a.soft_weight)) for i, r in enumerate(batch)]
+            per = [(i, x) for i, x in per if x is not None]
+            if not per:
+                continue
+            if a.loss_norm:
+                normed = []
+                for i, x in per:
+                    g = _gof(batch[i]); v = float(x.detach())
+                    if np.isfinite(v):
+                        gema[g] = v if g not in gema else 0.98 * gema[g] + 0.02 * v
+                    mean_all = float(np.mean(list(gema.values()))) if gema else 1.0
+                    normed.append((i, x * (mean_all / max(gema.get(g, mean_all), 1e-3))))
+                per = normed
+            if anchor is not None:
+                with torch.no_grad():
+                    Xa = anchor.encode(ids.to(tdev), roles.to(tdev), mask.to(tdev))
+                    tla = anchor.token_logits(Xa, rows)
+                focal = []
+                for i, x in per:
+                    with torch.no_grad():
+                        ha = record_loss(anchor, Xa, i, rows[i], batch[i], built[i][1], tla[i], tdev, a.soft_weight)
+                    right = ha is not None and float(ha) < a.anchor_tau
+                    w_i = 1.0 if right else a.anchor_alpha
+                    fd = distill_loss(model, X, anchor, Xa, i, rows[i], batch[i], tls[i], tla[i], a.distill_t)
+                    focal.append((i, x + a.anchor_weight * w_i * fd))
+                per = focal
+            if teacher is not None:
+                with torch.no_grad():
+                    Xt = teacher.encode(ids.to(tdev), roles.to(tdev), mask.to(tdev))
+                    tlt = teacher.token_logits(Xt, rows)
+                mixed = []
+                for i, x in per:
+                    r = batch[i]
+                    if (r.get("meta") or {}).get("area") in no_kd:       # skill the teacher never learned: labels only
+                        mixed.append(x)
+                    else:
+                        kd = distill_loss(model, X, teacher, Xt, i, rows[i], r, tls[i], tlt[i], a.distill_t)
+                        mixed.append((1 - a.distill_weight) * x + a.distill_weight * kd)
+                loss = torch.stack(mixed).mean()
+            else:
+                loss = torch.stack([x for _, x in per]).mean()
+            lp = torch.tensor(0.0)
+            if a.stage in ("lora", "full") and a.preserve > 0:
+                lp = preservation_loss(model, tok, rng.sample(plain, 8), dev, ref=ref)
+                loss = loss + a.preserve * lp
+        scaler.scale(loss / max(1, a.accum)).backward()
+      scaler.unscale_(opt)
       torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], 1.0)
-      opt.step(); sched.step()
+      scaler.step(opt); scaler.update(); sched.step()
+      if not torch.isfinite(loss):                   # fp16 overflow: the scaler skipped this step
+          loss = torch.tensor(ema if ema is not None else 0.0)
       if True:
         if a.ema > 0 and step >= int(a.ema_start * a.steps):          # weight averaging (EMA) of trainable weights
             if ema_w is None:
@@ -598,18 +695,41 @@ def main(argv=None):
         if step % 50 == 0 or step == 1:
             print(f"step {step:5d} loss {ema:.4f} preserve {(lp.item() if a.stage in ('lora', 'full') else float('nan')):.5f} {time.time() - t0:.0f}s", flush=True)
             log.append({"step": step, "loss": round(ema, 5), "preserve": round(lp.item(), 6)})
+        if bal_groups and step % a.balance_every == 0:
+            stud = group_losses(model, ser, bal_groups, dev, build_rows, record_loss, a.soft_weight)
+            gweights = balance_weights(base_share, stud, anchor_bal, k=a.balance_k)
+            for g in gnames:
+                gweights.setdefault(g, base_share[g])
+            top = sorted(((stud.get(g, 0) - anchor_bal.get(g, 0), g) for g in bal_groups), reverse=True)[:3]
+            print(f"  balance@{step}: atrás do âncora " + ", ".join(f"{g} {d:+.3f}" for d, g in top), flush=True)
+            model.train()
         if a.select_on_dev and (step % a.eval_every == 0 or step == a.steps):
             _bk = _swap_ema()                                # evaluate (and keep) the averaged weights
             ds = dev_score(model, tok, a.max_tokens, dev) if not a.val_only else {"accuracy": 0.0, "high_conf_errors": 0, "high_conf_n": 0}
             ds["step"] = step
+            if sel_groups:
+                from ..runtime.semantic import SemanticEngine
+                was_tr = model.training; model.eval()
+                sc = group_scores(SemanticEngine(model, tok, None, {"model_id": "selecting"}, device=dev,
+                                                 max_tokens=a.max_tokens), sel_groups)
+                model.train(was_tr)
+                drops = [g for g in sc if g in anchor_sel and sc[g] < anchor_sel[g] - 0.01]
+                ds["groups"] = {g: round(v, 4) for g, v in sc.items()}
+                ds["below_anchor"] = drops
+                ds["val"] = {"score": float(np.mean(list(sc.values()))) - 0.02 * len(drops)}
+                ds["high_conf_errors"] = len(drops)
             if val_recs:
                 ds["val"] = val_score(model, tok, a.max_tokens, dev, val_recs)
             ds["select"] = (round(ds["val"]["score"], 4) if a.val_only else round(0.5 * ds["accuracy"] + 0.5 * ds["val"]["score"], 4)) \
-                if val_recs else ds["accuracy"]
+                if (val_recs or sel_groups) else ds["accuracy"]
             dev_curve.append(ds)
             key = (ds["select"], -ds["high_conf_errors"])
-            print(f"  dev@{step}: acc {ds['accuracy']:.3f}  high-conf errors {ds['high_conf_errors']}/{ds['high_conf_n']}"
-                  + (f"  val {ds['val']}  select {ds['select']}" if val_recs else ""), flush=True)
+            if sel_groups:
+                print(f"  escolha@{step}: média {ds['val']['score'] + 0.02 * len(ds['below_anchor']):.4f} · abaixo do âncora: "
+                      f"{ds['below_anchor'] or '—'} · select {ds['select']}", flush=True)
+            else:
+                print(f"  dev@{step}: acc {ds['accuracy']:.3f}  high-conf errors {ds['high_conf_errors']}/{ds['high_conf_n']}"
+                      + (f"  val {ds['val']}  select {ds['select']}" if val_recs else ""), flush=True)
             if best_key is None or key > best_key:
                 best_key = key
                 best = {k: v.detach().cpu().clone() for k, v in model.state_dict().items() if _keep(k)}

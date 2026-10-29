@@ -47,14 +47,41 @@ class _EncoderGraph(nn.Module):
         return m.ln(x)
 
 
-def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = True, fp16: bool = False) -> dict:
+def trim_embeddings(model, keep_ids):
+    """Keep only the token rows in keep_ids; every dropped token shares ONE fallback row (their mean), so any text can
+    still be read. Returns the id map (old id -> new row) the runtime applies before the graph."""
+    import numpy as np
+    emb = model.backbone.get_input_embeddings()
+    W = emb.weight.data.float()
+    V = W.shape[0]
+    keep = sorted({int(i) for i in keep_ids if 0 <= int(i) < V})
+    mask = torch.ones(V, dtype=torch.bool)
+    mask[keep] = False
+    fb = W[mask].mean(0, keepdim=True) if bool(mask.any()) else torch.zeros(1, W.shape[1])
+    new = nn.Embedding.from_pretrained(torch.cat([W[keep], fb], 0), freeze=True)
+    model.backbone.set_input_embeddings(new)
+    vmap = np.full(V, len(keep), dtype=np.int32)
+    vmap[keep] = np.arange(len(keep))
+    return vmap
+
+
+def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = True, fp16: bool = False,
+                   keep_ids=None, reduce_range: bool = True) -> dict:
     from .semantic import SemanticEngine
     eng = SemanticEngine.from_artifact(artifact, device="cpu", dtype="float32")
     model = eng.model.eval().float()
-    g = _EncoderGraph(model).eval()
     os.makedirs(os.path.join(out_dir, "onnx"), exist_ok=True)
+    vocab = None
+    if keep_ids is not None:
+        import numpy as np
+        vmap = trim_embeddings(model, keep_ids)
+        np.save(os.path.join(out_dir, "onnx", "vocab_map.npy"), vmap)
+        vocab = {"total": int(len(vmap)), "kept": int(vmap.max())}
+    g = _EncoderGraph(model).eval()
     fp32 = os.path.join(out_dir, "onnx", "encoder.onnx")
     ids = torch.tensor([[11, 12, -1, 13, 14, 15, 16], [21, -2, 22, 23, 0, 0, 0]], dtype=torch.long)  # B=2, T=7:
+    if vocab:
+        ids = torch.where(ids >= 0, ids.clamp(max=vocab["kept"]), ids)
     roles = torch.tensor([[0, 0, 1, 1, 2, 2, 3], [0, 1, 1, 2, 0, 0, 0]], dtype=torch.long)      # sizes 1 would be
     mask = ids != 0                                                                             # specialised away
     try:
@@ -73,7 +100,10 @@ def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = Tr
     if int8:
         from onnxruntime.quantization import QuantType, quantize_dynamic
         q = os.path.join(out_dir, "onnx", "encoder.int8.onnx")
-        quantize_dynamic(fp32, q, weight_type=QuantType.QInt8, per_channel=True, use_external_data_format=False)
+        # per-channel int8 weights (MatMul + the embedding Gather); reduce_range = 7-bit weights, which avoids the
+        # saturation of AVX2 CPUs without VNNI (ONNX Runtime docs)
+        quantize_dynamic(fp32, q, weight_type=QuantType.QInt8, per_channel=True, reduce_range=reduce_range,
+                         use_external_data_format=False)
         files["int8"] = "onnx/encoder.int8.onnx"
     if fp16:
         import onnx
@@ -83,7 +113,10 @@ def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = Tr
                   location="encoder.fp16.onnx.data")
         files["fp16"] = "onnx/encoder.fp16.onnx"
     info = {"files": files, "hidden": model.cfg["hidden"], "layers": model.cfg["layers"], "d": model.cfg["d"],
-            "opset": max(opset, 18)}
+            "opset": max(opset, 18), "reduce_range": bool(reduce_range),
+            "intermediate": int(getattr(model.backbone.config, "intermediate_size", 0) or 0)}
+    if vocab:
+        info["vocab"] = vocab
     json.dump(info, open(os.path.join(out_dir, "onnx", "encoder.json"), "w"), indent=1)
     return info
 
@@ -99,9 +132,20 @@ class OnnxEncoder:
             so.intra_op_num_threads = threads
         self.sess = ort.InferenceSession(path, so, providers=prov)
         self.provider = self.sess.get_providers()[0]
+        mp = os.path.join(os.path.dirname(path), "vocab_map.npy")      # trimmed vocabulary: old id -> kept row
+        if os.path.exists(mp):
+            import numpy as np
+            self.vmap = np.load(mp)
+        else:
+            self.vmap = None
 
     def __call__(self, ids, roles, mask):
-        out = self.sess.run(["X"], {"ids": ids.cpu().numpy(), "roles": roles.cpu().numpy(),
+        x = ids.cpu().numpy()
+        if self.vmap is not None:
+            x = x.copy()
+            pos = x >= 0
+            x[pos] = self.vmap[x[pos]]
+        out = self.sess.run(["X"], {"ids": x, "roles": roles.cpu().numpy(),
                                     "mask": mask.cpu().numpy()})[0]
         return torch.from_numpy(out)
 
