@@ -43,16 +43,43 @@ def node_kind(n: dict) -> str:
 
 def _label(nid: str, kind: str, n: dict) -> str:
     if kind == "action":
+        for v in (n.get("title"), n.get("file"), n.get("url"), n.get("folder"), n.get("message"),
+                  " ".join(map(str, n.get("argv") or []))):
+            if isinstance(v, str) and v.strip():
+                return v
         return ACTION_NAMES.get(n.get("action"), str(n.get("action")))
     if n.get("ask"):
         return str(n["ask"])
-    if kind in ("check", "select", "query") and isinstance(n.get(kind), str):
+    if kind in ("check", "select", "query") and isinstance(n.get(kind), str) and n[kind].strip():
         return n[kind]
     return KIND_NAMES.get(kind, kind)
 
 
-def node_size(node: dict) -> tuple:
-    return NODE_W, NODE_H + PORT_H * max(1, len(node.get("ports") or []))
+def default_ports(node: dict) -> List[str]:
+    """As mesmas portas que o editor mostra (tree-editor.js defaultPorts)."""
+    k, p = node.get("kind"), node.get("props") or {}
+    if k in ("choice", "score"):
+        return [str(x) for x in p.get(k) or []] + ["abstain", "default"]
+    if k == "multi":
+        return [str(x) for x in p.get(k) or []] + ["none", "abstain"]
+    return {"check": ["true", "false", "abstain"], "if": ["true", "false"], "select": ["default", "abstain"],
+            "query": ["default", "abstain"]}.get(k, [] if p.get("action") == "stop" else ["then"])
+
+
+def display_ports(node: dict, edges: List[dict] = ()) -> List[str]:
+    out: List[str] = []
+    for x in list(node.get("ports") or []) + default_ports(node) + [e.get("label") for e in edges
+                                                                     if e.get("from") == node.get("id")]:
+        if x is not None and str(x) not in out:
+            out.append(str(x))
+    if node.get("kind") == "action" and (node.get("props") or {}).get("action") == "stop":
+        out = [x for x in out if any(e.get("from") == node.get("id") and e.get("label") == x for e in edges)]
+    tail = ["none", "abstain", "default"]
+    return [x for x in out if x not in tail] + [x for x in tail if x in out]
+
+
+def node_size(node: dict, edges: List[dict] = ()) -> tuple:
+    return NODE_W, NODE_H + PORT_H * max(1, len(display_ports(node, edges)))
 
 
 # ------------------------------------------------------------------ ida
@@ -209,11 +236,12 @@ def layout(graph: dict) -> dict:
         for i, nid in enumerate(cols[d]):
             order[nid] = i
             n = by[nid]
-            w, h = node_size(n)
+            w, h = node_size(n, graph.get("edges") or [])
             n["x"], n["y"] = d * (NODE_W + GAP_X), y
             y += h + GAP_Y
     # centraliza colunas verticalmente
-    hs = {d: sum(node_size(by[i])[1] + GAP_Y for i in c) - GAP_Y for d, c in cols.items()}
+    E = graph.get("edges") or []
+    hs = {d: sum(node_size(by[i], E)[1] + GAP_Y for i in c) - GAP_Y for d, c in cols.items()}
     top = max(hs.values()) if hs else 0
     for d, c in cols.items():
         off = (top - hs[d]) / 2
@@ -223,12 +251,12 @@ def layout(graph: dict) -> dict:
 
 
 def overlaps(graph: dict) -> List[tuple]:
-    ns = graph.get("nodes") or []
+    ns, E = graph.get("nodes") or [], graph.get("edges") or []
     bad = []
     for i, a in enumerate(ns):
-        aw, ah = node_size(a)
+        aw, ah = node_size(a, E)
         for b in ns[i + 1:]:
-            bw, bh = node_size(b)
+            bw, bh = node_size(b, E)
             if a["x"] < b["x"] + bw and b["x"] < a["x"] + aw and a["y"] < b["y"] + bh and b["y"] < a["y"] + ah:
                 bad.append((a["id"], b["id"]))
     return bad

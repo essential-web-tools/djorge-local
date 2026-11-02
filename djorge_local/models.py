@@ -1,5 +1,6 @@
-"""Models: folders with a DJORGE artifact. The Flash comes INSIDE the installer (folder "modelos/flash" next to
-the executable); other models are added by choosing their folder in the Models tab. Nothing is downloaded."""
+"""Modelos: pastas com um artefato DJORGE. O instalador NÃO traz o modelo: o DOFL (Flash) é baixado quando a pessoa
+pede, pelo card do modelo (model_download.py), que grava o caminho em cfg.models.flash.path. Outros modelos podem ser
+adicionados escolhendo a pasta. Sem modelo instalado nada é carregado e o app funciona só com as regras."""
 from __future__ import annotations
 
 import gc
@@ -140,7 +141,8 @@ class Models:
     def preload(self, names=None):
         """Loads the enabled models in the background so the window appears immediately."""
         def go():
-            for n in names or [k for k, v in self.cfg["models"].items() if v.get("enabled", True) and not v.get("service")]:
+            for n in names or [k for k, v in self.cfg["models"].items() if v.get("enabled", True) and not v.get("service")
+                               and v.get("path") and is_model(model_path(self.cfg, v["path"]))]:
                 self.state[n] = "carregando"
                 try:
                     self.get(n)

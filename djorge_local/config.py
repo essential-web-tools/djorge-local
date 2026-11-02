@@ -15,8 +15,8 @@ DEFAULTS = {
     "threads": 0,                         # 0 = all cores
     "timezone": "America/Sao_Paulo",
     "language": "pt",
-    "models": {                           # the Flash ships inside the installer (@app = program folder)
-        "flash": {"enabled": True, "path": "@app/modelos/flash", "role": "Origo Flash — rápido, leve, para qualquer computador"},
+    "models": {                           # o Flash é baixado pelo card do modelo (model_download.py) e o caminho é gravado aqui
+        "flash": {"enabled": True, "path": "", "role": "Origo Flash — rápido, leve, para qualquer computador"},
         "sentinel": {"enabled": True, "path": "@app/modelos/sentinel", "role": "Sentinel — segurança para a extensão do Chrome",
                      "service": True},
     },
@@ -76,7 +76,7 @@ def _migrate(raw: dict) -> dict:
                 ms.pop(k); continue
             m.pop("sealed", None); m.pop("drive_file_id", None)
             if k == "flash" and not m.get("path"):
-                m.update(path="@app/modelos/flash", enabled=True)
+                m.update(enabled=True)
             if k not in ("flash", "sentinel") and not m.get("path"):
                 ms.pop(k)
         ms.setdefault("flash", dict(DEFAULTS["models"]["flash"]))

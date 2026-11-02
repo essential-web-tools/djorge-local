@@ -168,7 +168,7 @@ def test_settings_visual_and_bundled_flash(home, art):
     with pytest.raises(ValueError):
         app.save_settings({"max_steps": "muitos"})
     st = {m["name"]: m for m in app.models.describe()}
-    assert st["flash"]["bundled"] and not st["flash"]["found"] and st["flash"]["state"] == "sem pasta"
+    assert not st["flash"]["bundled"] and not st["flash"]["found"] and st["flash"]["state"] == "sem pasta"   # v2: baixado depois
     with pytest.raises(FileNotFoundError):
         app.models.get("flash")
 
@@ -180,7 +180,7 @@ def test_migrates_old_config(home):
         "api": {"ports": {"origo": 8750, "flash": 8751}}}), encoding="utf-8")
     from djorge_local import config as C
     cfg = C.load(str(home / "config.yaml"))
-    assert list(cfg["models"]) == ["flash", "sentinel"] and cfg["models"]["flash"]["path"] == "@app/modelos/flash"
+    assert list(cfg["models"]) == ["flash", "sentinel"] and cfg["models"]["flash"]["path"] == ""
     assert cfg["models"]["flash"]["enabled"] and "drive_folder_id" not in cfg and "origo" not in cfg["api"]["ports"]
 
 

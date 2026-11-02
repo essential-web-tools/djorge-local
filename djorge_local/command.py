@@ -101,14 +101,14 @@ def _now(cfg):
 # ------------------------------------------------------------------ palavras-chave (sem modelo) --
 KW = [
     ("regra", r"\b(sempre que|toda vez que|quando chegar|quando receber|regra|automaticamente|faca com que|faz com que)\b"),
-    ("calcular", r"\b(quanto e|quanto da|quanto fica|calcula|calcule|conta de|soma|some|multiplica|divide|porcento|"
-                 r"por cento)\b|\d\s*[-+*/x×÷^]\s*\d|\d\s*%\s*(de|do|da)\s*\d"),
+    ("datas_horas", r"\b(que horas|que dia|qual (a|e a) data|data de hoje|dia da semana|quantos dias|faltam? quantos|"
+                    r"que dia (cai|e)|hoje e que dia|em que dia)\b"),
+    ("calcular", r"\b(quanto e|quanto da|quanto fica|calcula|calcule|soma|some|multiplica|divide|porcento|"
+                 r"por cento)\b.*\d|^[\d\s.,()+\-*/x×÷^%=?]+$|\d\s*[-+*x×÷^]\s*\d|\d\s*%\s*(de|do|da)\s*\d"),
     ("bilhete", r"(^|\s)#\S|\b(manda|mande|envia|envie|avisa|avise|escreve|escreva|responde|responda)\b.*"
                 r"\b(pra|para|pro|ao|a|à)\b|\b(mensagem|e-?mail|zap|whatsapp)\s+(pra|para|pro)\b"),
     ("proximas_tarefas", r"\b(o que (eu )?tenho|minha agenda|meus compromissos|proxim[oa]s? (compromisso|tarefa|evento|"
                          r"reuniao|lembrete)s?|o que vem|tenho algo|tenho alguma|como esta (a|minha) (agenda|semana|dia))\b"),
-    ("datas_horas", r"\b(que horas|que dia|qual (a|e a) data|data de hoje|dia da semana|quantos dias|faltam? quantos|"
-                    r"que dia (cai|e)|hoje e que dia|em que dia)\b"),
     ("buscar", r"\b(procura|procure|busca|busque|acha|ache|encontra|encontre|pesquisa|pesquise|onde (esta|ta|guardei))\b"),
     ("listas", r"\blistas?\b"),
     ("cards", r"\b(lembra|lembre|lembrete|marca|marque|agenda|agende|reuniao|tarefa|compromisso|anota|anote|card|"

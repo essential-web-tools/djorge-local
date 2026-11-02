@@ -18,9 +18,21 @@ from . import connectors as C
 from .actions import Actions
 from .config import HOME, resolve
 from .models import Models
+from .command import ModeloAusente
 from .tree import Runner, TreeError, matches, validate
 
 UI = Path(__file__).with_name("ui.html")
+STATIC = UI.parent / "static"
+
+
+def _home() -> Path:
+    """HOME atual (os testes recarregam djorge_local.config com outra pasta)."""
+    from . import config as _c
+    return _c.HOME
+
+
+class Unavailable(Exception):
+    """Módulo opcional (integrações, voz, árvores visuais, download do modelo) ausente ou com falha -> 503."""
 
 
 class History:
@@ -28,8 +40,8 @@ class History:
         self.cfg = cfg
         self.items = collections.deque(maxlen=int(cfg["history"]["keep"]))
         self.lock = threading.Lock()
-        self.file = HOME / "historico.jsonl"
-        HOME.mkdir(parents=True, exist_ok=True)
+        self.file = _home() / "historico.jsonl"
+        _home().mkdir(parents=True, exist_ok=True)
 
     def add(self, rec: dict):
         rec = dict(rec, t=time.strftime("%Y-%m-%dT%H:%M:%S"))
@@ -69,6 +81,64 @@ class App:
         self.rules = RuleBuilder(cfg, self.models)
         self.trees, self.conns = [], {}
         self.reload_trees()
+        from .cards import Cards
+        from .command import Command
+        from .search import Search
+        from .uiprefs import UIPrefs
+        self.cards = Cards(_home() / "cards.db")
+        self.ui = UIPrefs(_home() / "ui.json")
+        self.search = Search(self)
+        self.command = Command(self)
+        self._svc, self._svc_err = {}, {}
+        from .actions import desktop_notify as _dn
+        self._load_service("integrations", lambda: __import__("djorge_local.integrations", fromlist=["x"])
+                           .Integrations(cfg, self.cards, _dn))
+        self._load_service("voice", lambda: __import__("djorge_local.voice", fromlist=["x"]).Voice(cfg))
+        self._load_service("treegraph", lambda: __import__("djorge_local.treegraph", fromlist=["x"]))
+        self._load_service("model", lambda: __import__("djorge_local.model_download", fromlist=["x"])
+                           .ModelDownloader(cfg, self.models, save=self.save_config))
+
+    def _load_service(self, name, make):
+        try:
+            self._svc[name] = make()
+        except Exception as e:                       # o app continua; a rota responde 503
+            self._svc_err[name] = f"{type(e).__name__}: {e}"
+
+    @property
+    def integrations(self):
+        return self._svc.get("integrations")
+
+    def pause_integrations(self, paused: bool = True) -> dict:
+        """Para a bandeja: pausa/retoma a sincronização em segundo plano das integrações."""
+        it = self.service("integrations")
+        if hasattr(it, "pause"):
+            return it.pause(paused) or {"ok": True}
+        (it.stop_background if paused else it.start_background)()
+        return {"ok": True, "paused": paused}
+
+    def service(self, name):
+        if name not in self._svc:
+            raise Unavailable(f"{name} indisponível: {self._svc_err.get(name, 'módulo ausente')}")
+        return self._svc[name]
+
+    def has_model(self) -> bool:
+        return self.command.engine() is not None
+
+    def save_tree(self, tree: dict) -> dict:
+        """Grava (substitui pelo nome ou acrescenta) uma árvore em arvores.yaml, guardando o .bak."""
+        validate([tree])
+        p = self.trees_path()
+        data = (yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else None) or {}
+        if p.is_file():
+            p.with_suffix(p.suffix + ".bak").write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        trees = data.setdefault("trees", [])
+        for i, t in enumerate(trees):
+            if t.get("name") == tree["name"]:
+                trees[i] = tree; break
+        else:
+            trees.append(tree)
+        self.reload_trees(yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+        return {"saved": tree["name"], "trees": len(self.trees)}
 
     def save_config(self):
         """Writes back the editable parts (models, api ports, device, threads); everything else is preserved."""
@@ -231,6 +301,124 @@ class App:
             self.sentinel_port = self.sentinel.start()
         for _ in range(max(1, workers)):
             threading.Thread(target=self.worker, daemon=True).start()
+        if self.integrations is not None:
+            try:
+                self.integrations.start_background()
+            except Exception as e:
+                self._svc_err["integrations_background"] = f"{type(e).__name__}: {e}"
+
+
+def _q1(q, k, default=None):
+    v = q.get(k)
+    return v[0] if v else default
+
+
+def v2_get(app: App, path: str, q: dict):
+    """Rotas GET da v2. Devolve (código, objeto) ou None."""
+    if path == "/api/cards":
+        return 200, {"cards": app.cards.list(q=_q1(q, "q"), kind=_q1(q, "kind"), column=_q1(q, "column"),
+                                             tag=_q1(q, "tag"), frm=_q1(q, "from"), to=_q1(q, "to"),
+                                             source=_q1(q, "source"), priority=_q1(q, "priority"),
+                                             done=_q1(q, "done"), person=_q1(q, "person"))}
+    if path.startswith("/api/cards/"):
+        c = app.cards.get(path.rsplit("/", 1)[1])
+        return (200, c) if c else (404, {"error": "card não encontrado"})
+    if path == "/api/agenda":
+        return 200, {"cards": app.cards.agenda(_q1(q, "from"), _q1(q, "to"))}
+    if path == "/api/search":
+        return 200, app.search.search(_q1(q, "q", ""), _q1(q, "scope", "all"), engine=app.command.engine())
+    if path == "/api/ui":
+        from .uiprefs import ACCENTS, CHOICES, SIDEBAR
+        return 200, {"prefs": app.ui.get(), "choices": dict(CHOICES, accent_colors=ACCENTS, sidebar=list(SIDEBAR))}
+    if path == "/api/model/info":
+        return 200, app.service("model").info()
+    if path == "/api/integrations":
+        return 200, {"integrations": app.service("integrations").list()}
+    if path == "/api/voice/status":
+        return 200, app.service("voice").status()
+    if path == "/api/trees/graph":
+        tg = app.service("treegraph")
+        return 200, {"graphs": [dict(tg.tree_to_graph(t), name=t["name"]) for t in app.trees]}
+    return None
+
+
+def v2_post(app: App, path: str, b: dict):
+    """Rotas POST da v2. Devolve (código, objeto) ou None."""
+    if path == "/api/cards":
+        return 200, app.cards.create(b)
+    if path == "/api/cards/move":
+        return 200, app.cards.move(b["id"], b.get("column"), b.get("order"), b.get("start"))
+    if path == "/api/cards/reorder":
+        return 200, {"cards": app.cards.reorder(b["column"], list(b["ids"]))}
+    if path.startswith("/api/cards/"):
+        parts = path.split("/")
+        if len(parts) == 5 and parts[4] == "delete":
+            return 200, {"ok": app.cards.delete(parts[3])}
+        if len(parts) == 4:
+            return 200, app.cards.update(parts[3], b)
+        return None
+    if path == "/api/command":
+        return 200, app.command.run(b.get("text", ""), b.get("context"))
+    if path == "/api/command/confirm":
+        return 200, app.command.confirm(str(b.get("id", "")), bool(b.get("approve")), b.get("edits"))
+    if path == "/api/triage":
+        return 200, app.command.triage(b.get("text", ""), b.get("remetente"), b.get("assunto"))
+    if path == "/api/ui":
+        return 200, {"prefs": app.ui.set(b.get("patch", b) if isinstance(b.get("patch"), dict) else b)}
+    if path.startswith("/api/model/"):
+        act = path.rsplit("/", 1)[1]
+        md = app.service("model")
+        if act == "download":
+            return 200, md.start()
+        if act == "cancel":
+            return 200, md.cancel()
+        if act == "remove":
+            return 200, md.remove()
+        return None
+    if path.startswith("/api/integrations/"):
+        parts = path.split("/")
+        if len(parts) != 5:
+            return None
+        integ, pid, act = app.service("integrations"), parts[3], parts[4]
+        if act == "configure":
+            return 200, integ.configure(pid, b.get("values", b)) or {"ok": True}
+        if act == "connect":
+            return 200, integ.connect(pid)
+        if act == "disconnect":
+            return 200, integ.disconnect(pid, forget=bool(b.get("forget"))) or {"ok": True}
+        if act == "sync":
+            return 200, integ.sync(pid)
+        if act == "send":
+            kw = {k: b[k] for k in ("template", "lang", "params") if b.get(k)}
+            return 200, integ.send(pid, b["to"], b["body"], subject=b.get("subject"), **kw)
+        return None
+    if path.startswith("/api/voice/"):
+        act = path.rsplit("/", 1)[1]
+        v = app.service("voice")
+        if act == "speak":
+            return 200, v.speak(str(b.get("text", "")), voice=b.get("voice"), rate=b.get("rate")) or {"ok": True}
+        if act == "stop":
+            return 200, v.stop() or {"ok": True}
+        if act == "transcribe":
+            import base64
+            from .voice import VoiceError
+            try:
+                audio = base64.b64decode(str(b.get("audio_b64", "")), validate=False)
+                return 200, v.transcribe(audio, lang=b.get("lang", "pt"))
+            except VoiceError as e:
+                return 400, {"error": str(e)}
+        if act == "setup":
+            return 200, v.ensure_stt() or {"ok": True}
+        return None
+    if path == "/api/trees/graph":
+        tg = app.service("treegraph")
+        tree = tg.graph_to_tree(b["graph"])
+        name = b.get("name") or tree.get("name") or (b["graph"].get("name") if isinstance(b["graph"], dict) else None)
+        if not name:
+            raise ValueError("a árvore precisa de um nome")
+        tree["name"] = str(name)
+        return 200, app.save_tree(tree)
+    return None
 
 
 def make_handler(app: App):
@@ -280,6 +468,26 @@ def make_handler(app: App):
                 if "/" in name or ".." in name or ext not in types or not f.is_file():
                     return self._send(404 if ext != ".json" else 200, {"error": "não encontrado"} if ext != ".json" else [])
                 return self._send(200, f.read_bytes(), types[ext], {"Cache-Control": "max-age=86400"})
+            if u.path == "/static/tree-editor.js" or u.path.startswith("/static/app/"):
+                name = u.path.rsplit("/", 1)[1]
+                ext = os.path.splitext(name)[1]
+                types = {".js": "application/javascript", ".css": "text/css"}
+                if u.path == "/static/app/recorder.js":
+                    try:
+                        from .voice import RECORDER_JS
+                        return self._send(200, RECORDER_JS.encode(), types[".js"])
+                    except Exception as e:
+                        return self._send(503, {"error": f"voz indisponível: {type(e).__name__}: {e}"})
+                f = STATIC / name if u.path == "/static/tree-editor.js" else STATIC / "app" / name
+                if ".." in name or ext not in types or not f.is_file():
+                    return self._send(404, {"error": "não encontrado"})
+                return self._send(200, f.read_bytes(), types[ext])
+            if u.path == "/oauth/callback":              # sem token: o state é validado pelas integrações
+                try:
+                    html = app.service("integrations").oauth_callback(u.query)
+                except Unavailable as e:
+                    return self._send(503, {"error": str(e)})
+                return self._send(200, html.encode() if isinstance(html, str) else html, "text/html")
             if u.path == "/":
                 if not self._auth(q):
                     return self._send(401, b"<p>Abra com ?token=SEU_TOKEN (veja ~/.djorge-local/token.txt)</p>",
@@ -306,6 +514,16 @@ def make_handler(app: App):
             if u.path == "/api/trees":
                 p = app.trees_path()
                 return self._send(200, {"yaml": p.read_text(encoding="utf-8") if p.is_file() else ""})
+            try:
+                r = v2_get(app, u.path, q)
+            except Unavailable as e:
+                return self._send(503, {"error": str(e)})
+            except (KeyError, ValueError) as e:
+                return self._send(400, {"error": f"{type(e).__name__}: {e}"})
+            except Exception as e:
+                return self._send(500, {"error": f"{type(e).__name__}: {e}"})
+            if r is not None:
+                return self._send(*r)
             self._send(404, {"error": "não encontrado"})
 
         def do_POST(self):
@@ -327,7 +545,10 @@ def make_handler(app: App):
                         return self._send(200, app.handle(ev, only=b.get("tree")))
                     return self._send(202, {"queued": ev["id"]})
                 if u.path == "/api/decide":
-                    z = app.models.get(b.get("model") or ([x for x in app.models.loaded() if x in app.models.decision_models()] or ["flash"])[0])
+                    try:
+                        z = app.models.get(b.get("model") or ([x for x in app.models.loaded() if x in app.models.decision_models()] or ["flash"])[0])
+                    except (FileNotFoundError, KeyError, ImportError):
+                        return self._send(409, {"error": "modelo_ausente"})
                     r = z.execute(b["query"], sources={"text": b.get("text", "")}, lang=app.cfg["language"],
                                   now=b.get("now"))
                     return self._send(200, r)
@@ -362,9 +583,19 @@ def make_handler(app: App):
                 if u.path == "/api/trees":
                     return self._send(200, {"trees": app.reload_trees(b["yaml"])})
                 if u.path == "/api/rules/preview":            # text -> proposed tree (nothing is saved)
-                    return self._send(200, app.rules.from_text(b.get("text", "")))
+                    try:
+                        return self._send(200, app.rules.from_text(b.get("text", "")))
+                    except (FileNotFoundError, ImportError):
+                        return self._send(409, {"error": "modelo_ausente"})
                 if u.path == "/api/rules/add":                # the person approved the summary
                     return self._send(200, app.add_rule(b["tree"], b.get("answers")))
+                r = v2_post(app, u.path, b)
+                if r is not None:
+                    return self._send(*r)
+            except Unavailable as e:
+                return self._send(503, {"error": str(e)})
+            except ModeloAusente as e:
+                return self._send(409, {"error": "modelo_ausente", "tool": str(e)})
             except (TreeError, yaml.YAMLError, KeyError, ValueError, PermissionError, FileNotFoundError) as e:
                 return self._send(400, {"error": f"{type(e).__name__}: {e}"})
             except Exception as e:

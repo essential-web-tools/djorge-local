@@ -7,7 +7,7 @@ language: pt
 models:                 # o Flash vem dentro do programa; adicione outros pela aba Modelos
   flash:
     enabled: true
-    path: "@app/modelos/flash"
+    path: ""   # preenchido quando o modelo é baixado pelo app
     role: "Origo Flash — rápido, leve, para qualquer computador"
 
 server:
