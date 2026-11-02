@@ -133,6 +133,10 @@ def keyword_tool(text: str) -> (str, float):
     return "nenhuma", 0.4
 
 
+PREP_CAMPO = {"às", "as", "a", "à", "em", "no", "na", "de", "do", "da", "para", "pra", "pro", "até", "ate", "dia",
+              "pelas", "pelo", "pela", "ao", "desde", "por", "toda", "todo"}
+
+
 def _sem_campos(text: str, fields: List[Trecho], drop=("data", "hora", "período do dia", "frequência ou repetição",
                                                        "endereço de e-mail", "link de reunião")) -> str:
     keep = list(text)
@@ -140,6 +144,15 @@ def _sem_campos(text: str, fields: List[Trecho], drop=("data", "hora", "período
         if f.campo in drop:
             for i in range(f.ini, min(f.fim, len(keep))):
                 keep[i] = " "
+            j = f.ini - 1                                  # a preposição que só servia ao campo vai junto
+            while j >= 0 and keep[j] == " ":
+                j -= 1
+            k = j
+            while k >= 0 and keep[k] not in " ,.;:!?":
+                k -= 1
+            if j >= 0 and "".join(keep[k + 1:j + 1]).casefold() in PREP_CAMPO:
+                for i in range(k + 1, j + 1):
+                    keep[i] = " "
     t = PREFIXO.sub("", "".join(keep))
     words = t.split()
     while words and words[-1].casefold().strip(",.;:!?") in BORDAS:
@@ -567,7 +580,7 @@ class Command:
             raise KeyError(f"pedido não encontrado ou expirado: {cid}")
         if rec.get("done_result") is not None:
             return rec["done_result"]
-        if rec.get("executed") and not edits:
+        if approve and rec.get("executed") and not edits:
             res = {"ok": True, "already": True, "results": rec.get("results"), "reply": rec["reply"]}
             rec["done_result"] = res
             return res
