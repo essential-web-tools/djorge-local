@@ -1,10 +1,12 @@
-"""Executable entry point: a NATIVE window (pywebview: WebView2 on Windows, WebKit on macOS, Qt/GTK on Linux)
-with the Djorge Local interface. No browser is opened. The window shows up in ~1 s; models load in the background.
+"""Ponto de entrada do executável (Windows 10/11 x64): janela nativa (pywebview + WebView2) com a interface.
 
-Tray (Windows / Linux): closing the window keeps Djorge running in the tray; menu: Abrir · Pausar conectores ·
-Recarregar árvores · Abrir pasta de dados · Sair. On macOS closing the window quits.
-Single instance: a second launch opens a window attached to the running one.
-If no native web view is available, it falls back to the default browser (and says so).
+- Moldura nativa do Windows (título "Djorge"), 1280x820, mínimo 960x640, ícone do app.
+- Bandeja (pystray): fechar a janela deixa o Djorge rodando; menu Abrir · Pausar integrações ·
+  Recarregar árvores · Abrir pasta de dados · Sair.
+- Instância única (mutex nomeado): uma segunda abertura só mostra a janela que já existe.
+- Splash do PyInstaller fechado quando o servidor responde; logs em %LOCALAPPDATA%/Djorge/logs.
+- O modelo NÃO vem no instalador: a janela abre sem ele e o card do modelo oferece o download.
+Imports de Windows ficam dentro das funções: `import djorge_local.launcher` funciona em qualquer sistema.
 """
 from __future__ import annotations
 
@@ -13,21 +15,29 @@ import socket
 import sys
 import threading
 import webbrowser
+from pathlib import Path
 
 os.environ.setdefault("DJORGE_GUI", "1")
-IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform.startswith("win")
+TITLE = "Djorge"
+SIZE, MIN_SIZE = (1280, 820), (960, 640)
+MUTEX_NAME = "Local\\DjorgeLocalMutex"            # o installer.iss usa o mesmo nome (AppMutex)
+SHOW_EVENT = "Local\\DjorgeLocalMostrar"
 LOG = None
 
 
+def data_dir() -> Path:
+    from .model_download import data_root
+    return data_root()
+
+
 def _setup_log():
-    """Windowed builds have no console: everything goes to ~/.djorge-local/logs/djorge.log, and a fatal error
-    shows a message box instead of a silent hang."""
+    """Sem console no executável: tudo vai para %LOCALAPPDATA%/Djorge/logs/djorge.log; erro fatal vira caixa
+    de mensagem em vez de travar em silêncio."""
     global LOG
     import faulthandler
     import logging
-    from . import config as CF
-    d = CF.HOME / "logs"
+    d = data_dir() / "logs"
     d.mkdir(parents=True, exist_ok=True)
     LOG = d / "djorge.log"
     try:
@@ -40,7 +50,7 @@ def _setup_log():
         sys.stdout = sys.stderr = f
     faulthandler.enable(f)
     logging.basicConfig(stream=f, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.info("iniciando Djorge Local · %s · Python %s", sys.platform, sys.version.split()[0])
+    logging.info("iniciando Djorge · %s · Python %s", sys.platform, sys.version.split()[0])
 
     def hook(t, v, tb):
         import traceback
@@ -51,41 +61,76 @@ def _setup_log():
                                                    a.exc_value, exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
 
 
+def _message(text, flags=0x40):
+    if IS_WIN:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, TITLE, flags)
+            return
+        except Exception:
+            pass
+    print(text, file=sys.__stderr__ or sys.stderr)
+
+
 def _fatal(msg):
     _close_splash()
-    text = f"O Djorge Local não conseguiu iniciar.\n\n{msg}\n\nDetalhes em:\n{LOG}"
-    try:
-        if IS_WIN:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(None, text, "Djorge Local", 0x10)
-        elif IS_MAC:
-            os.system(f"osascript -e 'display alert \"Djorge Local\" message \"{msg[:200]}\"' >/dev/null 2>&1")
-    except Exception:
-        pass
+    _message(f"O Djorge não conseguiu iniciar.\n\n{msg}\n\nDetalhes em:\n{LOG}", 0x10)
     os._exit(1)
 
 
+# ------------------------------------------------------------------ instância única --
 _MUTEX = None
 
 
 def _single_instance() -> bool:
-    """True if this is the only running instance (Windows: named mutex; elsewhere: the port check)."""
+    """True se esta é a única instância (mutex nomeado). Fora do Windows: sempre True (desenvolvimento)."""
     global _MUTEX
     if not IS_WIN:
         return True
     import ctypes
-    _MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\DjorgeLocalMutex")
+    _MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
     return ctypes.windll.kernel32.GetLastError() != 183          # ERROR_ALREADY_EXISTS
 
 
+def _signal_show() -> bool:
+    """Pede para a instância que já roda mostrar a janela (evento nomeado)."""
+    if not IS_WIN:
+        return False
+    import ctypes
+    k = ctypes.windll.kernel32
+    h = k.OpenEventW(0x0002, False, SHOW_EVENT)                    # EVENT_MODIFY_STATE
+    if not h:
+        return False
+    k.SetEvent(h); k.CloseHandle(h)
+    return True
+
+
+def _listen_show(show):
+    if not IS_WIN:
+        return
+    import ctypes
+    k = ctypes.windll.kernel32
+    h = k.CreateEventW(None, False, False, SHOW_EVENT)
+
+    def loop():
+        while True:
+            if k.WaitForSingleObject(h, 0xFFFFFFFF) == 0:
+                try:
+                    show()
+                except Exception:
+                    pass
+    threading.Thread(target=loop, daemon=True, name="mostrar-janela").start()
+
+
 def _webview2_ok() -> bool:
-    """Windows: the Edge WebView2 runtime is what draws the window (Windows 11 has it; some Windows 10 not)."""
+    """O runtime Edge WebView2 desenha a janela (o Windows 11 já traz; alguns Windows 10 não)."""
     if not IS_WIN:
         return True
     import winreg
-    keys = [(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}")]
+    guid = r"{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    keys = [(winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}"),
+            (winreg.HKEY_LOCAL_MACHINE, rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}"),
+            (winreg.HKEY_CURRENT_USER, rf"Software\Microsoft\EdgeUpdate\Clients\{guid}")]
     for root, k in keys:
         try:
             with winreg.OpenKey(root, k) as h:
@@ -97,6 +142,7 @@ def _webview2_ok() -> bool:
     return False
 
 
+# ------------------------------------------------------------------------ utilidades --
 def _panel_url(cfg):
     s = cfg["server"]
     return f"http://{s['host']}:{s['port']}/?token={s['token']}"
@@ -110,31 +156,58 @@ def _already_running(cfg) -> bool:
         return False
 
 
+def _wait_server(cfg, timeout=15.0) -> bool:
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if _already_running(cfg):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def _close_splash():
     if "_PYI_SPLASH_IPC" not in os.environ:
         return
     try:
-        import pyi_splash  # only inside the PyInstaller build
+        import pyi_splash  # só dentro do executável do PyInstaller
         pyi_splash.close()
     except Exception:
         pass
 
 
-def _icon_path():
-    return os.path.join(os.path.dirname(__file__), "icon.png")
+def _res(*parts):
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return str(base.joinpath(*parts))
+
+
+def _icon_path(ico=False):
+    if ico:
+        p = _res("assets", "icon.ico")
+        if os.path.isfile(p):
+            return p
+    return str(Path(__file__).resolve().parent / "icon.png")
 
 
 def _open_folder(p):
-    if sys.platform.startswith("win"):
+    if IS_WIN:
         os.startfile(p)  # noqa
-    elif IS_MAC:
-        os.system(f'open "{p}"')
     else:
-        os.system(f'xdg-open "{p}" >/dev/null 2>&1 &')
+        webbrowser.open(Path(p).as_uri())
+
+
+def _set_app_id():
+    """Agrupa a janela e a bandeja sob o ícone do Djorge na barra de tarefas."""
+    if IS_WIN:
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Djorge.Local.2")
+        except Exception:
+            pass
 
 
 class WindowApi:
-    """Exposed to the page as window.pywebview.api (native file / folder pickers)."""
+    """Exposta à página como window.pywebview.api (seletores nativos de arquivo / pasta)."""
 
     def pick(self, kind="folder"):
         import webview
@@ -142,13 +215,14 @@ class WindowApi:
         FD = getattr(webview, "FileDialog", None)
         folder = FD.FOLDER if FD else webview.FOLDER_DIALOG
         openf = FD.OPEN if FD else webview.OPEN_DIALOG
-        if kind == "folder":
-            r = w.create_file_dialog(folder)
-        else:
-            r = w.create_file_dialog(openf)
+        r = w.create_file_dialog(folder if kind == "folder" else openf)
         if not r:
             return None
         return r[0] if isinstance(r, (list, tuple)) else str(r)
+
+    def open_data_folder(self):
+        _open_folder(str(data_dir()))
+        return True
 
 
 def total_ram_gb() -> float:
@@ -171,97 +245,65 @@ def total_ram_gb() -> float:
 
 
 def economy_mode(cfg):
-    """Computers with little memory (< 8 GB): lossless savings only (int8 token table, unused vocabulary
-    removed), one model at a time. Measured on the Sentinel/Origo: same answers, ~0.5 GB less."""
+    """Pouca memória (< 8 GB): só economias sem perda (tabela de tokens int8, vocabulário não usado
+    removido) e descarregar o modelo ocioso."""
     import logging
     ram = total_ram_gb()
     if cfg.get("economy", "auto") == "off" or (cfg.get("economy", "auto") == "auto" and ram >= 8):
         return False
     sv = cfg.setdefault("sentinel", {})
     if not sv.get("unload_after_min"):
-        sv["unload_after_min"] = 10                    # Sentinel leaves memory after 10 idle minutes
+        sv["unload_after_min"] = 10
     os.environ.setdefault("DJORGE_EMBED_INT8", "1")
     os.environ.setdefault("DJORGE_PRUNE_VOCAB", "1")
     logging.info("modo econômico ligado (%.1f GB de RAM)", ram)
     return True
 
 
-def _edge():
-    cands = []
-    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA")):
-        if base:
-            cands += [os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"),
-                      os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")]
-    return next((c for c in cands if os.path.isfile(c)), None)
-
-
-def _app_window_windows(url, cfg, app):
-    """Windows: the interface opens as an APP window of Edge (no tabs, no address bar, own profile in
-    ~/.djorge-local). It avoids the .NET / WebView2 embedding that crashed on some Windows 10 machines."""
-    import logging
-    import subprocess
-    from . import config as CF
-    exe = _edge()
-    if not exe:
-        return False
-    prof = str(CF.HOME / "janela")
-
-    def open_win():
-        flags = 0x08000000 if IS_WIN else 0                       # CREATE_NO_WINDOW
-        subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={prof}", "--window-size=1260,880",
-                          "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-                          "--disable-features=Translate", "--lang=pt-BR"], creationflags=flags)
-        logging.info("janela de app aberta com %s", os.path.basename(exe))
-    open_win()
-    if app is None:
-        return True
-    tray = _tray(app, cfg, show=open_win, quit_=lambda: os._exit(0))
-    if tray is None:                                   # no tray: keep serving until the user ends the process
-        threading.Event().wait()
-    threading.Event().wait()
-    return True
-
-
+# --------------------------------------------------------------------------- janela --
 def _window(url, cfg, app=None):
-    """Returns True if the native window ran; False if no web view backend is available."""
+    """Roda a janela nativa. Devolve False se não houver WebView2/pywebview (aí usamos o navegador)."""
     import logging
-    if IS_WIN:
-        return _app_window_windows(url, cfg, app)
     if not _webview2_ok():
         logging.warning("WebView2 ausente: usando o navegador")
+        _message("O componente de janela do Windows (Microsoft Edge WebView2) não foi encontrado.\n"
+                 "O Djorge vai abrir no navegador. Reinstale o Djorge para instalar o WebView2.")
         return False
     try:
         import webview
     except Exception as e:
         logging.warning("pywebview indisponível (%s): usando o navegador", e)
         return False
-    from . import config as CF
-    win = webview.create_window("Djorge Local", url, width=1260, height=880, min_size=(420, 600),
+    _set_app_id()
+    win = webview.create_window(TITLE, url, width=SIZE[0], height=SIZE[1], min_size=MIN_SIZE,
                                 js_api=WindowApi(), background_color="#F6F3EE", text_select=True)
-    tray = None
-    if app is not None and not IS_MAC:
-        tray = _tray(app, cfg, show=lambda: (win.show(), win.restore()), quit_=lambda: os._exit(0))
 
+    def show():
+        win.show(); win.restore()
+    tray = _tray(app, cfg, show=show, quit_=lambda: os._exit(0)) if app is not None else None
     if tray is not None:
+        _listen_show(show)
+
         def on_closing():
             win.hide()
             try:
-                tray.notify("Continua rodando na bandeja.", "Djorge Local")
+                tray.notify("O Djorge continua rodando na bandeja.", TITLE)
             except Exception:
                 pass
-            return False                                   # keep running in the tray
+            return False                                   # não fecha: continua na bandeja
         win.events.closing += on_closing
     shown = threading.Event()
-    win.events.shown += lambda: (shown.set(), logging.info("janela aberta"))
+    win.events.shown += lambda: (shown.set(), _close_splash(), logging.info("janela aberta"))
 
-    def watchdog():                                   # window never appeared -> open the browser instead
+    def watchdog():                                       # a janela não apareceu -> navegador
         if not shown.wait(30):
             logging.error("a janela não abriu em 30 s: abrindo no navegador")
+            _close_splash()
             webbrowser.open(url)
     threading.Thread(target=watchdog, daemon=True).start()
     try:
-        kw = {"gui": "edgechromium"} if IS_WIN else {}
-        webview.start(icon=_icon_path(), private_mode=False, storage_path=str(CF.HOME / "janela"), **kw)
+        webview.start(gui="edgechromium" if IS_WIN else None, icon=_icon_path(), private_mode=False,
+                      storage_path=str(data_dir() / "janela"))
     except Exception as e:
         logging.exception("janela nativa falhou: %s", e)
         return False
@@ -274,33 +316,40 @@ def _tray(app, cfg, show, quit_):
         from PIL import Image
     except Exception:
         return None
-    from . import config as CF
     paused = {"v": False}
 
     def toggle(icon, item):
-        from . import connectors as C
         paused["v"] = not paused["v"]
-        if paused["v"]:
-            for c in app.conns.values():
-                c.stop()
-            app.conns = {}
-        else:
-            app.conns = C.start_all(cfg)
+        integ = getattr(app, "integrations", None)
+        try:
+            if paused["v"]:
+                for c in getattr(app, "conns", {}).values():
+                    c.stop()
+                app.conns = {}
+                if integ is not None and hasattr(integ, "pause"):
+                    integ.pause()
+            else:
+                from . import connectors as C
+                app.conns = C.start_all(cfg)
+                if integ is not None and hasattr(integ, "start_background"):
+                    integ.start_background()
+        except Exception as e:
+            icon.notify(f"Erro: {e}", TITLE)
 
     def reload(icon, item):
         try:
-            n = app.reload_trees(); icon.notify(f"{n} árvore(s) carregada(s)", "Djorge Local")
+            n = app.reload_trees(); icon.notify(f"{n} árvore(s) carregada(s)", TITLE)
         except Exception as e:
-            icon.notify(f"Erro nas árvores: {e}", "Djorge Local")
+            icon.notify(f"Erro nas árvores: {e}", TITLE)
 
     menu = pystray.Menu(
-        pystray.MenuItem("Abrir Djorge Local", lambda i, it: show(), default=True),
-        pystray.MenuItem(lambda it: "Retomar conectores" if paused["v"] else "Pausar conectores", toggle),
+        pystray.MenuItem("Abrir Djorge", lambda i, it: show(), default=True),
+        pystray.MenuItem(lambda it: "Retomar integrações" if paused["v"] else "Pausar integrações", toggle),
         pystray.MenuItem("Recarregar árvores", reload),
-        pystray.MenuItem("Abrir pasta de dados", lambda i, it: _open_folder(str(CF.HOME))),
+        pystray.MenuItem("Abrir pasta de dados", lambda i, it: _open_folder(str(data_dir()))),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", lambda i, it: (i.stop(), quit_())))
-    icon = pystray.Icon("djorge-local", Image.open(_icon_path()), "Djorge Local", menu)
+    icon = pystray.Icon("djorge", Image.open(_icon_path()), TITLE, menu)
     try:
         icon.run_detached()
     except Exception:
@@ -311,19 +360,19 @@ def _tray(app, cfg, show, quit_):
 def main():
     from . import config as CF
     _setup_log()
+    import logging
     try:
         if not (CF.HOME / "config.yaml").is_file():
             from .__main__ import main as cli
             cli(["init"])
         cfg = CF.load()
     except Exception as e:
-        import logging
         logging.exception("configuração")
         _fatal(f"configuração inválida: {e}")
     url = _panel_url(cfg)
     if not _single_instance() or _already_running(cfg):
         _close_splash()
-        if not _window(url, cfg):
+        if not _signal_show():
             webbrowser.open(url)
         return
     economy_mode(cfg)
@@ -334,11 +383,20 @@ def main():
     except OSError as e:
         _fatal(f"a porta {cfg['server']['port']} está ocupada por outro programa ({e}). "
                "Mude a porta em config.yaml ou feche o outro programa.")
-    threading.Timer(1.5, app.models.preload).start()   # torch + models after the window is up
     app.start()
-    _close_splash()
+    _wait_server(cfg)
+    # Sem modelo instalado não há nada a carregar: a interface mostra o card para baixar.
+    try:
+        from .model_download import ModelDownloader
+        if ModelDownloader(cfg, app.models).info()["installed"]:
+            threading.Timer(1.5, app.models.preload).start()
+        else:
+            logging.info("modelo ausente: aguardando download pela interface")
+    except Exception:
+        threading.Timer(1.5, app.models.preload).start()
     if _window(url, cfg, app):
         return
+    _close_splash()
     print("Janela nativa indisponível: abrindo no navegador. Painel:", url)
     webbrowser.open(url)
     threading.Event().wait()

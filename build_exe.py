@@ -1,7 +1,9 @@
-"""Gera um executável com PyInstaller (opcional): python build_exe.py
-Os modelos NÃO entram no executável: ficam nos .djx encriptados (baixados ou copiados)."""
+"""Gera o pacote do Windows (atalho para o spec): python build_exe.py
+Só Windows 10/11 x64. O modelo NÃO entra no pacote: o DOFL é baixado depois, pela interface."""
+import sys
+
+if not sys.platform.startswith("win"):
+    sys.exit("o Djorge v2 só é empacotado no Windows (use build_windows.bat)")
 import PyInstaller.__main__
-PyInstaller.__main__.run(["djorge_local/__main__.py", "--name", "djorge-local", "--onedir", "--noconfirm",
-                          "--add-data", "djorge_local/ui.html:djorge_local", "--add-data", "config.example.yaml:.",
-                          "--add-data", "arvores.example.yaml:.", "--collect-all", "djorge",
-                          "--hidden-import", "djorge_local.connectors"])
+
+PyInstaller.__main__.run(["djorge-local.spec", "--noconfirm"])

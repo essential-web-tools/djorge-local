@@ -1,4 +1,7 @@
-# núcleo
+# Djorge v2 — somente Windows 10/11 x64, Python 3.11
+# núcleo do modelo (DOFL)
+# torch é OBRIGATÓRIO mesmo no caminho ONNX: djorge/runtime/onnx_backend.py e models.py importam torch.
+# Instale a versão só para CPU (menor):  pip install --index-url https://download.pytorch.org/whl/cpu torch
 torch>=2.2
 transformers>=4.51
 safetensors
@@ -6,19 +9,23 @@ tokenizers
 numpy
 pyyaml
 cryptography>=42
-# download do Google Drive
-gdown>=5
-# opcionais (instale só o que for usar)
-plyer            # notificações na área de trabalho
-pyperclip        # conector clipboard
-pypdf            # PDF
-python-docx      # DOCX
-pytesseract      # imagens (OCR) + instale o Tesseract no sistema
-pillow
-# faster-whisper # áudio
-# winsdk         # notificações do Windows (somente Windows)
+onnxruntime-directml>=1.18     # GPU de qualquer marca via DirectML, com CPU como reserva
+# janela, bandeja e segredos
+pywebview>=5                   # WebView2 (Edge) no Windows
 pystray
-keyring
-pywebview>=5
-onnxruntime>=1.18; sys_platform != 'win32'
-onnxruntime-directml>=1.18; sys_platform == 'win32'
+pillow
+keyring                        # tokens das integrações no Gerenciador de Credenciais do Windows
+# voz do Windows (SAPI) e integração com o sistema
+pywin32
+comtypes
+# download do modelo depois da instalação
+gdown>=5
+huggingface_hub
+# arquivos (extração de texto)
+pypdf
+python-docx
+pyperclip
+# opcional: ditado offline com Whisper (~1 GB a mais). Sem ele, a voz usa o reconhecimento do Windows.
+# faster-whisper
+# opcional: OCR de imagens (exige o Tesseract instalado no Windows)
+# pytesseract

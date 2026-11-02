@@ -151,7 +151,7 @@ def graph_to_tree(graph: dict, check: bool = True) -> dict:
     tree["nodes"] = nodes
     tree.update(copy.deepcopy(graph.get("extra") or {}))
     if check:
-        errs = validate_graph(graph, tree)
+        errs = [e for e in validate_graph(graph, tree) if e["level"] == "erro"]
         if errs:
             raise TreeError("; ".join(f"{e['node'] or 'árvore'}: {e['message']}" for e in errs))
     return tree
@@ -238,7 +238,7 @@ def overlaps(graph: dict) -> List[tuple]:
 def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
     """Erros em português, cada um apontando o nó: [{"node": id|None, "message": str}]."""
     errs: List[dict] = []
-    add = lambda nid, msg: errs.append({"node": nid, "message": msg})
+    add = lambda nid, msg, level="erro": errs.append({"node": nid, "message": msg, "level": level})
     if not str(graph.get("name") or "").strip():
         add(None, "a árvore precisa de um nome")
     ids = [n.get("id") for n in graph.get("nodes") or []]
@@ -312,8 +312,8 @@ def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
                     reach.add(e["to"]); q.append(e["to"])
         for nid in ids:
             if nid not in reach:
-                add(nid, "este nó nunca é alcançado a partir do início")
-    if not errs:
+                add(nid, "este nó nunca é alcançado a partir do início", "aviso")
+    if not [e for e in errs if e["level"] == "erro"]:
         try:
             validate([tree if tree is not None else graph_to_tree(graph, check=False)])
         except TreeError as e:
@@ -327,8 +327,7 @@ def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
 
 def check_graph(graph: dict) -> dict:
     """Para a rota: {"ok": bool, "errors": [...], "tree": árvore|None}."""
-    errs = validate_graph(graph)
-    tree = None
-    if not errs:
-        tree = graph_to_tree(graph, check=False)
-    return {"ok": not errs, "errors": errs, "tree": tree}
+    allv = validate_graph(graph)
+    errs = [e for e in allv if e["level"] == "erro"]
+    tree = None if errs else graph_to_tree(graph, check=False)
+    return {"ok": not errs, "errors": errs, "warnings": [e for e in allv if e["level"] != "erro"], "tree": tree}

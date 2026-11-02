@@ -1,0 +1,216 @@
+"""Preferências seguras de interface (lista fechada, nada de código), em HOME/ui.json.
+
+Também entende comandos em português ("deixa o tema escuro", "esconde a coluna feito",
+"salva filtro urgentes desta semana") e devolve um patch validado.
+"""
+from __future__ import annotations
+
+import copy
+import datetime as _dt
+import json
+import re
+import threading
+import unicodedata
+from pathlib import Path
+from typing import Dict, Optional
+
+from .cards import COLUMNS, KINDS
+
+ACCENTS = {"rosa": "#b56576", "vinho": "#6d2e46", "terracota": "#c06c4a", "mostarda": "#c9a227",
+           "verde": "#5a7d5a", "azul": "#4a6c8c", "lavanda": "#8a7bb0", "grafite": "#4a4a4a"}
+VIEWS = ("inicio", "kanban", "agenda", "lista")
+SIDEBAR = ("inicio", "kanban", "agenda", "lista", "busca", "integracoes", "regras", "modelo", "configuracoes")
+FILTER_KEYS = ("q", "kind", "column", "tag", "from", "to", "source", "priority", "done", "person")
+
+DEFAULTS = {
+    "theme": "auto",                 # claro | escuro | auto
+    "density": "normal",             # compacta | normal | confortavel
+    "accent": "rosa",                # nome da paleta da marca
+    "default_view": "inicio",
+    "kanban_columns": list(COLUMNS),
+    "saved_filters": [],             # [{name, filters:{...}}]
+    "sidebar_order": list(SIDEBAR),
+    "voice_enabled": False,
+    "speak_replies": False,
+    "font_size": "normal",           # pequena | normal | grande | muito grande
+}
+CHOICES = {"theme": ("claro", "escuro", "auto"), "density": ("compacta", "normal", "confortavel"),
+           "accent": tuple(ACCENTS), "default_view": VIEWS,
+           "font_size": ("pequena", "normal", "grande", "muito grande")}
+FONT_STEPS = CHOICES["font_size"]
+DENS_STEPS = CHOICES["density"]
+
+
+def _fold(s) -> str:
+    s = unicodedata.normalize("NFKD", str(s or "").casefold())
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def validate(patch: Dict) -> Dict:
+    """Patch estrito: só chaves conhecidas, valores da lista fechada. Levanta ValueError."""
+    if not isinstance(patch, dict):
+        raise ValueError("preferências: objeto esperado")
+    out = {}
+    for k, v in patch.items():
+        if k not in DEFAULTS:
+            raise ValueError(f"preferência desconhecida: {k}")
+        if k in CHOICES:
+            if v not in CHOICES[k]:
+                raise ValueError(f"{k}: use {', '.join(CHOICES[k])}")
+        elif k in ("voice_enabled", "speak_replies"):
+            if not isinstance(v, bool):
+                raise ValueError(f"{k}: verdadeiro ou falso")
+        elif k == "kanban_columns":
+            if not isinstance(v, list) or not v or any(c not in COLUMNS for c in v) or len(set(v)) != len(v):
+                raise ValueError(f"kanban_columns: lista sem repetição com {', '.join(COLUMNS)}")
+        elif k == "sidebar_order":
+            if not isinstance(v, list) or sorted(v) != sorted(SIDEBAR):
+                raise ValueError(f"sidebar_order: todos os itens, uma vez cada: {', '.join(SIDEBAR)}")
+        elif k == "saved_filters":
+            if not isinstance(v, list) or len(v) > 30:
+                raise ValueError("saved_filters: lista com até 30 filtros")
+            clean = []
+            for f in v:
+                if not isinstance(f, dict) or not str(f.get("name") or "").strip():
+                    raise ValueError("saved_filters: cada filtro precisa de {name, filters}")
+                fl = f.get("filters") or {}
+                if not isinstance(fl, dict) or any(x not in FILTER_KEYS for x in fl):
+                    raise ValueError(f"saved_filters: filtros aceitos: {', '.join(FILTER_KEYS)}")
+                fl = {x: str(y)[:120] for x, y in fl.items() if y not in (None, "")}
+                if fl.get("kind") and any(x not in KINDS for x in fl["kind"].split(",")):
+                    raise ValueError("saved_filters: kind inválido")
+                if fl.get("column") and any(x not in COLUMNS for x in fl["column"].split(",")):
+                    raise ValueError("saved_filters: column inválida")
+                clean.append({"name": str(f["name"]).strip()[:60], "filters": fl})
+            v = clean
+        out[k] = v
+    return out
+
+
+class UIPrefs:
+    def __init__(self, path):
+        self.path = Path(path)
+        self.lock = threading.Lock()
+
+    def get(self) -> Dict:
+        cur = copy.deepcopy(DEFAULTS)
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            for k, v in (raw or {}).items():
+                try:
+                    cur.update(validate({k: v}))
+                except ValueError:
+                    pass                                   # valor estragado: fica o padrão
+        except (OSError, ValueError):
+            pass
+        return cur
+
+    def set(self, patch: Dict) -> Dict:
+        p = validate(patch)
+        with self.lock:
+            cur = self.get()
+            cur.update(p)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(self.path)
+            return cur
+
+    # ------------------------------------------------------------------ comandos em português --
+    def parse(self, text: str, hoje: Optional[_dt.date] = None) -> Optional[Dict]:
+        """Texto -> {"patch": {...}, "descricao": "..."} ou None se não for um comando de interface."""
+        s = _fold(text).strip(" .!?")
+        cur = self.get()
+        hoje = hoje or _dt.date.today()
+        # tema
+        if re.search(r"\b(tema|modo|deixa|deixe|muda|mude|coloca|coloque|poe|bota|usa|use|ativa|ative|liga|ligue)\b.*"
+                     r"\b(escuro|noturno|dark|claro|light|automatico|auto)\b", s) or re.fullmatch(r"(tema |modo )?(escuro|claro)", s):
+            if re.search(r"\b(escuro|noturno|dark)\b", s):
+                return {"patch": {"theme": "escuro"}, "descricao": "tema escuro"}
+            if re.search(r"\b(claro|light)\b", s):
+                return {"patch": {"theme": "claro"}, "descricao": "tema claro"}
+            return {"patch": {"theme": "auto"}, "descricao": "tema automático (segue o Windows)"}
+        # colunas do kanban
+        m = re.search(r"\b(esconde|esconda|oculta|oculte|tira|tire|remove|remova|mostra|mostre|exibe|exiba|volta|"
+                      r"reexibe|traz|traga)\b.*\bcolunas?\b\s*(?:de\s+|do\s+|da\s+)?(.+)$", s)
+        if m:
+            cols = [c for c in COLUMNS if re.search(rf"\b{c}\b", m.group(2))]
+            if cols:
+                hide = m.group(1).startswith(("escond", "ocult", "tir", "remov"))
+                vis = [c for c in cur["kanban_columns"] if c not in cols] if hide else \
+                      [c for c in COLUMNS if c in cur["kanban_columns"] or c in cols]
+                if not vis:
+                    return None
+                return {"patch": {"kanban_columns": vis},
+                        "descricao": ("esconder" if hide else "mostrar") + " a coluna " + " e ".join(cols)}
+        # filtros salvos
+        m = re.search(r"\b(salva|salve|guarda|guarde|cria|crie)\b\s+(?:um\s+|o\s+)?filtro\s+(?:de\s+|chamado\s+)?(.+)$", s)
+        if m:
+            nome = re.search(r"filtro\s+(?:de\s+|chamado\s+)?(.+)$", text.strip(" .!?"), re.I)
+            nome = (nome.group(1) if nome else m.group(2)).strip(" \"'“”")
+            f = {}
+            if re.search(r"\burgent", m.group(2)):
+                f["priority"] = "3"
+            elif re.search(r"\b(importante|alta prioridade|prioridade alta)", m.group(2)):
+                f["priority"] = "2+"
+            if re.search(r"\b(desta|nesta|essa|esta) semana\b", m.group(2)):
+                f["from"] = (hoje - _dt.timedelta(hoje.weekday())).isoformat()
+                f["to"] = (hoje + _dt.timedelta(6 - hoje.weekday())).isoformat()
+            elif re.search(r"\bhoje\b", m.group(2)):
+                f["from"] = f["to"] = hoje.isoformat()
+            for k in KINDS:
+                if re.search(rf"\b{k}s?\b", m.group(2)):
+                    f["kind"] = k
+            if re.search(r"\b(pendente|aberto|nao feit)", m.group(2)):
+                f["done"] = "false"
+            tg = re.search(r"#([\w-]+)", text)
+            if tg:
+                f["tag"] = tg.group(1)
+            if not f:
+                f["q"] = nome
+            fs = [x for x in cur["saved_filters"] if _fold(x["name"]) != _fold(nome)] + [{"name": nome, "filters": f}]
+            return {"patch": {"saved_filters": fs[-30:]}, "descricao": f"salvar o filtro “{nome}”"}
+        m = re.search(r"\b(apaga|apague|remove|remova|exclui|exclua)\b\s+o\s+filtro\s+(.+)$", s)
+        if m:
+            fs = [x for x in cur["saved_filters"] if _fold(x["name"]) != m.group(2).strip()]
+            if len(fs) != len(cur["saved_filters"]):
+                return {"patch": {"saved_filters": fs}, "descricao": f"apagar o filtro “{m.group(2).strip()}”"}
+        # visão padrão
+        m = re.search(r"\b(abre|abrir|abra|comeca|comecar|comece|inicia|iniciar|visao padrao|tela inicial|padrao)\b.*"
+                      r"\b(inicio|kanban|quadro|agenda|calendario|lista)\b", s)
+        if m and re.search(r"\b(sempre|padrao|comec|inici|tela inicial)", s):
+            v = {"quadro": "kanban", "calendario": "agenda"}.get(m.group(2), m.group(2))
+            return {"patch": {"default_view": v}, "descricao": f"abrir sempre em {v}"}
+        # voz e fala das respostas
+        if re.search(r"\b(fala|fale|ler|le|leia)\b.*\brespostas?\b|\brespostas?\b.*\b(em voz alta|faladas?)\b", s):
+            off = bool(re.search(r"\b(nao|para de|pare de|desliga|sem)\b", s))
+            return {"patch": {"speak_replies": not off}, "descricao": ("não " if off else "") + "falar as respostas"}
+        if re.search(r"\b(liga|ligue|ativa|ative|desliga|desligue|desativa|desative)\b.*\b(voz|microfone)\b", s):
+            off = bool(re.search(r"\bdes(liga|ligue|ativa|ative)\b", s))
+            return {"patch": {"voice_enabled": not off}, "descricao": ("desligar" if off else "ligar") + " a voz"}
+        # fonte
+        if re.search(r"\b(fonte|letra|texto)\b", s) and re.search(r"\b(maior|menor|aumenta|aumente|diminui|diminua|"
+                                                                   r"pequena|grande|normal)\b", s):
+            i = FONT_STEPS.index(cur["font_size"])
+            if re.search(r"\b(maior|aumenta|aumente)\b", s):
+                i = min(i + 1, len(FONT_STEPS) - 1)
+            elif re.search(r"\b(menor|diminui|diminua)\b", s):
+                i = max(i - 1, 0)
+            else:
+                i = FONT_STEPS.index("muito grande" if "muito grande" in s else "grande" if "grande" in s else
+                                     "pequena" if "pequena" in s else "normal")
+            return {"patch": {"font_size": FONT_STEPS[i]}, "descricao": f"fonte {FONT_STEPS[i]}"}
+        # densidade
+        if re.search(r"\b(compact[ao]|densidade|espacad[ao]|confortavel|apertad[ao]|mais espaco|menos espaco)\b", s):
+            if re.search(r"\b(compact|apertad|menos espaco)", s):
+                v = "compacta"
+            elif re.search(r"\b(espacad|confortavel|mais espaco)", s):
+                v = "confortavel"
+            else:
+                v = "normal"
+            return {"patch": {"density": v}, "descricao": f"densidade {v}"}
+        # cor de destaque
+        m = re.search(r"\b(cor|destaque)\b.*\b(" + "|".join(ACCENTS) + r")\b", s)
+        if m:
+            return {"patch": {"accent": m.group(2)}, "descricao": f"cor de destaque {m.group(2)}"}
+        return None
