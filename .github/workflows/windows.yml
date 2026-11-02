@@ -1,0 +1,54 @@
+name: Windows (testes + instalador)
+on:
+  push:
+    branches: [v2-windows]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Dependências
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -r requirements.txt pyinstaller pytest
+      - name: Testes (Windows de verdade, sem modelo)
+        shell: pwsh
+        run: python -m pytest -q tests
+      - name: Voz SAPI (fala real no Windows)
+        shell: pwsh
+        run: |
+          python -c "from djorge_local.voice import Voice; v=Voice({}); s=v.status(); print({k:s[k] for k in ('tts','tts_engine','stt_available')}); print('vozes', [x.get('name') if isinstance(x,dict) else x for x in s.get('voices',[])][:8])"
+      - name: WebView2 bootstrapper e Inno Setup
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force assets | Out-Null
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile assets/MicrosoftEdgeWebview2Setup.exe
+          choco install innosetup -y --no-progress
+      - name: Gerar Djorge.exe e o instalador
+        shell: cmd
+        env:
+          CI: "1"
+        run: build_windows.bat
+      - name: Teste de fumaça do servidor empacotado
+        shell: pwsh
+        run: |
+          $env:DJORGE_LOCAL_HOME = "$env:RUNNER_TEMP\djhome"
+          python -c "import os,threading,time,json,urllib.request as U; from djorge_local import config as C; from djorge_local.app import App, serve; cfg=C.load(os.path.join(os.environ['DJORGE_LOCAL_HOME'],'config.yaml')); cfg['server']['port']=8799; a=App(cfg); serve(a, block=False); time.sleep(2); t=cfg['server']['token']; r=lambda p,b=None: json.loads(U.urlopen(U.Request('http://127.0.0.1:8799'+p, data=json.dumps(b).encode() if b is not None else None, headers={'X-Token':t,'Content-Type':'application/json'})).read()); print(r('/api/model/info')['state']); print(r('/api/command',{'text':'marca reunião com a Ana amanhã às 15h'})['reply']); print(r('/api/voice/status').get('tts'))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Djorge-Setup
+          path: Output/*.exe
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Djorge-dist
+          path: dist/Djorge
+          if-no-files-found: ignore

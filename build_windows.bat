@@ -17,9 +17,9 @@ if not exist "assets\MicrosoftEdgeWebview2Setup.exe" echo AVISO: assets\Microsof
 set ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe
 if exist "%ISCC%" ("%ISCC%" installer.iss || goto :erro) else (echo Inno Setup 6 nao encontrado: gerado so dist\Djorge)
 echo Pronto: dist\Djorge\Djorge.exe  e  Output\Djorge-Setup-*.exe
-pause
+if not defined CI pause
 exit /b 0
 :erro
 echo Falhou. Veja as mensagens acima.
-pause
+if not defined CI pause
 exit /b 1
