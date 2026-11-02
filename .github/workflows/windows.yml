@@ -36,6 +36,19 @@ jobs:
         env:
           CI: "1"
         run: build_windows.bat
+      - name: Abrir o Djorge.exe empacotado (diagnóstico)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $p = Start-Process -FilePath "dist\Djorge\Djorge (diagnostico).exe" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt" -RedirectStandardError "$env:RUNNER_TEMP\err.txt"
+          Start-Sleep -Seconds 45
+          "--- vivo? " + (-not $p.HasExited) + " código: " + ($(if ($p.HasExited) { $p.ExitCode } else { "-" }))
+          try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/api/status -TimeoutSec 5).StatusCode } catch { "servidor: " + $_.Exception.Message }
+          "--- stdout"; Get-Content "$env:RUNNER_TEMP\out.txt" -ErrorAction SilentlyContinue | Select-Object -Last 60
+          "--- stderr"; Get-Content "$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue | Select-Object -Last 60
+          "--- log"; Get-ChildItem -Recurse "$env:LOCALAPPDATA\Djorge" -ErrorAction SilentlyContinue | Select-Object -First 30 FullName
+          Get-ChildItem -Recurse -Filter djorge.log "$env:LOCALAPPDATA\Djorge","$env:USERPROFILE\.djorge-local" -ErrorAction SilentlyContinue | ForEach-Object { "== " + $_.FullName; Get-Content $_.FullName | Select-Object -Last 80 }
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
       - name: Teste de fumaça do servidor empacotado
         shell: pwsh
         run: |
