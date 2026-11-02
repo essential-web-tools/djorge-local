@@ -410,8 +410,15 @@ def v2_post(app: App, path: str, b: dict):
         if act == "setup":
             return 200, v.ensure_stt() or {"ok": True}
         return None
+    if path == "/api/trees/graph/validate" or path == "/api/trees/graph/to_tree":
+        return 200, app.service("treegraph").check_graph(b["graph"])
+    if path == "/api/trees/graph/from_tree":
+        return 200, {"graph": app.service("treegraph").tree_to_graph(b["tree"])}
     if path == "/api/trees/graph":
         tg = app.service("treegraph")
+        errs = [e for e in tg.validate_graph(b["graph"]) if e.get("level") == "erro"]
+        if errs:
+            return 400, {"error": "a árvore tem erros", "errors": errs}
         tree = tg.graph_to_tree(b["graph"])
         name = b.get("name") or tree.get("name") or (b["graph"].get("name") if isinstance(b["graph"], dict) else None)
         if not name:
@@ -538,6 +545,12 @@ def make_handler(app: App):
                 if u.path == "/api/event":
                     ev = C.emit(b.get("source", "http"), str(b.get("text", "")), title=b.get("title", ""),
                                 app=b.get("app", ""), sender=b.get("sender", "")) if not b.get("sync") else None
+                    if b.get("sync") and isinstance(b.get("graph"), dict):    # testar árvore ainda não salva
+                        ev = {"id": "teste", "source": b.get("source", "teste"), "text": str(b.get("text", "")),
+                              "title": "", "app": "", "sender": "", "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+                        t = app.service("treegraph").graph_to_tree(b["graph"], check=False)
+                        r = app.runner.run(t, ev)
+                        return self._send(200, {"runs": [dict(r, tree=t.get("name", "teste"))]})
                     if b.get("sync"):
                         ev = {"id": "sync", "source": b.get("source", "http"), "text": str(b.get("text", "")),
                               "title": b.get("title", ""), "app": b.get("app", ""), "sender": b.get("sender", ""),
