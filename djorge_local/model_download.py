@@ -82,7 +82,7 @@ def read_source(cfg, name=NAME) -> str:
     for f in _source_files():
         if not f.is_file():
             continue
-        for line in f.read_text(encoding="utf-8").splitlines():
+        for line in f.read_bytes().decode("utf-8", errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue

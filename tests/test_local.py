@@ -212,6 +212,8 @@ def test_sentinel_service_for_extension(home, art):
 
 def test_local_package_runs_on_onnx_cpu(home, art, tmp_path):
     pytest.importorskip("onnxruntime")
+    if not (ROOT.parent / "djorge" / "tools" / "export_local.py").is_file():
+        pytest.skip("precisa do repositório de treino djorge ao lado (exportação ONNX)")
     import subprocess, yaml
     pkg = str(tmp_path / "flash_local")
     r = subprocess.run([sys.executable, str(ROOT.parent / "djorge" / "tools" / "export_local.py"), "--artifact", art,

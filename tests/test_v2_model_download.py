@@ -87,7 +87,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DJORGE_DATA_DIR", str(tmp_path / "dados"))
     srv = Srv()
     cfgp = tmp_path / "config.yaml"
-    cfgp.write_text(yaml.safe_dump({"timezone": "America/Sao_Paulo", "models": {"flash": {"enabled": True, "path": ""}}}))
+    cfgp.write_text(yaml.safe_dump({"timezone": "America/Sao_Paulo", "models": {"flash": {"enabled": True, "path": ""}}}), encoding="utf-8")
     cfg = {"_path": str(cfgp), "_dir": str(tmp_path), "models": {"flash": {"enabled": True, "path": ""}}}
     yield srv, cfg, tmp_path
     srv.httpd.shutdown()
@@ -114,7 +114,7 @@ def test_info_download_config(env):
     target = tmp / "dados" / "modelos" / "flash"
     assert (target / "metadata" / "djorge.json").is_file()
     assert cfg["models"]["flash"]["path"] == str(target)
-    saved = yaml.safe_load(open(cfg["_path"]))
+    saved = yaml.safe_load(open(cfg["_path"], encoding="utf-8"))
     assert saved["models"]["flash"]["path"] == str(target) and saved["timezone"] == "America/Sao_Paulo"
     assert fm.preloaded == [["flash"]]
     det = i1["details"]
@@ -122,7 +122,7 @@ def test_info_download_config(env):
     assert det["data"] == "2026-10-30" and "DOFL" in det["texto"]
     r = d.remove()
     assert not r["installed"] and r["state"] == "ausente" and not target.exists()
-    assert yaml.safe_load(open(cfg["_path"]))["models"]["flash"]["path"] == ""
+    assert yaml.safe_load(open(cfg["_path"], encoding="utf-8"))["models"]["flash"]["path"] == ""
 
 
 def test_progress_cancel_and_resume(env):
@@ -180,7 +180,7 @@ def test_not_a_model_and_source_file(env, monkeypatch, tmp_path):
         z.writestr("qualquer/coisa.txt", "oi")
     srv.files["/x.zip"] = b.getvalue()
     src = tmp_path / "modelo-fonte.txt"
-    src.write_text("# comentário\nflash=" + srv.url("/x.zip") + "\n")
+    src.write_text("# comentário\nflash=" + srv.url("/x.zip") + "\n", encoding="utf-8")
     monkeypatch.setattr(MD, "_source_files", lambda: [src])
     d = MD.ModelDownloader(cfg, FakeModels())
     assert d.info()["source"] == srv.url("/x.zip")

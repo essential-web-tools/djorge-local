@@ -42,7 +42,7 @@ def pick_profile(art: Path, cfg) -> dict:
     if not lp.is_file():
         return {"engine": "pytorch", "label": "PyTorch"}
     import json as _j
-    prof = _j.load(open(lp))["profiles"]
+    prof = _j.load(open(lp, encoding="utf-8"))["profiles"]
     try:
         import onnxruntime as ort
         avail = ort.get_available_providers()
