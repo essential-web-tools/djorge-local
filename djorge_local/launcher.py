@@ -156,6 +156,18 @@ def _already_running(cfg) -> bool:
         return False
 
 
+def _is_v2(cfg) -> bool:
+    """A instância que ocupa a porta é a v2 (tem /api/model/info)? A v1 ("Djorge Local") não tem."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://{cfg['server']['host']}:{cfg['server']['port']}/api/model/info",
+                                     headers={"X-Token": cfg["server"]["token"]})
+        with urllib.request.urlopen(req, timeout=1.5) as r:
+            return r.status == 200
+    except Exception as e:
+        return getattr(e, "code", None) not in (404, None)
+
+
 def _wait_server(cfg, timeout=15.0) -> bool:
     import time
     end = time.time() + timeout
@@ -370,6 +382,18 @@ def main():
         logging.exception("configuração")
         _fatal(f"configuração inválida: {e}")
     url = _panel_url(cfg)
+    if _already_running(cfg) and not _is_v2(cfg):
+        logging.warning("porta %s ocupada pela versão antiga: encerrando-a", cfg["server"]["port"])
+        if IS_WIN:
+            import subprocess
+            for exe in ("Djorge Local.exe", "Djorge Local (diagnostico).exe"):
+                subprocess.run(["taskkill", "/F", "/IM", exe, "/T"], capture_output=True,
+                               creationflags=0x08000000)
+            import time
+            for _ in range(30):
+                if not _already_running(cfg):
+                    break
+                time.sleep(0.2)
     if not _single_instance() or _already_running(cfg):
         _close_splash()
         if not _signal_show():

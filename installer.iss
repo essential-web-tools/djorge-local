@@ -53,12 +53,7 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 Filename: "{app}\Djorge.exe"; Description: "Abrir o Djorge"; Flags: nowait postinstall skipifsilent
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C taskkill /F /IM ""Djorge.exe"""; Flags: runhidden; RunOnceId: "fechar"
-[UninstallDelete]
-; o modelo baixado e os logs ficam em %LOCALAPPDATA%\Djorge; a pessoa escolhe apagar ao desinstalar
-Type: filesandordirs; Name: "{localappdata}\Djorge\modelos"; Check: ApagarModelo
 [Code]
-var ApagarModeloResp: Integer;
-
 function NeedsWebView2(): Boolean;
 var v: String;
 begin
@@ -71,14 +66,15 @@ begin
   Result := FileExists(ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe'));
 end;
 
-function ApagarModelo(): Boolean;
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if ApagarModeloResp = 0 then
+  { o modelo baixado e os logs ficam em %LOCALAPPDATA%\Djorge; a pessoa escolhe apagar o modelo ao desinstalar }
+  if CurUninstallStep = usPostUninstall then
   begin
-    if UninstallSilent() then ApagarModeloResp := IDNO
-    else ApagarModeloResp := MsgBox('Apagar também o modelo baixado (cerca de 300 MB)?', mbConfirmation, MB_YESNO);
+    if (not UninstallSilent()) and DirExists(ExpandConstant('{localappdata}\Djorge\modelos')) then
+      if MsgBox('Apagar também o modelo baixado (cerca de 300 MB)?', mbConfirmation, MB_YESNO) = IDYES then
+        DelTree(ExpandConstant('{localappdata}\Djorge\modelos'), True, True, True);
   end;
-  Result := ApagarModeloResp = IDYES;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
