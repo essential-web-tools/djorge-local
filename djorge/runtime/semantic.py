@@ -60,7 +60,7 @@ class SemanticEngine:
     @classmethod
     def from_artifact(cls, path: str, device: str = "auto", dtype: str = "auto", quant: str = None, **kw) -> "SemanticEngine":
         from ..model.backbone import load_backbone, pick_device, tiny_qwen3
-        meta = json.load(open(os.path.join(path, "metadata", "djorge.json")))
+        meta = json.load(open(os.path.join(path, "metadata", "djorge.json"), encoding="utf-8"))
         mc = meta["model_config"]
         want_onnx = kw.pop("onnx", None) or os.environ.get("DJORGE_ONNX", "")
         if want_onnx and want_onnx != "0":                  # ONNX Runtime encoder (local package)
@@ -80,7 +80,7 @@ class SemanticEngine:
                     kw.pop(k, None)
                 ctp = os.path.join(path, "calibration", "certainty.json")
                 if os.path.exists(ctp):
-                    meta["certainty"] = json.load(open(ctp))
+                    meta["certainty"] = json.load(open(ctp, encoding="utf-8"))
                 cp = os.path.join(path, "calibration", "calibration.json")
                 cal = CalibrationTable.from_json(open(cp).read()) if os.path.exists(cp) else CalibrationTable()
                 eng = cls(model, tok, cal, meta, device="cpu", max_tokens=meta.get("max_tokens", 512), **kw)
@@ -134,13 +134,13 @@ class SemanticEngine:
         if (os.environ.get("DJORGE_PRUNE_VOCAB", "0") == "1" or _pv) and os.path.exists(kp):
             # drop token rows the model never meets (see tools/prune_vocab.py); lossless on texts made of kept tokens
             from ..model.compress import prune_vocab
-            meta["vocab_pruning"] = prune_vocab(model.backbone, json.load(open(kp))["keep"])
+            meta["vocab_pruning"] = prune_vocab(model.backbone, json.load(open(kp, encoding="utf-8"))["keep"])
         if os.environ.get("DJORGE_EMBED_INT8", "0") == "1" or _ei8:
             from ..model.compress import compress_embeddings
             meta["compression"] = compress_embeddings(model.backbone)
         ctp = os.path.join(path, "calibration", "certainty.json")
         if os.path.exists(ctp):
-            meta["certainty"] = json.load(open(ctp))
+            meta["certainty"] = json.load(open(ctp, encoding="utf-8"))
         cp = os.path.join(path, "calibration", "calibration.json")
         cal = CalibrationTable.from_json(open(cp).read()) if os.path.exists(cp) else CalibrationTable()
         eng = cls(model, tok, cal, meta, device=device, max_tokens=meta.get("max_tokens", 512), **kw)

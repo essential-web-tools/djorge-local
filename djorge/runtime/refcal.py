@@ -106,7 +106,7 @@ class Conformal:
     @classmethod
     def load(cls, artifact: str) -> "Conformal":
         p = os.path.join(artifact, "calibration", "conformal.json")
-        return cls(json.load(open(p))) if os.path.exists(p) else cls()
+        return cls(json.load(open(p, encoding="utf-8"))) if os.path.exists(p) else cls()
 
     def qhat(self, kind: str, k: int) -> Optional[float]:
         from .calibration import bucket

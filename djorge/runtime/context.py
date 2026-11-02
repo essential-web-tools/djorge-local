@@ -140,7 +140,7 @@ class ContextStore:
         p = os.path.join(d, "versions", f"v{v}.json")
         if not os.path.exists(p):
             raise DjorgeError("INVALID_CONTEXT", f"tenant {tenant!r} has no version {v}")
-        return Snapshot(json.load(open(p)))
+        return Snapshot(json.load(open(p, encoding="utf-8")))
 
     def create(self, tenant: str) -> Snapshot:
         with self.lock:
@@ -184,7 +184,7 @@ class ContextStore:
         d = os.path.join(self._dir(tenant), "versions")
         out = []
         for f in sorted(os.listdir(d), key=lambda x: int(x[1:-5])):
-            j = json.load(open(os.path.join(d, f)))
+            j = json.load(open(os.path.join(d, f), encoding="utf-8"))
             out.append({"version": j["version"], "note": j.get("note"), "records": len(j["records"])})
         return out
 

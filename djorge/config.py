@@ -52,7 +52,7 @@ class DjorgeConfig:
         cfg = cls()
         path = path or os.environ.get("DJORGE_CONFIG")
         if path and os.path.exists(path):
-            data = json.load(open(path))
+            data = json.load(open(path, encoding="utf-8"))
             th = data.pop("thresholds", None)
             li = data.pop("limits", None)
             for k, v in data.items():

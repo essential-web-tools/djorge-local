@@ -192,7 +192,7 @@ class Reputation:
             self.load(p)
 
     def load(self, path: str):
-        d = json.load(open(path))
+        d = json.load(open(path, encoding="utf-8"))
         self.url = set(d.get("url", []))
         self.domain = set(d.get("domain", []))
         self.allow = set(d.get("allow", []))

@@ -155,7 +155,7 @@ class Meter:
         self._last_write = 0.0
         if self.file and os.path.exists(self.file):
             try:
-                self.totals = json.load(open(self.file))
+                self.totals = json.load(open(self.file, encoding="utf-8"))
             except Exception:
                 self.totals = {}
 
@@ -307,7 +307,7 @@ def make_handler(z: Djorge):
             ap = getattr(getattr(z.semantic, "engine", z.semantic), "artifact_path", None)
             p = os.path.join(ap, "metadata", "sentinel_thresholds.json") if ap else None
             try:
-                _thr["v"] = {k: float(v) for k, v in json.load(open(p)).items()} if p and os.path.exists(p) else {}
+                _thr["v"] = {k: float(v) for k, v in json.load(open(p, encoding="utf-8")).items()} if p and os.path.exists(p) else {}
             except Exception:
                 _thr["v"] = {}
         return _thr["v"]
@@ -318,7 +318,7 @@ def make_handler(z: Djorge):
         p = os.path.join(ap, "metadata", "sentinel_kinds.json") if ap else None
         if p and os.path.exists(p):
             try:
-                return set(json.load(open(p)))
+                return set(json.load(open(p, encoding="utf-8")))
             except Exception:
                 return None
         return None

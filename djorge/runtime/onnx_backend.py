@@ -168,7 +168,7 @@ def onnx_file_for(path: str, prefer: str = "int8") -> Optional[str]:
     info_p = os.path.join(path, "onnx", "encoder.json")
     if not os.path.exists(info_p):
         return None
-    files = json.load(open(info_p))["files"]
+    files = json.load(open(info_p, encoding="utf-8"))["files"]
     for k in (prefer, "int8", "fp16", "fp32"):
         if k in files and os.path.exists(os.path.join(path, files[k])):
             return os.path.join(path, files[k])
@@ -178,7 +178,7 @@ def onnx_file_for(path: str, prefer: str = "int8") -> Optional[str]:
 def build_model_without_backbone(path: str, meta: dict):
     """DjorgeModel with a stub backbone (no Qwen weights in memory) + its trained decision parts."""
     from ..model.djorge_model import DjorgeModel
-    info = json.load(open(os.path.join(path, "onnx", "encoder.json")))
+    info = json.load(open(os.path.join(path, "onnx", "encoder.json"), encoding="utf-8"))
     mc = meta["model_config"]
     model = DjorgeModel(_StubBackbone(info["hidden"], info["layers"]), d=mc["d"], adapter_layers=mc["adapter_layers"],
                         heads=mc["heads"], lora_r=mc["lora_r"], lora_alpha=mc["lora_alpha"], use_lora=False,

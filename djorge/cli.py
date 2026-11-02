@@ -49,7 +49,7 @@ def main(argv=None):
             tenant, op = a.args[1], a.args[2]
             cs = z.contexts
             if op == "add":
-                recs = json.load(open(a.args[3]))
+                recs = json.load(open(a.args[3], encoding="utf-8"))
                 print(json.dumps({"version": cs.add(tenant, recs if isinstance(recs, list) else recs["records"]).version}))
             elif op == "show":
                 print(json.dumps(cs.get(tenant).data, indent=2, ensure_ascii=False))

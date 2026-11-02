@@ -60,11 +60,11 @@ class Djorge:
         f = os.path.join(path, "calibration", "thresholds.json") if path else None
         if not f or not os.path.exists(f) or not self.config.use_artifact_thresholds:
             return {}
-        tuned = {k: float(v) for k, v in json.load(open(f)).get("accept", {}).items()}
+        tuned = {k: float(v) for k, v in json.load(open(f, encoding="utf-8")).get("accept", {}).items()}
         default = Thresholds().accept
         applied = {k: v for k, v in tuned.items() if self.config.thresholds.accept.get(k) == default.get(k)}
         self.config.thresholds.accept.update(applied)
-        tuned_ab = {k: float(v) for k, v in json.load(open(f)).get("abstain", {}).items()}
+        tuned_ab = {k: float(v) for k, v in json.load(open(f, encoding="utf-8")).get("abstain", {}).items()}
         default_ab = Thresholds().abstain
         applied_ab = {k: v for k, v in tuned_ab.items() if self.config.thresholds.abstain.get(k) == default_ab.get(k)}
         self.config.thresholds.abstain.update(applied_ab)
@@ -77,7 +77,7 @@ class Djorge:
         f = os.path.join(path, "specialists", "registry.json") if path else None
         if not f or not os.path.exists(f):
             return {}
-        reg = json.load(open(f))
+        reg = json.load(open(f, encoding="utf-8"))
         out = {k: {"name": v["name"], "path": os.path.join(path, "specialists", v["file"]), "alpha_over_r": v["alpha_over_r"]}
                for k, v in reg.items()}
         if self.semantic is not None:
