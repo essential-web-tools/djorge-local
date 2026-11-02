@@ -3,6 +3,5 @@
 #            https://exemplo.com/dofl-v2.zip   (URL direta de um .zip com metadata/djorge.json)
 # A config `model_source` (config.yaml) tem prioridade sobre este arquivo.
 #
-# PENDENTE: publicar o DOFL V2 (ex.: .zip num link do Google Drive "qualquer pessoa com o link" ou um
-# repositório no Hugging Face) e trocar a linha flash= abaixo. Até lá ela aponta para a fonte atual (Flash v1).
-flash=gdrive:1LIFNXF8P587qSVjM2eEe_tDQH9HH4W9C
+# DOFL V2 (dofl_v2.zip no Google Drive, "qualquer pessoa com o link").
+flash=gdrive:1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo
