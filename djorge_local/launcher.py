@@ -314,7 +314,9 @@ def _window(url, cfg, app=None):
             webbrowser.open(url)
     threading.Thread(target=watchdog, daemon=True).start()
     try:
-        webview.start(gui="edgechromium" if IS_WIN else None, icon=_icon_path(), private_mode=False,
+        ico = _icon_path(ico=True)                         # WinForms só aceita .ico (um .png derruba o processo)
+        webview.start(gui="edgechromium" if IS_WIN else None, icon=ico if ico.lower().endswith(".ico") else None,
+                      private_mode=False,
                       storage_path=str(data_dir() / "janela"))
     except Exception as e:
         logging.exception("janela nativa falhou: %s", e)

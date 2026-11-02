@@ -38,7 +38,6 @@ jobs:
         run: build_windows.bat
       - name: Abrir o Djorge.exe empacotado (diagnóstico)
         shell: pwsh
-        continue-on-error: true
         run: |
           $p = Start-Process -FilePath "dist\Djorge\Djorge (diagnostico).exe" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt" -RedirectStandardError "$env:RUNNER_TEMP\err.txt"
           Start-Sleep -Seconds 45
@@ -48,7 +47,9 @@ jobs:
           "--- stderr"; Get-Content "$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue | Select-Object -Last 60
           "--- log"; Get-ChildItem -Recurse "$env:LOCALAPPDATA\Djorge" -ErrorAction SilentlyContinue | Select-Object -First 30 FullName
           Get-ChildItem -Recurse -Filter djorge.log "$env:LOCALAPPDATA\Djorge","$env:USERPROFILE\.djorge-local" -ErrorAction SilentlyContinue | ForEach-Object { "== " + $_.FullName; Get-Content $_.FullName | Select-Object -Last 80 }
+          $ok = (-not $p.HasExited)
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          if (-not $ok) { Write-Error "o Djorge.exe fechou sozinho"; exit 1 }
       - name: Teste de fumaça do servidor empacotado
         shell: pwsh
         run: |
