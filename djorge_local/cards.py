@@ -233,6 +233,30 @@ class Cards:
             return self.update(cur["id"], data), False
         return self.create(data), True
 
+    def get_external(self, integration: str, external_id: str) -> Optional[Dict]:
+        return self.by_source(integration, external_id)
+
+    def upsert_external(self, integration: str, external_id: str, fields: Dict) -> Dict:
+        """Cria ou atualiza o card vindo de uma integração. Na atualização, a organização feita pela pessoa
+        (column, order, pinned, color) é preservada."""
+        data = dict(fields or {})
+        src = dict(data.get("source") or {})
+        src.update(integration=integration, external_id=str(external_id))
+        data["source"] = src
+        cur = self.by_source(integration, str(external_id))
+        if cur:
+            for k in ("column", "order", "pinned", "color"):
+                data.pop(k, None)
+            if "done" in data:                               # sem mexer na coluna escolhida
+                c = normalize({k: v for k, v in data.items() if k != "done"}, cur)
+                c["done"] = bool(data["done"])
+                c["id"], c["created"], c["updated"] = cur["id"], cur["created"], _now()
+                with self.lock:
+                    self._write(c)
+                return c
+            return self.update(cur["id"], data)
+        return self.create(data)
+
     # ------------------------------------------------------------------ mover / reordenar --
     def move(self, cid: str, column: str, order=None, start=None) -> Dict:
         """Arrastar no kanban (column + order) ou na agenda (start). `order` pode ser fracionário (entre dois)."""
