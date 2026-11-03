@@ -5,6 +5,11 @@
   start()  -> inicia o download em segundo plano (thread) e devolve info()
   cancel() -> interrompe (o arquivo parcial fica para retomar)
   remove() -> apaga o modelo baixado e tira o caminho da configuração
+  otimizar() -> converte agora um artefato de treino (sem onnx/) para ONNX int8 (otimizar.py)
+
+Estados: ausente · baixando · verificando · instalado · otimizando ("Otimizando o modelo para este computador…",
+com progresso e etapa) · erro. `formato` diz se o pacote é ONNX int8 ou PyTorch (formato de treino) e `motor`
+o que está rodando agora. O ideal é publicar o pacote ONNX pronto (README): aí não há conversão nenhuma.
 
 Fonte: config `model_source` ou a linha `flash=` de modelo-fonte.txt. Formatos:
   gdrive:<id do arquivo>                 .zip compartilhado "qualquer pessoa com o link"
@@ -210,10 +215,27 @@ class ModelDownloader:
             loaded = self.name in (self.models.loaded() if self.models is not None else [])
         except Exception:
             pass
-        return {"installed": bool(art), "name": PRODUCT, "version": version, "path": str(art) if art else None,
-                "size_mb": size, "state": state, "progress": 1.0 if state == "instalado" else st["progress"],
-                "bytes": st["bytes"], "total": st["total"], "error": st["error"],
-                "source": read_source(self.cfg, self.name), "details": details, "loaded": loaded}
+        out = {"installed": bool(art), "name": PRODUCT, "version": version, "path": str(art) if art else None,
+               "size_mb": size, "state": state, "progress": 1.0 if state == "instalado" else st["progress"],
+               "bytes": st["bytes"], "total": st["total"], "error": st["error"],
+               "source": read_source(self.cfg, self.name), "details": details, "loaded": loaded,
+               "formato": None, "motor": None, "mensagem": "", "otimizacao": None}
+        if art:
+            from . import otimizar as O
+            out["formato"] = "ONNX int8" if O.eh_pacote_onnx(art) else "PyTorch (formato de treino)"
+            try:
+                out["motor"] = getattr(self.models, "engine", {}).get(self.name)
+            except Exception:
+                pass
+            opt = O.OTIMIZADOR.info(art)
+            if opt:
+                out["otimizacao"] = opt
+                if opt.get("state") == "otimizando" and state == "instalado":
+                    out.update(state="otimizando", progress=float(opt.get("progress") or 0.0),
+                               mensagem=opt.get("mensagem") or O.MENSAGEM, etapa=opt.get("etapa") or O.MENSAGEM)
+                elif opt.get("state") in ("indisponivel", "erro"):
+                    out["mensagem"] = opt.get("mensagem") or ""
+        return out
 
     def _set(self, **kw):
         with self._lock:
@@ -253,10 +275,29 @@ class ModelDownloader:
         t = self.target()
         shutil.rmtree(t, ignore_errors=True)
         shutil.rmtree(models_root() / f".{self.name}.parcial", ignore_errors=True)
+        try:
+            from . import otimizar as O
+            O.OTIMIZADOR.esquecer(t)
+        except Exception:
+            pass
         m = self.cfg.setdefault("models", {}).setdefault(self.name, {"enabled": True, "role": ""})
         m["path"] = ""
         self._persist()
         self._st.update(state=None, progress=0.0, bytes=0, total=0, error=None)
+        return self.info()
+
+    def otimizar(self) -> dict:
+        """Converte o modelo instalado para ONNX int8 agora (normalmente acontece sozinho ao carregar)."""
+        art = self._path()
+        if art is None:
+            return self.info()
+        from . import otimizar as O
+        if O.precisa_otimizar(art):
+            O.OTIMIZADOR.esquecer(art)
+            if self.models is not None and hasattr(self.models, "_maybe_optimize"):
+                self.models._maybe_optimize(self.name, art)
+            else:
+                O.OTIMIZADOR.iniciar(art)
         return self.info()
 
     def wait(self, timeout=None):
@@ -288,6 +329,9 @@ class ModelDownloader:
             if art is None:
                 raise ValueError("o pacote baixado não é um modelo DJORGE (falta metadata/djorge.json)")
             json.load(open(art / "metadata" / "djorge.json", encoding="utf-8"))
+            from . import otimizar as O
+            if O.precisa_otimizar(art):
+                log.info("pacote baixado está no formato de treino (sem onnx/): será otimizado ao carregar")
             self._install(art)
             shutil.rmtree(work, ignore_errors=True)
             self._set(state="instalado", progress=1.0, error=None)

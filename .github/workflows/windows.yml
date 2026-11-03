@@ -21,6 +21,28 @@ jobs:
       - name: Testes (Windows de verdade, sem modelo)
         shell: pwsh
         run: python -m pytest -q tests
+      - name: Caminho ONNX sem PyTorch (pacote ONNX pequeno gerado aqui)
+        shell: pwsh
+        run: |
+          pip install onnx onnxscript
+          $py = @'
+          import os, sys, json, subprocess, tempfile
+          d = tempfile.mkdtemp()
+          from djorge.training.trainer import main
+          main(["--backbone", "tiny", "--out", d + "/tiny", "--steps", "3", "--save-every", "1000", "--data-scale", "0.05"])
+          from djorge_local.otimizar import converter
+          print(json.dumps(converter(d + "/tiny", d + "/pacote"), ensure_ascii=False))
+          code = ("import sys, os; sys.modules['torch'] = None; os.environ['DJORGE_ONNX'] = 'int8';"
+                  "os.environ['DJORGE_ONNX_PROVIDERS'] = 'CPUExecutionProvider';"
+                  "from djorge import Djorge; z = Djorge(artifact=sys.argv[1]); r = z.execute(sys.argv[2]);"
+                  "print('ONNX sem torch:', r['result']['answer'], r['result']['probability'])")
+          q = 'CHOICE ["cobrança", "outro"] FROM "O boleto vence amanhã" ASK "Assunto?"'
+          subprocess.run([sys.executable, "-c", code, d + "/pacote", q], check=True)
+          '@
+          $f = "$env:RUNNER_TEMP\onnx_sem_torch.py"
+          ($py -split "`n" | ForEach-Object { $_ -replace '^          ', '' }) -join "`n" | Set-Content -Encoding utf8 $f
+          python $f
+          python -c "import sys; sys.modules['torch']=None; import djorge, djorge.server, djorge.runtime.semantic, djorge.runtime.onnx_backend, djorge_local.models, djorge_local.leveza, djorge_local.otimizar; print('imports sem torch: ok')"
       - name: Voz SAPI (fala real no Windows)
         shell: pwsh
         run: |
@@ -36,6 +58,11 @@ jobs:
         env:
           CI: "1"
         run: build_windows.bat
+      - name: O pacote não traz PyTorch
+        shell: pwsh
+        run: |
+          if (Test-Path "dist\Djorge\_internal\torch") { Write-Error "torch foi empacotado"; exit 1 }
+          "tamanho do pacote (MB): " + [math]::Round(((Get-ChildItem -Recurse dist\Djorge | Measure-Object Length -Sum).Sum / 1MB), 1)
       - name: Abrir o Djorge.exe empacotado (diagnóstico)
         shell: pwsh
         run: |

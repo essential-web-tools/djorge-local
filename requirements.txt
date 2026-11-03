@@ -1,9 +1,10 @@
 # Djorge v2 — somente Windows 10/11 x64, Python 3.11
-# núcleo do modelo (DOFL)
-# torch é OBRIGATÓRIO mesmo no caminho ONNX: djorge/runtime/onnx_backend.py e models.py importam torch.
-# Instale a versão só para CPU (menor):  pip install --index-url https://download.pytorch.org/whl/cpu torch
-torch>=2.2
-transformers>=4.51
+# núcleo do modelo (DOFL): ONNX Runtime int8 na CPU + cabeças de decisão em numpy. SEM PyTorch.
+# O PyTorch é OPCIONAL e só serve para CONVERTER um artefato de treino (sem onnx/) em pacote ONNX
+# (djorge_local/otimizar.py) ou rodar em PyTorch. Para isso, à parte (não vai no instalador):
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+#   pip install onnx onnxscript
+transformers>=4.51             # só o tokenizador (funciona sem torch)
 safetensors
 tokenizers
 numpy

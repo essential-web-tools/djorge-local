@@ -16,13 +16,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
-import torch
 
 from ..errors import DjorgeError
-from ..model import lora
 from ..model.serialize import Serializer
 from ..model.spans import decode
-from ..model.djorge_model import DjorgeModel
 from .calibration import CalibrationTable, sigmoid, softmax
 from .result import Match, MatchSet, choice_confidence, norm_entropy, score_confidence
 from .structure import negation_in_scope, proper_noun_guard, quantity_before
@@ -41,8 +38,37 @@ class SemReq:
     threshold: float = 0.5
 
 
+def _np(x):
+    """Readout -> numpy (torch tensor or numpy array)."""
+    if isinstance(x, np.ndarray):
+        return x
+    if hasattr(x, "detach"):
+        return x.detach().float().cpu().numpy()
+    return np.asarray(x)
+
+
+class _Inference:
+    """torch.inference_mode() only when the model is a torch module (the ONNX/numpy path never imports torch)."""
+
+    def __init__(self, model):
+        self.cm = None
+        if not getattr(model, "is_numpy", False):
+            import torch
+            self.cm = torch.inference_mode()
+
+    def __enter__(self):
+        if self.cm is not None:
+            self.cm.__enter__()
+
+    def __exit__(self, *a):
+        if self.cm is not None:
+            return self.cm.__exit__(*a)
+
+
 class SemanticEngine:
-    def __init__(self, model: DjorgeModel, tokenizer, calibration: Optional[CalibrationTable] = None,
+    """Torch is imported lazily: a local ONNX package (onnx/encoder.*.onnx + numpy heads) runs without PyTorch."""
+
+    def __init__(self, model, tokenizer, calibration: Optional[CalibrationTable] = None,
                  metadata: Optional[dict] = None, device: str = "cpu", max_tokens: int = 512, stride: int = 384,
                  batch_size: int = 16, prune: float = 0.05, option_permutations: int = 1):
         self.model = model.to(device).eval()
@@ -59,7 +85,6 @@ class SemanticEngine:
     # ---------------------------------------------------------------- loading
     @classmethod
     def from_artifact(cls, path: str, device: str = "auto", dtype: str = "auto", quant: str = None, **kw) -> "SemanticEngine":
-        from ..model.backbone import load_backbone, pick_device, tiny_qwen3
         meta = json.load(open(os.path.join(path, "metadata", "djorge.json"), encoding="utf-8"))
         mc = meta["model_config"]
         want_onnx = kw.pop("onnx", None) or os.environ.get("DJORGE_ONNX", "")
@@ -67,14 +92,15 @@ class SemanticEngine:
             from .onnx_backend import OnnxEncoder, build_model_without_backbone, onnx_file_for
             f = onnx_file_for(path, "fp16" if want_onnx == "fp16" else ("fp32" if want_onnx == "fp32" else "int8"))
             if f:
-                from transformers import AutoTokenizer
-                tdir = next((os.path.join(path, d) for d in ("tokenizer", "backbone") if
-                             os.path.exists(os.path.join(path, d, "tokenizer_config.json"))), None)
-                tok = AutoTokenizer.from_pretrained(tdir)
-                model = build_model_without_backbone(path, meta)
+                from .onnx_backend import load_numpy_model, load_tokenizer
+                tok = load_tokenizer(path)
                 prov = [p for p in os.environ.get("DJORGE_ONNX_PROVIDERS", "").split(",") if p] or None
                 enc = OnnxEncoder(f, prov, int(os.environ.get("DJORGE_THREADS", "0") or 0))
-                model.encode = enc
+                if os.environ.get("DJORGE_ONNX_TORCH_HEADS", "0") == "1":     # old path (heads in PyTorch)
+                    model = build_model_without_backbone(path, meta)
+                    model.encode = enc
+                else:
+                    model = load_numpy_model(path, meta, enc)
                 meta["onnx"] = {"file": os.path.relpath(f, path), "provider": enc.provider}
                 for k in ("linear_int8", "prune_vocab", "embed_int8"):
                     kw.pop(k, None)
@@ -88,6 +114,14 @@ class SemanticEngine:
                 from .refcal import Conformal
                 eng.conformal = Conformal.load(path)
                 return eng
+        try:
+            import torch  # noqa: F401  (PyTorch path)
+        except ImportError:
+            raise DjorgeError("MODEL_ERROR", "este modelo precisa do PyTorch, que não está instalado; "
+                              "use o pacote ONNX (onnx/encoder.int8.onnx)") from None
+        from ..model import lora  # noqa: F401
+        from ..model.backbone import load_backbone, pick_device, tiny_qwen3
+        from ..model.djorge_model import DjorgeModel
         device = pick_device(device)
         if meta.get("backbone_kind") == "tiny":
             from transformers import PreTrainedTokenizerFast
@@ -117,6 +151,7 @@ class SemanticEngine:
         if (os.environ.get("DJORGE_LINEAR_INT8", "0") == "1" or _li8) and device == "cpu":
             # CPU serving: int8 weights for every Linear of the backbone (dynamic activation quantization).
             # ~4x less weight memory vs fp32 and faster matmuls on AVX2/AVX512-VNNI and ARM dot-product CPUs.
+            import torch
             import torch.nn as _nn
             model.backbone.float()
             # per-CHANNEL weight scales (one per output row): far smaller error than one scale per matrix, which hurt
@@ -153,7 +188,10 @@ class SemanticEngine:
         """Load a tenant adapter once (by name). spec = {name, path, alpha_over_r}."""
         if spec["name"] in getattr(self, "_loaded_adapters", set()):
             return
+        if getattr(self.model, "is_numpy", False):
+            raise DjorgeError("INVALID_REQUEST", "especialistas LoRA não funcionam no pacote ONNX")
         from safetensors.torch import load_file
+        from ..model import lora
         with self.lock:
             lora.load_adapter(self.model.backbone, spec["name"], load_file(spec["path"]), spec["alpha_over_r"])
             self._loaded_adapters = getattr(self, "_loaded_adapters", set()) | {spec["name"]}
@@ -169,8 +207,11 @@ class SemanticEngine:
             return self.ser.rows("NOUL", r.source, ask=r.options[0])
         return self.ser.rows(r.kind, r.source, ask=r.ask, options=texts)
 
-    @torch.inference_mode()
     def run(self, reqs: List[SemReq], tenant_adapter: Optional[str] = None, timings: Optional[dict] = None):
+        with _Inference(self.model):
+            return self._run(reqs, tenant_adapter, timings)
+
+    def _run(self, reqs: List[SemReq], tenant_adapter: Optional[str] = None, timings: Optional[dict] = None):
         t = timings if timings is not None else {}
         t0 = time.perf_counter()
         plan = []                                          # (req_idx, perm, row)
@@ -190,7 +231,10 @@ class SemanticEngine:
         t1 = time.perf_counter()
         with self.lock:
             names = ["djorge"] + ([tenant_adapter] if tenant_adapter else [])
-            lora.set_active(self.model.backbone, names)
+            lora = None
+            if not getattr(self.model, "is_numpy", False):
+                from ..model import lora
+                lora.set_active(self.model.backbone, names)
             try:
                 order = sorted(range(len(plan)), key=lambda i: len(plan[i][2].ids))   # length bucketing
                 for c in range(0, len(order), self.batch_size):
@@ -205,7 +249,8 @@ class SemanticEngine:
                     for j, i in enumerate(idx):
                         outs[i] = self._readout(X, j, rows[j], tl[j], reqs[plan[i][0]].kind)
             finally:
-                lora.set_active(self.model.backbone, ["djorge"])
+                if lora is not None:
+                    lora.set_active(self.model.backbone, ["djorge"])
         t["forward_ms"] = t.get("forward_ms", 0) + (time.perf_counter() - t1) * 1e3
         t2 = time.perf_counter()
         results = [self._finish(qi, r, [(plan[i][1], plan[i][2], outs[i]) for i in range(len(plan)) if plan[i][0] == qi])
@@ -216,12 +261,12 @@ class SemanticEngine:
     def _readout(self, X, j, row, tl, kind):
         m = self.model
         if kind in ("resolve", "answer"):
-            return tl.float().cpu().numpy()
+            return _np(tl)
         if kind == "NOUL":
             return float(m.binary_logit(X, j, row))
         if kind == "SCORE":
-            return m.ordinal_logprobs(X, j, row).float().cpu().numpy()
-        return m.slot_logits(X, j, row).float().cpu().numpy()
+            return _np(m.ordinal_logprobs(X, j, row))
+        return _np(m.slot_logits(X, j, row))
 
     def _finish(self, qi, r: SemReq, parts):
         if r.kind in ("resolve", "answer"):

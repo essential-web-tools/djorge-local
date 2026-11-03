@@ -7,9 +7,10 @@ where py >nul 2>nul || (echo Instale o Python 3.11 x64 de python.org & pause & e
 if not exist .venv-build (py -3.11 -m venv .venv-build || (echo Falha ao criar o ambiente & pause & exit /b 1))
 call .venv-build\Scripts\activate
 python -m pip install -q --upgrade pip
-REM torch so para CPU (o runtime ONNX ainda importa torch): bem menor que o pacote com CUDA
-pip install -q --index-url https://download.pytorch.org/whl/cpu torch || goto :erro
+REM SEM torch: o modelo roda em ONNX Runtime (int8) com as cabecas em numpy. Se houver torch neste ambiente,
+REM o .spec o exclui do pacote mesmo assim (o instalador fica centenas de MB menor).
 pip install -q -r requirements.txt pyinstaller || goto :erro
+python -c "import sys; sys.modules['torch']=None; import djorge, djorge.runtime.semantic, djorge.runtime.onnx_backend, djorge_local.models, djorge_local.leveza" || (echo O caminho ONNX importou torch & goto :erro)
 if exist build rmdir /s /q build
 if exist "dist\Djorge" rmdir /s /q "dist\Djorge"
 python -m PyInstaller djorge-local.spec --noconfirm || goto :erro

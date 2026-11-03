@@ -1,8 +1,10 @@
 """Ponto de entrada do executável (Windows 10/11 x64): janela nativa (pywebview + WebView2) com a interface.
 
 - Moldura nativa do Windows (título "Djorge"), 1280x820, mínimo 960x640, ícone do app.
-- Bandeja (pystray): fechar a janela deixa o Djorge rodando; menu Abrir · Pausar integrações ·
-  Recarregar árvores · Abrir pasta de dados · Sair.
+- Bandeja (pystray): fechar a janela deixa o Djorge rodando (notificações continuam); menu Abrir ·
+  Pausar/Retomar Djorge · Liberar memória · Sair (encerra de verdade).
+- Modo leve (leveza.py): inicia com o Windows (padrão ligado) minimizado na bandeja (`--minimizado`),
+  prioridade baixa quando ocioso, modelo descarregado após N minutos sem uso.
 - Instância única (mutex nomeado): uma segunda abertura só mostra a janela que já existe.
 - Splash do PyInstaller fechado quando o servidor responde; logs em %LOCALAPPDATA%/Djorge/logs.
 - O modelo NÃO vem no instalador: a janela abre sem ele e o card do modelo oferece o download.
@@ -273,7 +275,21 @@ def economy_mode(cfg):
 
 
 # --------------------------------------------------------------------------- janela --
-def _window(url, cfg, app=None):
+def _tray_disponivel() -> bool:
+    try:
+        import pystray  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _sair(app):
+    """Sair da bandeja: para tudo e encerra o processo (não fica nada rodando)."""
+    from . import leveza
+    leveza.encerrar(app, 0)
+
+
+def _window(url, cfg, app=None, minimizado=False):
     """Roda a janela nativa. Devolve False se não houver WebView2/pywebview (aí usamos o navegador)."""
     import logging
     if not _webview2_ok():
@@ -287,12 +303,19 @@ def _window(url, cfg, app=None):
         logging.warning("pywebview indisponível (%s): usando o navegador", e)
         return False
     _set_app_id()
+    oculto = bool(minimizado) and app is not None and _tray_disponivel()
     win = webview.create_window(TITLE, url, width=SIZE[0], height=SIZE[1], min_size=MIN_SIZE,
-                                js_api=WindowApi(), background_color="#F6F3EE", text_select=True)
+                                js_api=WindowApi(), background_color="#F6F3EE", text_select=True, hidden=oculto)
 
     def show():
         win.show(); win.restore()
-    tray = _tray(app, cfg, show=show, quit_=lambda: os._exit(0)) if app is not None else None
+    tray = _tray(app, cfg, show=show, quit_=lambda: _sair(app)) if app is not None else None
+    if tray is None and oculto:
+        oculto = False
+        win.show()
+    if oculto:
+        _close_splash()
+        logging.info("iniciado minimizado na bandeja")
     if tray is not None:
         _listen_show(show)
 
@@ -308,6 +331,8 @@ def _window(url, cfg, app=None):
     win.events.shown += lambda: (shown.set(), _close_splash(), logging.info("janela aberta"))
 
     def watchdog():                                       # a janela não apareceu -> navegador
+        if oculto:
+            return
         if not shown.wait(30):
             logging.error("a janela não abriu em 30 s: abrindo no navegador")
             _close_splash()
@@ -324,54 +349,73 @@ def _window(url, cfg, app=None):
     os._exit(0)
 
 
+_TRAY = None
+
+
 def _tray(app, cfg, show, quit_):
+    """Bandeja: Abrir · Pausar/Retomar Djorge · Liberar memória · Sair. Uma só por processo."""
+    global _TRAY
+    if _TRAY is not None:
+        return _TRAY
     try:
         import pystray
         from PIL import Image
     except Exception:
         return None
-    paused = {"v": False}
+    from . import leveza
 
     def toggle(icon, item):
-        paused["v"] = not paused["v"]
-        integ = getattr(app, "integrations", None)
         try:
-            if paused["v"]:
-                for c in getattr(app, "conns", {}).values():
-                    c.stop()
-                app.conns = {}
-                if integ is not None and hasattr(integ, "pause"):
-                    integ.pause()
+            if leveza.pausado(app):
+                leveza.retomar(app)
+                icon.notify("Djorge retomado.", TITLE)
             else:
-                from . import connectors as C
-                app.conns = C.start_all(cfg)
-                if integ is not None and hasattr(integ, "start_background"):
-                    integ.start_background()
+                r = leveza.pausar(app)
+                icon.notify(f"Djorge pausado. Usando {r['memoria_mb']:.0f} MB.", TITLE)
         except Exception as e:
             icon.notify(f"Erro: {e}", TITLE)
 
-    def reload(icon, item):
+    def liberar(icon, item):
         try:
-            n = app.reload_trees(); icon.notify(f"{n} árvore(s) carregada(s)", TITLE)
+            r = leveza.liberar_memoria(app, 0)
+            icon.notify(f"Memória liberada: {r['liberado_mb']:.0f} MB (agora {r['depois_mb']:.0f} MB).", TITLE)
         except Exception as e:
-            icon.notify(f"Erro nas árvores: {e}", TITLE)
+            icon.notify(f"Erro: {e}", TITLE)
+
+    def sair(icon, item):
+        try:
+            icon.stop()
+        finally:
+            quit_()
 
     menu = pystray.Menu(
-        pystray.MenuItem("Abrir Djorge", lambda i, it: show(), default=True),
-        pystray.MenuItem(lambda it: "Retomar integrações" if paused["v"] else "Pausar integrações", toggle),
-        pystray.MenuItem("Recarregar árvores", reload),
-        pystray.MenuItem("Abrir pasta de dados", lambda i, it: _open_folder(str(data_dir()))),
+        pystray.MenuItem("Abrir", lambda i, it: show(), default=True),
+        pystray.MenuItem(lambda it: "Retomar Djorge" if leveza.pausado(app) else "Pausar Djorge", toggle),
+        pystray.MenuItem("Liberar memória", liberar),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Sair", lambda i, it: (i.stop(), quit_())))
+        pystray.MenuItem("Sair", sair))
     icon = pystray.Icon("djorge", Image.open(_icon_path()), TITLE, menu)
     try:
         icon.run_detached()
     except Exception:
         threading.Thread(target=icon.run, daemon=True).start()
+    _TRAY = icon
     return icon
 
 
-def main():
+def _modo_leve(app):
+    """Vigia de ociosidade (prioridade baixa, descarregar modelo) e início com o Windows (1ª execução)."""
+    import logging
+    from . import leveza
+    try:
+        leveza.aplicar_inicio()
+    except Exception as e:
+        logging.warning("início com o Windows: %s", e)
+    app.vigia = leveza.Vigia(app).start()
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     from . import config as CF
     _setup_log()
     import logging
@@ -411,6 +455,12 @@ def main():
                "Mude a porta em config.yaml ou feche o outro programa.")
     app.start()
     _wait_server(cfg)
+    try:
+        _modo_leve(app)
+    except Exception:
+        logging.exception("modo leve")
+    from . import leveza
+    minimizado = "--minimizado" in argv or "--minimized" in argv
     # Sem modelo instalado não há nada a carregar: a interface mostra o card para baixar.
     try:
         from .model_download import ModelDownloader
@@ -420,11 +470,13 @@ def main():
             logging.info("modelo ausente: aguardando download pela interface")
     except Exception:
         threading.Timer(1.5, app.models.preload).start()
-    if _window(url, cfg, app):
+    if _window(url, cfg, app, minimizado=minimizado):
         return
     _close_splash()
     print("Janela nativa indisponível: abrindo no navegador. Painel:", url)
-    webbrowser.open(url)
+    if not minimizado:
+        webbrowser.open(url)
+    _tray(app, cfg, show=lambda: webbrowser.open(url), quit_=lambda: leveza.encerrar(app, 0))
     threading.Event().wait()
 
 
