@@ -108,7 +108,8 @@ class Notifications(Base):
                 except Exception:
                     continue
                 if self._ok_app(app) and parts:
-                    emit("notifications", "\n".join(parts[1:]) or parts[0], title=parts[0], app=app)
+                    emit("notifications", "\n".join(parts[1:]) or parts[0], title=parts[0], app=app,
+                         notif_win_id=n.id, sender=parts[0] if len(parts) > 1 else "")
             if len(seen) > 5000:
                 seen = set(list(seen)[-1000:])
             self.sleep(self.conf.get("poll_s", 2))
@@ -329,3 +330,14 @@ def start_all(cfg) -> dict:
             c.start()
             running[name] = c
     return running
+
+
+def stop_all(running: dict) -> int:
+    """Para os conectores em execução (pausar o app / trocar configurações)."""
+    n = 0
+    for c in list((running or {}).values()):
+        try:
+            c.stop(); n += 1
+        except Exception:
+            pass
+    return n

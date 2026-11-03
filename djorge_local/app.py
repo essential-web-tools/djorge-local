@@ -44,7 +44,8 @@ class History:
         _home().mkdir(parents=True, exist_ok=True)
 
     def add(self, rec: dict):
-        rec = dict(rec, t=time.strftime("%Y-%m-%dT%H:%M:%S"))
+        import uuid as _uuid
+        rec = dict(rec, t=time.strftime("%Y-%m-%dT%H:%M:%S"), id=rec.get("id") or _uuid.uuid4().hex[:10])
         ev = rec.get("event")
         if ev:
             ev = dict(ev)
@@ -65,6 +66,28 @@ class History:
     def last(self, n=100):
         with self.lock:
             return list(self.items)[-n:][::-1]
+
+    def _rewrite(self):
+        with open(self.file, "w", encoding="utf-8") as f:
+            for rec in self.items:
+                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+
+    def clear(self, tudo: bool = False, antes_de: str = None, ids=None) -> int:
+        """Apaga tudo, o que for anterior a uma data (ISO, ex. 2026-11-01) ou os itens com estes ids."""
+        with self.lock:
+            n = len(self.items)
+            if tudo:
+                keep = []
+            elif antes_de:
+                keep = [r for r in self.items if str(r.get("t", "")) >= str(antes_de)]
+            elif ids:
+                ids = {str(i) for i in ids}
+                keep = [r for r in self.items if str(r.get("id")) not in ids]
+            else:
+                raise ValueError("diga o que apagar: tudo, antes_de ou ids")
+            self.items = collections.deque(keep, maxlen=self.items.maxlen)
+            self._rewrite()
+            return n - len(self.items)
 
 
 class App:
@@ -97,6 +120,27 @@ class App:
         self._load_service("treegraph", lambda: __import__("djorge_local.treegraph", fromlist=["x"]))
         self._load_service("model", lambda: __import__("djorge_local.model_download", fromlist=["x"])
                            .ModelDownloader(cfg, self.models, save=self.save_config))
+        self._load_service("secretario", lambda: __import__("djorge_local.secretario", fromlist=["x"]).Secretario(self))
+        self._streams: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+        self.pausado = False
+
+    @property
+    def secretario(self):
+        return self._svc.get("secretario")
+
+    @property
+    def notificacoes(self):
+        s = self._svc.get("secretario")
+        return s.store if s is not None else None
+
+    def integrations_connected(self) -> bool:
+        it = self.integrations
+        if it is None:
+            return False
+        try:
+            return any(i.get("connected") for i in it.list())
+        except Exception:
+            return False
 
     def _load_service(self, name, make):
         try:
@@ -148,6 +192,8 @@ class App:
         raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "role") if f in v}
                          for k, v in self.cfg["models"].items()}
         raw.setdefault("api", {})["ports"] = dict(self.cfg["api"].get("ports") or {})
+        if self.cfg["api"].get("desligadas"):
+            raw["api"]["desligadas"] = list(self.cfg["api"]["desligadas"])
         raw["device"], raw["threads"] = self.cfg["device"], self.cfg["threads"]
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
@@ -272,6 +318,14 @@ class App:
             except Exception as e:
                 out.append({"tree": t["name"], "error": f"{type(e).__name__}: {e}"})
         rec = {"type": "event", "event": ev, "runs": out}
+        sec = self.secretario
+        if sec is not None and not ev.get("skipped"):
+            try:
+                r = sec.processar(ev)
+                if r is not None:
+                    rec["secretario"] = r
+            except Exception as e:
+                rec["secretario"] = {"error": f"{type(e).__name__}: {e}"}
         if not ev.get("skipped"):
             self.hist.add(rec)
         return rec
@@ -301,11 +355,306 @@ class App:
             self.sentinel_port = self.sentinel.start()
         for _ in range(max(1, workers)):
             threading.Thread(target=self.worker, daemon=True).start()
-        if self.integrations is not None:
+        if self.integrations is not None and self.integrations_connected():   # só se houver algo conectado
             try:
                 self.integrations.start_background()
             except Exception as e:
                 self._svc_err["integrations_background"] = f"{type(e).__name__}: {e}"
+        if self.secretario is not None:
+            self.secretario.start()                     # não faz nada se o secretário estiver desligado
+
+    # ------------------------------------------------------------------ leveza (pausar / memória) --
+    def _leveza(self, name):
+        try:
+            mod = __import__("djorge_local.leveza", fromlist=["x"])
+        except Exception:
+            return None
+        return getattr(mod, name, None)
+
+    def pausar(self) -> dict:
+        fn = self._leveza("pausar")
+        if fn is not None:
+            try:
+                r = fn(self)
+                self.pausado = True
+                return r if isinstance(r, dict) else {"ok": True, "pausado": True}
+            except Exception as e:
+                self._svc_err["leveza"] = f"{type(e).__name__}: {e}"
+        parados = C.stop_all(self.conns)
+        self.conns = {}
+        if self.integrations is not None:
+            try:
+                self.integrations.stop_background()
+            except Exception:
+                pass
+        if self.secretario is not None:
+            self.secretario.stop()
+        desc = list(self.models.loaded())
+        for n in desc:
+            self.models.unload(n)
+        self.pausado = True
+        return {"ok": True, "pausado": True, "conectores_parados": parados, "modelos_descarregados": desc}
+
+    def retomar(self) -> dict:
+        fn = self._leveza("retomar")
+        if fn is not None:
+            try:
+                r = fn(self)
+                self.pausado = False
+                return r if isinstance(r, dict) else {"ok": True, "pausado": False}
+            except Exception as e:
+                self._svc_err["leveza"] = f"{type(e).__name__}: {e}"
+        if not self.conns:
+            self.conns = C.start_all(self.cfg)
+        if self.integrations is not None and self.integrations_connected():
+            try:
+                ev = getattr(self.integrations, "_stop", None)
+                if ev is not None and not (getattr(self.integrations, "_bg", None) and self.integrations._bg.is_alive()):
+                    ev.clear()                          # depois de stop_background o evento fica ligado
+                self.integrations.start_background()
+            except Exception:
+                pass
+        if self.secretario is not None:
+            self.secretario.start()
+        self.models.preload()
+        self.pausado = False
+        return {"ok": True, "pausado": False, "conectores": sorted(self.conns)}
+
+    def liberar_memoria(self) -> dict:
+        fn = self._leveza("liberar_memoria")
+        if fn is not None:
+            try:
+                r = fn(self)
+                if isinstance(r, dict):
+                    return dict(r, ok=True)
+            except Exception as e:
+                self._svc_err["leveza"] = f"{type(e).__name__}: {e}"
+        import gc
+        antes = rss_mb()
+        desc = list(self.models.loaded())
+        for n in desc:
+            self.models.unload(n)
+        gc.collect()
+        return {"ok": True, "modelos_descarregados": desc, "memoria_antes_mb": antes, "memoria_mb": rss_mb()}
+
+    def recursos(self) -> dict:
+        fn = self._leveza("recursos")
+        if fn is not None:
+            try:
+                r = fn(self)
+                if isinstance(r, dict):
+                    return r
+            except Exception as e:
+                self._svc_err["leveza"] = f"{type(e).__name__}: {e}"
+        it = self.integrations
+        sec = self.secretario
+        return {"pausado": self.pausado, "memoria_mb": rss_mb(), "threads": threading.active_count(),
+                "conectores": {k: c.status for k, c in self.conns.items()},
+                "integracoes_em_segundo_plano": bool(it is not None and getattr(it, "_bg", None) is not None
+                                                     and it._bg.is_alive() and not getattr(it, "_stop", threading.Event()).is_set()),
+                "secretario": bool(sec is not None and sec.rodando()),
+                "modelos_carregados": self.models.loaded(), "apis": dict(getattr(self.models, "apis", {}))}
+
+    # ------------------------------------------------------------------ API local por modelo --
+    def local_api(self) -> list:
+        a, tok = self.cfg["api"], self.cfg["server"]["token"]
+        out = []
+        for name, m in self.cfg["models"].items():
+            url = self.models.apis.get(name)
+            out.append({"modelo": name, "porta": (a.get("ports") or {}).get(name), "ativa": bool(url), "url": url,
+                        "carregado": name in self.models.loaded(), "servico": bool(m.get("service")),
+                        "token_dica": (tok[:4] + "…") if tok else "",
+                        "exemplo": (f"curl -s {url or 'http://127.0.0.1:' + str((a.get('ports') or {}).get(name))}"
+                                    f"/v1/classify -H \"Authorization: Bearer SEU_TOKEN\" -H \"Content-Type: "
+                                    f"application/json\" -d '{{\"text\":\"O boleto vence amanhã\",\"labels\":"
+                                    f"[\"cobrança\",\"outro\"]}}'")})
+        return out
+
+    def set_local_api(self, b: dict) -> dict:
+        name = str(b.get("modelo") or "")
+        if name not in self.cfg["models"]:
+            raise KeyError(f"modelo desconhecido: {name}")
+        a = self.cfg["api"]
+        ports = a.setdefault("ports", {})
+        if b.get("porta") not in (None, ""):
+            p = int(b["porta"])
+            if not 1024 <= p <= 65535:
+                raise ValueError("porta: entre 1024 e 65535")
+            if p != ports.get(name):
+                ports[name] = p
+                self._stop_api(name)                    # troca de porta: reinicia
+        off = a.setdefault("desligadas", [])
+        aviso = None
+        if "ativa" in b:
+            if b["ativa"]:
+                if name in off:
+                    off.remove(name)
+                a["enabled"] = True
+                if name in self.models.loaded():
+                    if name not in self.models.apis:
+                        st = getattr(self.models, "start_api", None)   # F: Models.start_api(name, port)
+                        if callable(st):
+                            st(name, ports.get(name))
+                        else:
+                            self.models._start_api(name, self.models.get(name))
+                else:
+                    aviso = "A API liga quando o modelo carregar."
+                    if not self.cfg["models"][name].get("service"):
+                        self.load_async(name)
+            else:
+                if name not in off:
+                    off.append(name)
+                self._stop_api(name)
+        try:
+            self.save_config()
+        except Exception:
+            pass
+        r = next(x for x in self.local_api() if x["modelo"] == name)
+        if aviso:
+            r["aviso"] = aviso
+        return r
+
+    def _stop_api(self, name):
+        fn = getattr(self.models, "stop_api", None)       # F pode expor Models.stop_api(name)
+        if callable(fn):
+            return fn(name)
+        srv = getattr(self.models, "_servers", {}).pop(name, None)
+        if srv is not None:
+            threading.Thread(target=srv.shutdown, daemon=True).start()
+            try:
+                srv.server_close()
+            except Exception:
+                pass
+        self.models.apis.pop(name, None)
+
+    # ------------------------------------------------------------------ comando com etapas --
+    def command_stream(self, text: str, context=None) -> dict:
+        cmd = self.command
+        fn = getattr(cmd, "run_stream", None)
+        if callable(fn):                                 # R implementa as etapas de verdade
+            return fn(text, context)
+        import inspect
+        try:
+            if "stream" in inspect.signature(cmd.run).parameters and callable(getattr(cmd, "etapas", None)):
+                return cmd.run(text, context, stream=True)
+        except (TypeError, ValueError):
+            pass
+        import uuid as _uuid
+        sid = _uuid.uuid4().hex[:12]
+        st = {"etapas": [{"t": 0, "texto": "Lendo o pedido…", "estado": "agora"}], "pronto": False}
+        with self.hist.lock:
+            self._streams[sid] = st
+            while len(self._streams) > 100:
+                self._streams.popitem(last=False)
+        t0 = time.perf_counter()
+
+        def go():
+            try:
+                out = cmd.run(text, context)
+                ms = int((time.perf_counter() - t0) * 1000)
+                st["etapas"][0]["estado"] = "ok"
+                ferr = {"calcular": "Fazendo a conta…", "datas_horas": "Achando data e hora…",
+                        "proximas_tarefas": "Olhando a agenda…", "cards": "Usando a ferramenta Cards…",
+                        "listas": "Usando a ferramenta Listas…", "bilhete": "Preparando a mensagem…",
+                        "buscar": "Buscando…", "regra": "Montando a regra…", "web": "Buscando na web…",
+                        "abrir": "Preparando para abrir…"}.get(out.get("tool"))
+                if ferr:
+                    st["etapas"].append({"t": ms, "texto": ferr, "estado": "ok"})
+                st["resultado"] = out
+            except ModeloAusente as e:
+                st["etapas"][-1]["estado"] = "erro"
+                st["resultado"] = {"error": "modelo_ausente", "tool": str(e),
+                                   "dicas": ["Baixe o modelo no card do modelo para usar isso."]}
+            except Exception as e:
+                st["etapas"][-1]["estado"] = "erro"
+                st["resultado"] = {"error": f"{type(e).__name__}: {e}",
+                                   "dicas": ["Tente: 'marca dentista dia 20 às 9h'"]}
+            st["pronto"] = True
+        threading.Thread(target=go, daemon=True, name="comando").start()
+        return {"id": sid, "stream": True}
+
+    def command_etapas(self, sid: str):
+        if sid in self._streams:
+            return self._streams[sid]
+        fn = getattr(self.command, "etapas", None)
+        if callable(fn):
+            try:
+                return fn(sid)
+            except KeyError:
+                return None
+        return None
+
+    # ------------------------------------------------------------------ início --
+    def inicio(self) -> dict:
+        import datetime as _dt
+        agora = _dt.datetime.now()
+        hoje = agora.date().isoformat()
+        cards = [c for c in self.cards.all() if not c.get("done") and c.get("column") != "feito"]
+        tarefas = [c for c in cards if c.get("kind") in ("tarefa", "lembrete")]
+        tarefas.sort(key=lambda c: ((c.get("due") or "9999")[:16], -int(c.get("priority") or 0)))
+        relevantes = [c for c in tarefas if (c.get("due") or "9999")[:10] <= hoje or int(c.get("priority") or 0) >= 2
+                      or c.get("column") in ("hoje", "fazendo")] or tarefas
+        try:
+            eventos = self.cards.agenda(agora.strftime("%Y-%m-%dT%H:%M"),
+                                        (agora + _dt.timedelta(days=7)).strftime("%Y-%m-%dT23:59"))
+        except Exception:
+            eventos = []
+        eventos = [c for c in eventos if c.get("kind") == "evento" or c.get("start")][:6]
+        st = self.notificacoes
+        recentes = st.list(limit=8) if st is not None else []
+        importantes = [n for n in (st.list(limit=200) if st is not None else [])
+                       if n["prioridade"] in ("alta", "urgente") and not n["lida"]][:6]
+        msgs = [c for c in cards if c.get("kind") == "mensagem"][:6 - len(importantes)] if len(importantes) < 6 else []
+        sec = self.secretario
+        n_auto = len(sec.automacoes.ativas()) if sec is not None else 0
+        from .secretario import data_fmt
+        partes = []
+        hj = [c for c in tarefas if (c.get("due") or "")[:10] == hoje or c.get("column") == "hoje"]
+        if hj:
+            partes.append(f"{len(hj)} {'tarefa' if len(hj) == 1 else 'tarefas'} para hoje")
+        if importantes:
+            partes.append(f"{len(importantes)} {'mensagem importante' if len(importantes) == 1 else 'mensagens importantes'}")
+        frase = ("Você tem " + (" e ".join(partes)) + ".") if partes else "Nada urgente por aqui."
+        if eventos:
+            e = eventos[0]
+            ini = str(e.get("start") or e.get("due") or "")
+            frase += f" Próximo compromisso: {e['title']}, {data_fmt(ini[:10], ini[11:16] or None)}."
+        return {"tarefas_relevantes": relevantes[:6], "mensagens_importantes": importantes,
+                "mensagens_cards": msgs, "notificacoes_recentes": recentes, "proximos_eventos": eventos,
+                "automacoes": n_auto, "resumo_frase": frase,
+                "secretario": {"ativo": bool(sec and sec.conf.get("ativo")), "modo": sec.conf.get("modo") if sec else None}}
+
+
+def rss_mb():
+    """Memória residente do processo em MB (psutil, /proc ou API do Windows); None se não der para saber."""
+    try:
+        import psutil
+        return round(psutil.Process().memory_info().rss / 2 ** 20, 1)
+    except Exception:
+        pass
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except Exception:
+        pass
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + \
+                       [(n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                                                       "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                                                       "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+        c = PMC(); c.cb = ctypes.sizeof(PMC)
+        h = ctypes.windll.kernel32.GetCurrentProcess()           # type: ignore[attr-defined]
+        if ctypes.windll.psapi.GetProcessMemoryInfo(h, ctypes.byref(c), c.cb):   # type: ignore[attr-defined]
+            return round(c.WorkingSetSize / 2 ** 20, 1)
+    except Exception:
+        pass
+    return None
 
 
 def _q1(q, k, default=None):
@@ -339,7 +688,208 @@ def v2_get(app: App, path: str, q: dict):
     if path == "/api/trees/graph":
         tg = app.service("treegraph")
         return 200, {"graphs": [dict(tg.tree_to_graph(t), name=t["name"]) for t in app.trees]}
+    r = v21_get(app, path, q)
+    if r is not None:
+        return r
     return None
+
+
+def _sec(app):
+    return app.service("secretario")
+
+
+def v21_get(app: App, path: str, q: dict):
+    """Rotas GET da rodada 2 (secretário, automações, notificações, contatos, início, web, leveza, API local)."""
+    if path == "/api/inicio":
+        return 200, app.inicio()
+    if path == "/api/automacoes":
+        return 200, {"automacoes": _sec(app).automacoes.listar()}
+    if path == "/api/automacoes/modelos":
+        return 200, {"modelos": _sec(app).automacoes.modelos()}
+    if path.startswith("/api/automacoes/") and path.endswith("/arvore"):
+        aid = path.split("/")[3]
+        t = _sec(app).automacoes.arvore(aid)
+        if t is None:
+            return 404, {"error": "automação não encontrada"}
+        out = {"tree": t}
+        tg = app._svc.get("treegraph")
+        if tg is not None:
+            try:
+                out["graph"] = tg.tree_to_graph(t)
+            except Exception:
+                pass
+        return 200, out
+    if path.startswith("/api/automacoes/"):
+        a = _sec(app).automacoes.get(path.split("/")[3])
+        return (200, a) if a else (404, {"error": "automação não encontrada"})
+    if path == "/api/notificacoes":
+        st = _sec(app).store
+        return 200, {"notificacoes": st.list(etiqueta=_q1(q, "etiqueta"), q=_q1(q, "q"), app=_q1(q, "app"),
+                                             lida=_q1(q, "lida"), fonte=_q1(q, "fonte"),
+                                             arquivada=_q1(q, "arquivada", "0"), limit=int(_q1(q, "n", "200")))}
+    if path == "/api/notificacoes/etiquetas":
+        return 200, {"etiquetas": _sec(app).store.etiquetas()}
+    if path.startswith("/api/notificacoes/"):
+        n = _sec(app).store.get(path.split("/")[3])
+        return (200, n) if n else (404, {"error": "notificação não encontrada"})
+    if path == "/api/secretario":
+        s = _sec(app)
+        return 200, dict(s.config(), resumo=s.resumo_diario())
+    if path == "/api/secretario/resumo":
+        return 200, _sec(app).resumo_diario()
+    if path == "/api/contatos":
+        from .contatos import listar
+        return 200, {"contatos": listar(app, _q1(q, "q", "") or "", int(_q1(q, "n", "50")))}
+    if path == "/api/local_api":
+        return 200, {"apis": app.local_api()}
+    if path == "/api/app/recursos":
+        return 200, app.recursos()
+    if path == "/api/toasts":
+        from . import toasts
+        return 200, toasts.status()
+    if path == "/api/web":
+        qq = (_q1(q, "q", "") or "").strip()
+        if not qq:
+            raise ValueError("escreva o que buscar na web")
+        try:
+            web = __import__("djorge_local.web", fromlist=["x"])
+        except Exception as e:
+            raise Unavailable(f"busca na web indisponível: {type(e).__name__}: {e}")
+        return 200, {"q": qq, "resultados": web.buscar_web(qq, n=int(_q1(q, "n", "6"))), "sai_do_computador": True}
+    if path.startswith("/api/command/") and path.endswith("/etapas"):
+        r = app.command_etapas(path.split("/")[3])
+        return (200, r) if r is not None else (404, {"error": "comando não encontrado"})
+    return None
+
+
+def _testar_automacao(app: App, a: dict, b: dict) -> dict:
+    from .automacoes import compilar, normalizar, resumo
+    sec = _sec(app)
+    a = normalizar(a)
+    tree = compilar(a)
+    ev = {"id": "testar", "source": b.get("fonte") or b.get("source") or "notifications",
+          "text": str(b.get("texto") or b.get("text") or ""), "title": str(b.get("titulo") or b.get("title") or ""),
+          "app": str(b.get("app") or ""), "sender": str(b.get("remetente") or b.get("sender") or ""),
+          "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    if not ev["text"].strip():
+        raise ValueError("escreva um texto de exemplo para testar")
+    tri = sec.triar(ev)
+    e = sec.enriquecer(ev, tri)
+    r = app.runner.run(tree, e, mode="testar")
+    from .tree import NOVAS_ACOES
+    acoes = [{k: v for k, v in s.items() if k not in ("node", "next", "ms")} for s in r["trail"]
+             if s.get("action") in NOVAS_ACOES]
+    frases = []
+    for x in acoes:
+        if x.get("card"):
+            frases.append(f"criaria o card “{x['card']['title']}”")
+        elif x["action"] == "notificar":
+            frases.append(f"mostraria o aviso “{x.get('titulo')}”")
+        elif x["action"] == "etiquetar":
+            frases.append(f"etiquetaria como “{x.get('etiqueta')}”")
+        elif x["action"] == "arquivar":
+            frases.append("arquivaria a mensagem")
+        elif x["action"] in ("abrir_app", "responder_sugestao"):
+            frases.append(f"prepararia {x.get('app', 'o app')} para você enviar")
+    frase = ("Com esse texto, eu " + ", ".join(frases) + ".") if frases else \
+        "Com esse texto, esta automação não faria nada (a condição não casou)."
+    campos = {k: e.get(k) for k in sec.CAMPOS_EV if e.get(k) not in (None, "", False)}
+    return {"casou": bool(acoes), "acoes": acoes, "frase": frase, "campos": campos, "resumo": resumo(a),
+            "triagem": {k: tri.get(k) for k in ("categoria", "prioridade", "nota", "motivos", "acoes")},
+            "trilha": [{k: v for k, v in s.items() if k in ("node", "answer", "probability", "engine", "action",
+                                                              "status")} for s in r["trail"]]}
+
+
+def v21_post(app: App, path: str, b: dict):
+    """Rotas POST da rodada 2."""
+    if path == "/api/automacoes":
+        A = _sec(app).automacoes
+        if b.get("modelo"):                              # instalar uma receita pronta
+            m = next((x for x in A.modelos() if x["id"] == b["modelo"]), None)
+            if m is None:
+                raise KeyError(f"receita desconhecida: {b['modelo']}")
+            d = {k: v for k, v in m.items() if k in ("nome", "quando", "entao", "ativa")}
+            for k, v in (b.get("ajustes") or {}).items():
+                if k in ("nome", "ativa"):
+                    d[k] = v
+                elif k == "quando":
+                    d["quando"] = dict(d["quando"], **v)
+            return 200, A.salvar(d)
+        return 200, A.salvar(b.get("automacao", b))
+    if path == "/api/automacoes/de_texto":
+        sec = _sec(app)
+        marcar = None
+        if app.has_model():
+            marcar = lambda t: app.rules.marcar(t)
+        r = de_texto_call(b.get("texto") or b.get("text") or "", marcar)
+        if b.get("salvar"):
+            r["automacao"] = sec.automacoes.salvar(r["automacao"])
+        try:
+            from .automacoes import compilar
+            r["arvore"] = compilar(r["automacao"])
+        except Exception:
+            pass
+        r["modelo"] = marcar is not None
+        return 200, r
+    if path.startswith("/api/automacoes/"):
+        parts = path.split("/")
+        if len(parts) != 5:
+            return None
+        aid, act = parts[3], parts[4]
+        A = _sec(app).automacoes
+        if act == "delete":
+            return 200, {"ok": A.apagar(aid)}
+        if act == "testar":
+            a = b.get("automacao") or A.get(aid) or next((m for m in A.modelos() if m["id"] == aid), None)
+            if a is None:
+                return 404, {"error": "automação não encontrada"}
+            return 200, _testar_automacao(app, a, b)
+        if act in ("ativar", "desativar"):
+            a = A.get(aid)
+            if a is None:
+                return 404, {"error": "automação não encontrada"}
+            return 200, A.salvar({"id": aid, "ativa": act == "ativar"})
+        return None
+    if path == "/api/notificacoes/limpar":
+        return 200, {"apagadas": _sec(app).store.limpar(b.get("antes_de"), b.get("ids"))}
+    if path.startswith("/api/notificacoes/"):
+        parts = path.split("/")
+        sec = _sec(app)
+        if len(parts) == 5 and parts[4] == "acao":
+            return 200, sec.acao(parts[3], str(b.get("acao") or ""), b)
+        if len(parts) == 4:
+            kw = {k: b[k] for k in ("lida", "etiqueta", "arquivada") if k in b}
+            if "etiqueta" in kw:
+                kw["etiqueta"] = str(kw["etiqueta"] or "").strip()[:40]
+            return 200, sec.store.update(parts[3], **kw)
+        return None
+    if path == "/api/secretario":
+        return 200, _sec(app).configurar(b.get("patch", b) if isinstance(b.get("patch"), dict) else b)
+    if path == "/api/abrir":                             # prepara e abre WhatsApp / navegador / e-mail
+        from .actions import abrir_app
+        return 200, abrir_app({k: b.get(k) for k in ("app", "para", "texto", "url", "assunto", "web")})
+    if path == "/api/history/clear":
+        return 200, {"apagados": app.hist.clear(tudo=bool(b.get("tudo")), antes_de=b.get("antes_de"),
+                                                 ids=b.get("ids"))}
+    if path.startswith("/api/history/") and path.endswith("/delete"):
+        return 200, {"apagados": app.hist.clear(ids=[path.split("/")[3]])}
+    if path == "/api/local_api":
+        return 200, app.set_local_api(b)
+    if path == "/api/app/pausar":
+        return 200, app.pausar()
+    if path == "/api/app/retomar":
+        return 200, app.retomar()
+    if path == "/api/app/liberar_memoria":
+        return 200, app.liberar_memoria()
+    if path == "/api/toasts/teste":
+        from . import toasts
+        return 200, {"ok": toasts.mostrar(b.get("titulo") or "Djorge", b.get("mensagem") or "Os avisos estão funcionando.")}
+    return None
+
+
+def de_texto_call(texto, marcar):
+    from .automacoes import de_texto
+    return de_texto(texto, marcar=marcar)
 
 
 def v2_post(app: App, path: str, b: dict):
@@ -358,6 +908,10 @@ def v2_post(app: App, path: str, b: dict):
             return 200, app.cards.update(parts[3], b)
         return None
     if path == "/api/command":
+        if b.get("stream"):
+            if not str(b.get("text", "")).strip():
+                raise ValueError("escreva um pedido")
+            return 200, app.command_stream(b.get("text", ""), b.get("context"))
         return 200, app.command.run(b.get("text", ""), b.get("context"))
     if path == "/api/command/confirm":
         return 200, app.command.confirm(str(b.get("id", "")), bool(b.get("approve")), b.get("edits"))
@@ -425,7 +979,7 @@ def v2_post(app: App, path: str, b: dict):
             raise ValueError("a árvore precisa de um nome")
         tree["name"] = str(name)
         return 200, app.save_tree(tree)
-    return None
+    return v21_post(app, path, b)
 
 
 def make_handler(app: App):

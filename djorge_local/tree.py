@@ -9,11 +9,18 @@ Node kinds (one key decides the kind):
   query:   "<DSL completo>"           -> raw DJORGE query (use FROM text)
   if:      {contains_any, contains_all, regex, source_in, app_in, sender_has, seguranca_in}   -> branches true / false
   action:  notify | log | write_file | webhook | command | stop   (see actions.py)
+           v2.1 (secretário): criar_card | tarefa | alerta | notificar | etiquetar | arquivar | abrir_app |
+           responder_sugestao — params: titulo, campos [valor, prazo, remetente, empresa, data, hora, link, codigo],
+           coluna, prioridade, etiqueta, app, para, texto, url
+  check + keywords: [..]               -> palavras-chave casam primeiro (regra); sem elas, o modelo (NOUL) julga
+                                          se houver modelo carregado; sem modelo e sem palavra -> false
+  if também aceita: categoria_in, prioridade_min (baixa|normal|alta|urgente), vip (true)
 
 Common keys: model (origo | flash), min_probability (below it -> branch 'abstain'), branches {answer: next},
 then (next for actions), next can be a node id or a list of ids (all run, in order).
 Every event is checked first (security.py): {seguranca} = seguro|spam|golpe|phishing|malware, {seguranca_p}.
-Text placeholders in strings: {text} {title} {source} {app} {sender} {time} {<node>.answer} {<node>.probability}
+Text placeholders in strings: {text} {title} {source} {app} {sender} {time} (+ campos do secretário:
+{valor} {prazo} {remetente} {empresa} {data} {hora} {link} {codigo} {categoria} {prioridade}) {<node>.answer} {<node>.probability}
 {<node>.value}; {text:80} truncates. Placeholders are plain substitution (no code is evaluated).
 """
 from __future__ import annotations
@@ -100,7 +107,30 @@ def _cond(c: dict, ev: dict) -> bool:
         ok &= str(ev.get("seguranca") or "").casefold() in [str(x).casefold() for x in c["seguranca_in"]]
     if c.get("app_in"):
         ok &= any(a.casefold() in (ev.get("app") or "").casefold() for a in c["app_in"])
+    if c.get("categoria_in"):                       # categoria da triagem (secretário)
+        ok &= str(ev.get("categoria") or "").casefold() in [str(x).casefold() for x in c["categoria_in"]]
+    if c.get("prioridade_min"):
+        ok &= PRIORIDADES.get(str(ev.get("prioridade") or "").casefold(), 0) >= PRIORIDADES.get(
+            str(c["prioridade_min"]).casefold(), 0)
+    if c.get("vip"):
+        ok &= bool(ev.get("vip"))
     return bool(ok)
+
+
+PRIORIDADES = {"baixa": 1, "normal": 2, "alta": 3, "urgente": 4}
+NOVAS_ACOES = ("criar_card", "tarefa", "alerta", "notificar", "etiquetar", "arquivar", "abrir_app",
+               "responder_sugestao")
+
+
+def fold(s) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode()
+    return s.casefold()
+
+
+def keyword_hit(keywords, ev: dict) -> bool:
+    t = fold(f"{ev.get('title', '')}\n{ev.get('text', '')}")
+    return any(fold(k) and fold(k) in t for k in keywords or [])
 
 
 def _quote(s):
@@ -166,6 +196,18 @@ class Runner:
     def _decide(self, n: dict, ev: dict, ctx) -> dict:
         if "if" in n:
             return {"answer": _cond(n["if"], ev), "probability": 1.0, "engine": "regra"}
+        if "check" in n and "keywords" in n:            # palavra-chave primeiro; o modelo só se estiver carregado
+            if keyword_hit(n["keywords"], ev):
+                return {"answer": True, "probability": 0.9, "engine": "regra"}
+            loaded = [x for x in self.models.loaded() if x in self.models.decision_models()]
+            if not loaded:
+                return {"answer": False, "probability": 0.5, "engine": "regra (sem modelo)"}
+            z = self.models.get(loaded[0])
+            r = z.execute(build_query(n), sources={"text": f"{ev.get('title') or ''}\n{ev.get('text') or ''}"},
+                          lang=self.cfg["language"])["result"]
+            p = float(r.get("probability") or 0)
+            ans = bool(r.get("answer")) and p >= float(n.get("min_probability", 0.6))
+            return {"answer": ans, "probability": p, "engine": "modelo", "model": loaded[0]}
         model = n.get("model") or ([x for x in self.models.loaded() if x in self.models.decision_models()]
                                      or self.models.decision_models() or ["flash"])[0]
         z = self.models.get(model)
@@ -179,9 +221,10 @@ class Runner:
             out["abstain"] = True
         return out
 
-    def run(self, tree: dict, ev: dict) -> dict:
+    def run(self, tree: dict, ev: dict, mode: str = None) -> dict:
+        """mode: None (executa), "sugerir" (ações do secretário viram sugestões), "testar" (nada é executado)."""
         nodes = tree["nodes"]
-        ctx = {"event": ev, "results": {}}
+        ctx = {"event": ev, "results": {}, "mode": mode}
         trail, queue, steps = [], [tree["start"]], 0
         seen: Dict[str, int] = {}
         while queue:

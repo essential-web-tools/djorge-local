@@ -39,6 +39,25 @@ class RuleBuilder:
         z = self.models.get(dm[0] if dm else "flash")
         return getattr(z.semantic, "engine", z.semantic)
 
+    def marcar(self, text: str, keys=("pessoa", "email", "app", "palavra")) -> dict:
+        """Só as marcações do modelo (resolve ENTITY) para as chaves pedidas; usado pelas automações (de_texto).
+        Sem modelo levanta FileNotFoundError/KeyError/ImportError (quem chama cai para as regras)."""
+        from djorge.runtime.semantic import SemReq
+        eng = self._engine()
+        keys = [k for k in keys if k in FIELDS]
+        out = eng.run([SemReq("resolve", text, mode="ENTITY", target=FIELDS[k], threshold=0.5) for k in keys])
+        found = {}
+        for key, r in zip(keys, out):
+            vals = [text[m.start:m.end].strip(" ,.;:\"'“”") for m in getattr(r, "matches", []) or []]
+            found[key] = [v for v in dict.fromkeys(vals) if v]
+        return found
+
+    def julgar(self, text: str, options, ask: str) -> tuple:
+        """CHOICE do modelo entre opções em português -> (resposta, probabilidade)."""
+        from djorge.runtime.semantic import SemReq
+        r = self._engine().run([SemReq("CHOICE", text, options=list(options), ask=ask)])[0]
+        return r["answer"], float(r.get("probability") or 0)
+
     def from_text(self, text: str) -> dict:
         from djorge.runtime.semantic import SemReq
         text = " ".join(str(text or "").split())[:600]
