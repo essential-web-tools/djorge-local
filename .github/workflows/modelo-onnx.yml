@@ -1,0 +1,57 @@
+name: Gerar pacote ONNX int8 do modelo
+on:
+  workflow_dispatch:
+    inputs:
+      fonte:
+        description: "ID do .zip no Google Drive (artefato de treino)"
+        default: "1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo"
+      tag:
+        description: "Tag da release"
+        default: "dofl-v2-onnx"
+permissions:
+  contents: write
+jobs:
+  converter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Dependências
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install onnx onnxscript onnxruntime transformers safetensors gdown
+      - name: Baixar o artefato de treino
+        run: |
+          mkdir -p art && gdown --fuzzy "https://drive.google.com/file/d/${{ inputs.fonte }}/view" -O art/modelo.zip
+          cd art && unzip -q modelo.zip && rm modelo.zip
+          dirname "$(find . -path '*metadata/djorge.json' | head -1)" | xargs dirname > ../art_dir.txt
+          cat ../art_dir.txt
+      - name: Converter (com teste de paridade)
+        run: |
+          python - <<'EOF'
+          import json, logging, sys
+          logging.basicConfig(level=logging.INFO)
+          from pathlib import Path
+          from djorge_local.otimizar import converter
+          art = Path("art") / open("art_dir.txt").read().strip()
+          rep = converter(art, "flash_onnx", progresso=lambda f, e: print(f"{f:.0%} {e}", flush=True))
+          print(json.dumps(rep, indent=1, ensure_ascii=False))
+          EOF
+      - name: Conferir sem PyTorch
+        run: |
+          python - <<'EOF'
+          import sys; sys.modules["torch"] = None
+          from djorge.runtime.semantic import SemanticEngine, SemReq
+          e = SemanticEngine.from_artifact("flash_onnx", device="cpu", onnx="int8")
+          print(e.run([SemReq("NOUL", "O boleto vence amanhã", options=("fala de dinheiro",))]))
+          EOF
+      - name: Publicar na release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          cd flash_onnx && zip -qr ../dofl_v2_onnx.zip . && cd ..
+          ls -la dofl_v2_onnx.zip
+          gh release view "${{ inputs.tag }}" >/dev/null 2>&1 || gh release create "${{ inputs.tag }}" --target "${{ github.ref_name }}" -t "DOFL V2 — pacote ONNX int8" -n "Modelo DOFL V2 convertido para ONNX int8 (CPU), com teste de paridade."
+          gh release upload "${{ inputs.tag }}" dofl_v2_onnx.zip --clobber
