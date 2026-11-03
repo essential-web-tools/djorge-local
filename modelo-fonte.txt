@@ -3,5 +3,5 @@
 #            https://exemplo.com/dofl-v2.zip   (URL direta de um .zip com metadata/djorge.json)
 # A config `model_source` (config.yaml) tem prioridade sobre este arquivo.
 #
-# DOFL V2 (dofl_v2.zip no Google Drive, "qualquer pessoa com o link").
-flash=gdrive:1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo
+# DOFL V2 já convertido para ONNX (release do GitHub, gerado pelo workflow modelo-onnx.yml com teste de paridade).
+flash=https://github.com/essential-web-tools/djorge-local/releases/download/dofl-v2-onnx/dofl_v2_onnx.zip

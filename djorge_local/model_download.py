@@ -36,7 +36,7 @@ log = logging.getLogger("djorge.model_download")
 
 NAME = "flash"
 PRODUCT = "DOFL V2"
-SIZE_MB = 305                       # tamanho aproximado do pacote (usado quando o servidor não informa)
+SIZE_MB = 447                       # tamanho aproximado do pacote (usado quando o servidor não informa)
 CHUNK = 1 << 20
 MAX_UNZIPPED = 20 * 1024 ** 3       # proteção contra "zip bomb"
 UA = "DjorgeLocal/2 (Windows)"

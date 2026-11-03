@@ -96,7 +96,7 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     if (not UninstallSilent()) and DirExists(ExpandConstant('{localappdata}\Djorge\modelos')) then
-      if MsgBox('Apagar também o modelo baixado (cerca de 300 MB)?', mbConfirmation, MB_YESNO) = IDYES then
+      if MsgBox('Apagar também o modelo baixado (cerca de 860 MB)?', mbConfirmation, MB_YESNO) = IDYES then
         DelTree(ExpandConstant('{localappdata}\Djorge\modelos'), True, True, True);
   end;
 end;

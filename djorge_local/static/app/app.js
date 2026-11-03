@@ -1764,9 +1764,9 @@ function openModel() {
       <div><span class="kicker">Djorge Origo Flash Local</span><h3>${esc(m.name || "DOFL V2")} ${m.version ? `<small class="mono" style="color:var(--ink3)">v${esc(m.version)}</small>` : ""}</h3>
       <p>${{ausente: "Ainda não está neste computador. Sem ele, o Djorge usa só as regras (datas, horas, atalhos) — funciona, mas entende menos.", baixando: "Baixando… você pode continuar usando o app.", verificando: "Conferindo os arquivos baixados…", carregando: "Instalado. Carregando na memória…", pronto: "Pronto e rodando só no seu computador.", erro: "Algo deu errado: " + (m.error || "erro desconhecido")}[s]}</p></div></div>
       <div style="padding:0 24px 18px">
-      ${s === "baixando" || s === "verificando" ? `<div class="pbar" role="progressbar" aria-valuenow="${Math.round(pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do download"><i style="width:${Math.round(pct * 100)}%"></i></div><p class="hint mono">${fmtMB(m.bytes)} de ${m.total ? fmtMB(m.total) : (m.size_mb || 305) + " MB"} · ${Math.round(pct * 100)}%</p>` : ""}
+      ${s === "baixando" || s === "verificando" ? `<div class="pbar" role="progressbar" aria-valuenow="${Math.round(pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do download"><i style="width:${Math.round(pct * 100)}%"></i></div><p class="hint mono">${fmtMB(m.bytes)} de ${m.total ? fmtMB(m.total) : (m.size_mb || 447) + " MB"} · ${Math.round(pct * 100)}%</p>` : ""}
       <div class="kv" style="margin-top:10px">
-        <div><small>Tamanho</small><b>${esc(m.size_mb || 305)} MB</b></div>
+        <div><small>Tamanho</small><b>${esc(m.size_mb || 447)} MB</b></div>
         <div><small>Versão</small><b>${esc(m.version || d.version || "—")}</b></div>
         ${m.path ? `<div style="grid-column:1/-1"><small>Pasta</small><b class="mono" style="font-size:.8em">${esc(m.path)}</b></div>` : ""}
         ${m.source ? `<div style="grid-column:1/-1"><small>Origem</small><b class="mono" style="font-size:.8em">${esc(m.source)}</b></div>` : ""}
@@ -1775,7 +1775,7 @@ function openModel() {
     const want = s === "ausente" || s === "erro" ? "dl" : s === "baixando" || s === "verificando" ? "cancel" : "rm";
     if (f.dataset.w !== want) { f.dataset.w = want;
       f.innerHTML = `<span class="hint" style="flex:1">${ico("shield", "sm")} O download vem só da fonte oficial configurada.</span>` +
-        (want === "dl" ? `<button class="btn primary" data-a="download">${ico("dl", "sm")} Baixar modelo (${esc(m.size_mb || 305)} MB)</button>` :
+        (want === "dl" ? `<button class="btn primary" data-a="download">${ico("dl", "sm")} Baixar modelo (${esc(m.size_mb || 447)} MB)</button>` :
          want === "cancel" ? `<button class="btn" data-a="cancel">Cancelar download</button>` : `<button class="btn danger" data-a="remove">${ico("trash", "sm")} Remover</button>`);
       $$("[data-a]", f).forEach(b => b.onclick = () => modelAction(b.dataset.a, b)); }
   };
@@ -1793,7 +1793,7 @@ async function modelAction(a, btn) {
 function inviteHTML(fromErr) {
   const s = modelUiState();
   return `<div class="invite" role="region" aria-label="Convite para baixar o modelo"><div class="ic">${ico("cpu")}</div><div><h3>${fromErr ? "Esse pedido precisa do modelo" : "Deixe o Djorge mais esperto"}</h3>
-    <p>${fromErr ? "As regras não deram conta sozinhas. Baixe o DOFL (305 MB, roda só no seu computador) e tente de novo." : "Baixe o modelo DOFL (305 MB). Ele roda só no seu computador — nada sai daqui. Enquanto isso, as regras já funcionam."}</p></div>
+    <p>${fromErr ? "As regras não deram conta sozinhas. Baixe o DOFL (447 MB, roda só no seu computador) e tente de novo." : "Baixe o modelo DOFL (447 MB). Ele roda só no seu computador — nada sai daqui. Enquanto isso, as regras já funcionam."}</p></div>
     <div class="row">${s === "baixando" ? `<button class="btn" data-inv="open">Ver progresso</button>` : `<button class="btn primary" data-inv="dl">${ico("dl", "sm")} Baixar</button>`}${fromErr ? "" : `<button class="btn ghost" data-inv="later">Agora não</button>`}</div></div>`;
 }
 function wireInvite(root) {
