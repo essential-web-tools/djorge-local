@@ -1,4 +1,4 @@
-name: Gerar pacote ONNX int8 do modelo
+name: Gerar pacote ONNX int8 do modelo # v2
 on:
   push:
     branches: [v2-windows]
