@@ -28,7 +28,7 @@ jobs:
           pip install onnx onnxscript onnxruntime transformers safetensors gdown
       - name: Baixar o artefato de treino
         run: |
-          mkdir -p art && gdown --fuzzy "https://drive.google.com/file/d/${{ inputs.fonte || '1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo' }}/view" -O art/modelo.zip
+          mkdir -p art && gdown "${{ inputs.fonte || '1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo' }}" -O art/modelo.zip
           cd art && unzip -q modelo.zip && rm modelo.zip
           dirname "$(find . -path '*metadata/djorge.json' | head -1)" | xargs dirname > ../art_dir.txt
           cat ../art_dir.txt
