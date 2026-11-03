@@ -13,36 +13,36 @@
   const W = 240, H = 64, PH = 26, GX = 90, GY = 40;
   const MODELS = [['', 'automático'], ['origo', 'Origo'], ['flash', 'Flash']];
   const KINDS = {
-    choice: {name: 'Pergunta de escolha', icon: '◇', hint: 'Escolhe uma entre várias opções',
+    choice: {name: 'Pergunta com opções', icon: '◇', hint: 'Se o texto for sobre A, B ou C… cada opção segue um caminho',
       make: () => ({choice: ['opção 1', 'opção 2'], ask: 'Do que se trata?'})},
-    check: {name: 'Verificação sim/não', icon: '✓', hint: 'Confere se uma afirmação vale para o texto',
+    check: {name: 'Pergunta sim ou não', icon: '✓', hint: 'Se o texto disser tal coisa… então sim, senão não',
       make: () => ({check: 'o texto pede uma resposta'})},
-    score: {name: 'Escala', icon: '▤', hint: 'Dá uma nota numa escala (baixa → alta)',
+    score: {name: 'Nota de 1 a 3', icon: '▤', hint: 'Dá uma nota (baixa, média, alta) e segue pelo nível',
       make: () => ({score: ['baixa', 'média', 'alta'], ask: 'Qual a urgência?'})},
-    multi: {name: 'Múltipla escolha', icon: '☰', hint: 'Marca todos os rótulos que se aplicam',
+    multi: {name: 'Vários assuntos', icon: '☰', hint: 'Marca todos os assuntos que aparecem no texto',
       make: () => ({multi: ['rótulo 1', 'rótulo 2'], ask: 'Quais assuntos aparecem?'})},
-    if: {name: 'Condição (se)', icon: '⑂', hint: 'Regra exata: palavras, remetente, app, origem',
+    if: {name: 'Regra exata', icon: '⑂', hint: 'Se tiver estas palavras, deste remetente ou deste app…',
       make: () => ({if: {contains_any: ['urgente']}})},
-    select: {name: 'Seleção/quantidade', icon: '#', hint: 'Mede ou soma algo do texto (ex.: valores)',
+    select: {name: 'Medir um valor', icon: '#', hint: 'Soma ou mede algo do texto (ex.: valores em R$)',
       make: () => ({select: 'TOTAL TYPE money'})},
-    query: {name: 'Consulta avançada', icon: '⌘', hint: 'Consulta DJORGE completa', make: () => ({query: 'NOUL "…" FROM text'})},
+    query: {name: 'Consulta avançada', icon: '⌘', hint: 'Para quem conhece a linguagem DJORGE', make: () => ({query: 'NOUL "…" FROM text'})},
     action: {name: 'Ação', icon: '▶', hint: '', make: () => ({action: 'notify'})}
   };
   const ACTIONS = {
-    notify: {name: 'Notificar', icon: '🔔', make: () => ({action: 'notify', title: '{title}', message: '{sender}: {text:140}'})},
-    log: {name: 'Registrar no histórico', icon: '✎', make: () => ({action: 'log', message: '{source} · {sender} · {title}'})},
+    notify: {name: 'Me avisar', icon: '🔔', make: () => ({action: 'notify', title: '{title}', message: '{sender}: {text:140}'})},
+    log: {name: 'Anotar no histórico', icon: '✎', make: () => ({action: 'log', message: '{source} · {sender} · {title}'})},
     write_file: {name: 'Salvar em arquivo', icon: '🗎', make: () => ({action: 'write_file', file: 'registro.txt', content: '{time} | {title}'})},
-    webhook: {name: 'Webhook', icon: '⇄', make: () => ({action: 'webhook', url: 'https://', body: {texto: '{text}'}})},
-    command: {name: 'Comando', icon: '›_', make: () => ({action: 'command', argv: []})},
+    webhook: {name: 'Chamar um site (webhook)', icon: '⇄', make: () => ({action: 'webhook', url: 'https://', body: {texto: '{text}'}})},
+    command: {name: 'Rodar um programa', icon: '›_', make: () => ({action: 'command', argv: []})},
     email_move: {name: 'Mover e-mail', icon: '✉', make: () => ({action: 'email_move', folder: '', uid: '{uid}', mailbox: '{mailbox}'})},
-    stop: {name: 'Parar', icon: '■', make: () => ({action: 'stop'})}
+    stop: {name: 'Parar aqui', icon: '■', make: () => ({action: 'stop'})}
   };
   const PALETTE = ['choice', 'check', 'score', 'multi', 'if', 'select', 'action:notify', 'action:log',
     'action:write_file', 'action:webhook', 'action:command', 'action:stop'];
-  const PORT_NAMES = {'true': 'sim', 'false': 'não', abstain: 'incerto', 'default': 'qualquer outro', none: 'nenhum', then: 'depois'};
+  const PORT_NAMES = {'true': 'sim', 'false': 'não', abstain: 'não tenho certeza', 'default': 'qualquer outro caso', none: 'nenhum', then: 'e depois'};
   const COND = [['contains_any', 'Contém alguma destas palavras', 'chips'], ['contains_all', 'Contém todas estas palavras', 'chips'],
-    ['sender_has', 'Remetente contém', 'chips'], ['app_in', 'Aplicativo', 'chips'], ['source_in', 'Origem (email, notifications, folder, clipboard, http)', 'chips'],
-    ['seguranca_in', 'Segurança (seguro, spam, golpe, phishing, malware)', 'chips'], ['regex', 'Expressão regular', 'text']];
+    ['sender_has', 'Remetente contém', 'chips'], ['app_in', 'Aplicativo', 'chips'], ['source_in', 'De onde veio (email, notifications, folder, clipboard, http)', 'chips'],
+    ['seguranca_in', 'Parece (seguro, spam, golpe, phishing, malware)', 'chips'], ['regex', 'Padrão avançado (expressão regular)', 'text']];
   const PLACEHOLDERS = ['{text}', '{title}', '{sender}', '{source}', '{app}', '{time}', '{text:100}'];
 
   const CSS = `
@@ -69,6 +69,7 @@
 .te-in-text{flex:1;font:13px var(--te-sans);color:var(--te-ink);background:var(--te-bg);border:1px solid var(--te-line);border-radius:999px;padding:7px 14px;outline:none;min-width:0}
 .te-in-text:focus{border-color:var(--te-rose);box-shadow:0 0 0 3px var(--te-glow)}
 .te-pal{border-right:1px solid var(--te-line);padding:12px;overflow:auto;background:var(--te-surface)}
+.te-help{font:12px/1.4 var(--te-sans);color:var(--te-ink3);margin:0 2px 10px}
 .te-pal h4,.te-props h4{font:600 10px var(--te-mono);letter-spacing:.22em;text-transform:uppercase;color:var(--te-ink3);margin:6px 2px 8px}
 .te-pal button{display:flex;gap:8px;align-items:center;width:100%;text-align:left;font:600 12.5px var(--te-sans);color:var(--te-ink);background:var(--te-bg);
  border:1px solid var(--te-line2);border-radius:14px;padding:8px 10px;margin-bottom:6px;cursor:grab;transition:transform .2s,box-shadow .2s,border-color .2s}
@@ -177,6 +178,14 @@
     return (KINDS[n.kind] || {}).name || n.kind;
   }
 
+  function phraseOf(n) {
+    const p = n.props || {}, l = labelOf(n);
+    if (n.kind === 'action') return (ACTIONS[p.action] || {}).name === l ? l : ((ACTIONS[p.action] || {}).name || 'Fazer') + ': ' + l;
+    if (n.kind === 'if') { const c = p.if || {}; const w = (c.contains_any || c.contains_all || []).slice(0, 3);
+      return w.length ? 'Se tiver “' + w.join('”, “') + '”' : c.sender_has ? 'Se for de ' + [].concat(c.sender_has).join(', ') : c.app_in ? 'Se vier de ' + [].concat(c.app_in).join(', ') : 'Se a regra valer'; }
+    if (n.kind === 'check') return 'Se ' + String(l).replace(/^se\s+/i, '') + '?';
+    return l;
+  }
   function defaultPorts(n) {
     const p = n.props || {};
     switch (n.kind) {
@@ -329,18 +338,19 @@
       this.nameEl = h('div', {class: 'te-name'});
       this.btn = {};
       const B = (key, text, title, fn, cls) => (this.btn[key] = h('button', {class: 'te-btn ' + (cls || ''), type: 'button', title, 'aria-label': title, onclick: fn}, text));
-      this.testIn = h('input', {class: 'te-in-text', type: 'text', placeholder: 'Testar com um texto…', 'aria-label': 'Texto para testar a árvore',
+      this.testIn = h('input', {class: 'te-in-text', type: 'text', placeholder: 'Cole um exemplo para ver o caminho…', 'aria-label': 'Texto para testar a árvore',
         onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.test(this.testIn.value); } }});
       const bar = h('div', {class: 'te-bar', role: 'toolbar', 'aria-label': 'Ferramentas'}, this.nameEl,
         this.ro ? null : [B('undo', '↶ Desfazer', 'Desfazer (Ctrl+Z)', () => this.undo()), B('redo', '↷ Refazer', 'Refazer (Ctrl+Y)', () => this.redo()),
           B('dup', 'Duplicar', 'Duplicar nó (Ctrl+D)', () => this.duplicate()), B('del', 'Apagar', 'Apagar seleção (Del)', () => this.deleteSel()),
-          B('layout', 'Auto-organizar', 'Organizar os nós automaticamente', () => this.autoLayout())],
-        B('fit', 'Enquadrar', 'Mostrar a árvore inteira', () => this.fit()), h('span', {class: 'te-sp'}),
+          B('layout', 'Organizar', 'Organizar os nós automaticamente', () => this.autoLayout())],
+        B('fit', 'Ver tudo', 'Mostrar a árvore inteira', () => this.fit()), h('span', {class: 'te-sp'}),
         h('div', {class: 'te-test'}, this.testIn, B('test', 'Testar', 'Testar com um texto', () => this.test(this.testIn.value), 'te-pri')));
       // paleta
-      const pal = h('div', {class: 'te-pal', role: 'list', 'aria-label': 'Tipos de nó'}, h('h4', {text: 'Decisões'}));
+      const pal = h('div', {class: 'te-pal', role: 'list', 'aria-label': 'Tipos de nó'}, h('h4', {text: 'Se… (perguntas)'}));
+      pal.append(h('p', {class: 'te-help', text: 'Clique ou arraste para o quadro. Depois puxe a bolinha de cada resposta até a próxima caixa.'}));
       PALETTE.forEach((key, i) => {
-        if (i === 6) pal.append(h('h4', {text: 'Ações'}));
+        if (i === 6) pal.append(h('h4', {text: 'Então… (ações)'}));
         const [kind, action] = key.split(':');
         const info = action ? ACTIONS[action] : KINDS[kind];
         const b = h('button', {type: 'button', role: 'listitem', draggable: 'true', title: (action ? 'Ação: ' : '') + (info.hint || info.name) + ' — clique ou arraste',
@@ -439,7 +449,7 @@
         n.id === this.g.start ? h('span', {class: 'te-badge', text: 'início'}) : null,
         ne.length ? h('span', {class: 'te-ebadge', title: ne.map((e) => e.message).join('\n'), text: '!'}) : null,
         h('i', {class: 'te-in', 'aria-hidden': 'true'}),
-        h('div', {class: 'te-head'}, h('div', {class: 'te-kind'}, h('b', {text: kindOf(n)}), h('span', {text: n.id})), h('div', {class: 'te-title', title: labelOf(n), text: labelOf(n)})),
+        h('div', {class: 'te-head'}, h('div', {class: 'te-kind'}, h('b', {text: (n.kind === 'action' ? 'Então · ' : 'Se · ') + kindOf(n)})), h('div', {class: 'te-title', title: phraseOf(n), text: phraseOf(n)})),
         ports.map((p) => h('div', {class: 'te-port' + (this.g.edges.some((e) => e.from === n.id && e.label === p) ? ' te-on' : ''), 'data-port': p},
           h('span', {title: p, text: portName(p)}), h('i', {class: 'te-dot', 'data-port': p, title: this.ro ? '' : `Arraste para ligar “${portName(p)}” a outro nó`}))));
         this.nodeEls[n.id] = el; this.nodesEl.append(el);
@@ -756,7 +766,7 @@
       // id e início
       const idIn = h('input', {type: 'text', class: 'te-mono', value: n.id, disabled: dis, 'aria-label': 'Identificador do nó'});
       idIn.addEventListener('change', (ev) => { ev.stopPropagation(); if (!this.renameNode(n.id, idIn.value)) idIn.value = n.id; });
-      P.append(this.field('Identificador', idIn));
+      P.append(this.field('Nome interno (não aparece para ninguém)', idIn));
       if (n.id !== this.g.start && !dis) P.append(h('div', {class: 'te-f'}, h('button', {class: 'te-btn', type: 'button', onclick: () => this.commit(() => (this.g.start = n.id)), text: 'Começar a árvore por aqui'})));
       const p = n.props;
       const set = (k, v) => { if (v === '' || v == null || (Array.isArray(v) && !v.length && k !== n.kind)) delete p[k]; else p[k] = v; };

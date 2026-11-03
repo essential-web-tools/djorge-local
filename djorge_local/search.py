@@ -11,7 +11,7 @@ from typing import Dict, List
 from djorge.runtime.hag import BM25, _fold, _terms, sentences
 from djorge.runtime.recognizers import reconhecer
 
-SCOPES = ("all", "cards", "history", "integrations")
+SCOPES = ("all", "cards", "history", "integrations", "web")
 ASK = "Este item responde a busca."
 
 
@@ -46,6 +46,26 @@ def highlights(snippet: str, q_terms: List[str]) -> List[Dict]:
 class Search:
     def __init__(self, app):
         self.app = app
+        self.web_transporte = None                     # testes injetam um transporte falso (djorge_local.web)
+
+    def _web(self, q: str, limit: int, avisos: List[str]) -> List[Dict]:
+        """Resultados da internet (sai do computador) no mesmo formato dos locais."""
+        try:
+            from . import web
+            r = web.buscar(q, min(limit, 8), transporte=self.web_transporte)
+        except Exception as e:
+            avisos.append(f"web: {type(e).__name__}: {e}"[:200])
+            return []
+        if r.get("erro"):
+            avisos.append(r["erro"])
+        qt = _terms(q)
+        out = []
+        for i, x in enumerate(r.get("resultados") or []):
+            snip = x.get("trecho") or ""
+            out.append({"id": f"w{i}", "source": "web", "title": x.get("titulo"), "snippet": snip,
+                        "highlights": highlights(snip, qt), "score": round(1 - i * 0.05, 4), "bm25": 0.0,
+                        "date": None, "url": x.get("url"), "fonte": x.get("fonte"), "sai_do_computador": True})
+        return out
 
     def _docs(self, scope: str, q: str) -> (List[Dict], List[str]):
         docs, avisos = [], []
@@ -80,12 +100,27 @@ class Search:
                     avisos.append(f"integrações: {type(e).__name__}: {e}"[:200])
         return docs, avisos
 
-    def search(self, q: str, scope: str = "all", limit: int = 20, engine=None) -> Dict:
+    def search(self, q: str, scope: str = "all", limit: int = 20, engine=None, web=False) -> Dict:
+        """web: False (padrão, nada sai do computador) | True (junta a internet) | "auto" (só se nada local).
+        scope="web" busca só na internet."""
         q = " ".join(str(q or "").split())[:300]
         if scope not in SCOPES:
             raise ValueError(f"scope: use {', '.join(SCOPES)}")
         if not q:
             return {"q": q, "results": [], "avisos": []}
+        if scope == "web":
+            avisos = []
+            res = self._web(q, limit, avisos)
+            return {"q": q, "results": res[:limit], "avisos": avisos, "web": True}
+        r = self._local(q, scope, limit, engine)
+        if web is True or (web == "auto" and not r["results"]):
+            extra = self._web(q, limit, r["avisos"])
+            if extra:
+                r["results"] = (r["results"] + extra)[:limit]
+                r["web"] = True
+        return r
+
+    def _local(self, q: str, scope: str, limit: int, engine) -> Dict:
         docs, avisos = self._docs(scope, q)
         qt = _terms(q)
         datas = {t.valor for t in reconhecer(q) if t.campo == "data" and t.valor}

@@ -32,18 +32,39 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+NOME_CAMPO = {"due": "prazo", "start": "início", "end": "fim", "from": "de", "to": "até"}
+
+
+class DataInvalida(ValueError):
+    """Data que não deu para entender. A mensagem já é amigável e traz `dica` com exemplos."""
+
+    def __init__(self, campo: str, valor):
+        self.campo, self.valor = campo, valor
+        self.dica = "Tente “2026-11-03 14:00”, “03/11/2026 14h” ou “amanhã 9h”."
+        super().__init__(f"Não entendi a data “{str(valor)[:60]}” em {NOME_CAMPO.get(campo, campo)}. {self.dica}")
+
+
 def _iso(v, campo) -> Optional[str]:
-    """Aceita ISO 8601 (data ou data e hora); devolve a forma normalizada ou None."""
+    """Aceita ISO 8601 e formatos humanos ("2026-11-03 14:00", "03/11/2026 14h", "amanhã 9h", "sexta 15h") usando
+    os reconhecedores; devolve a forma ISO normalizada ou None. Valor impossível -> DataInvalida (mensagem amigável)."""
     if v in (None, ""):
         return None
-    s = str(v).strip().replace(" ", "T", 1)
+    s = str(v).strip()
     try:
-        if len(s) == 10:
+        if len(s) == 10 and s[4] == "-":
             return _dt.date.fromisoformat(s).isoformat()
-        d = _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        d = _dt.datetime.fromisoformat(s.replace(" ", "T", 1).replace("Z", "+00:00"))
         return d.replace(tzinfo=None).isoformat(timespec="minutes" if d.second == 0 else "seconds")
-    except ValueError:
-        raise ValueError(f"{campo}: data inválida (use ISO 8601, ex.: 2026-11-03T14:00)")
+    except (ValueError, IndexError):
+        pass
+    try:
+        from djorge.runtime.recognizers import data_humana
+        r = data_humana(s)
+    except Exception:
+        r = None
+    if not r:
+        raise DataInvalida(campo, v)
+    return r
 
 
 def _bool(v) -> bool:
