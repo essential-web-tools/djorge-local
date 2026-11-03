@@ -881,6 +881,12 @@ def v21_post(app: App, path: str, b: dict):
         return 200, app.retomar()
     if path == "/api/app/liberar_memoria":
         return 200, app.liberar_memoria()
+    if path == "/api/app/iniciar_com_windows":
+        from . import leveza
+        ativo = bool(b.get("ativo", True))
+        ok = leveza.iniciar_com_windows(ativo, bool(b.get("minimizado", True)))
+        leveza.salvar_config({"iniciar_com_windows": ativo})
+        return 200, {"ok": bool(ok), "ativo": ativo}
     if path == "/api/toasts/teste":
         from . import toasts
         return 200, {"ok": toasts.mostrar(b.get("titulo") or "Djorge", b.get("mensagem") or "Os avisos estão funcionando.")}

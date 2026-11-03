@@ -14,7 +14,7 @@ const LOWER_WORDS = new Set(["de", "da", "do", "das", "dos", "e", "em", "a", "o"
 function titleCase(s) {
   s = String(s ?? "").trim(); if (!s || /@|https?:|^\+?\d/.test(s)) return s;
   return s.split(/(\s+)/).map((w, i) => /^\s+$/.test(w) ? w : (i && LOWER_WORDS.has(w.toLowerCase())) ? w.toLowerCase() :
-    (w.length > 1 && w === w.toUpperCase() && /[A-Z]/.test(w) && w.length <= 4) ? w : w.charAt(0).toLocaleUpperCase("pt-BR") + w.slice(1).toLocaleLowerCase("pt-BR")).join("");
+    (w.length > 1 && w === w.toUpperCase() && /[A-Z]/.test(w) && w.length <= 4) || (/[a-zà-ú]/.test(w) && /.[A-ZÀ-Ú]/.test(w)) ? w : w.charAt(0).toLocaleUpperCase("pt-BR") + w.slice(1).toLocaleLowerCase("pt-BR")).join("");
 }
 const fmtMoney = v => { const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
   return isNaN(n) ? String(v ?? "") : n.toLocaleString("pt-BR", {style: "currency", currency: "BRL"}); };
@@ -100,7 +100,7 @@ const CARD_COLORS = [["", "Nenhuma"], ["#b56576", "Rosa"], ["#c0714f", "Terracot
 let ACCENTS = [["rosa", "#b56576"], ["vinho", "#6d2e46"], ["terracota", "#c06c4a"], ["mostarda", "#c9a227"], ["verde", "#5a7d5a"], ["azul", "#4a6c8c"], ["lavanda", "#8a7bb0"], ["grafite", "#4a4a4a"]];
 const TOOL_PT = {calcular: ["Calcular", "calc"], datas_horas: ["Datas e horas", "clock"], proximas_tarefas: ["Próximas tarefas", "list"],
   cards: ["Card", "board"], listas: ["Lista", "list"], bilhete: ["Mensagem", "send"], buscar: ["Buscar", "search"],
-  regra: ["Automação", "tree"], web: ["Busca na web", "search"], abrir: ["Abrir app", "send"], interface: ["Interface", "gear"], nenhuma: ["Fora do escopo", "spark"], triagem: ["Triagem", "shield"]};
+  regra: ["Automação", "tree"], web: ["Busca na web", "search"], abrir: ["Abrir app", "send"], perguntar: ["Só para confirmar", "spark"], interface: ["Interface", "gear"], nenhuma: ["Vamos ajustar o pedido", "spark"], triagem: ["Triagem", "shield"]};
 const FIELD_CLS = {data: "c-data", hora: "c-hora", "período do dia": "c-periodo", pessoa: "c-pessoa", "endereço de e-mail": "c-email",
   lugar: "c-lugar", "empresa ou estabelecimento": "c-empresa", endereco: "c-endereco"};
 const FIELD_EMO = {data: "📅", hora: "🕒", "período do dia": "🌤", pessoa: "👤", "evento ou compromisso": "📌", lugar: "📍", lista: "🗒",
@@ -1388,8 +1388,9 @@ async function openFull({graph, yaml, isNew}) {
   let gr = g0.graph || g0;
   if ((!gr.nodes || !gr.nodes.length) && g0.tree && window.TreeEditor.fromTree) { try { gr = await window.TreeEditor.fromTree(g0.tree); } catch (e) { toast(human(e), "bad"); } }
   body.innerHTML = ""; const host = document.createElement("div"); host.className = "fvhost"; body.appendChild(host);
-  try { FULL.ed = window.TreeEditor.mount(host, {graph: gr, onChange: x => { FULL.dirty = true; FULL.g = x; $("#fv-dirty", el).hidden = false; }}); }
+  try { FULL.ed = window.TreeEditor.mount(host, {graph: gr, onChange: x => { FULL.g = x; if (!FULL.ready) return; FULL.dirty = true; FULL.g = x; $("#fv-dirty", el).hidden = false; }}); }
   catch (e) { console.warn(e); yamlEditor(body, "Não consegui abrir o editor visual."); return; }
+  setTimeout(() => { if (FULL) FULL.ready = true; }, 400);
   if (isNew) { FULL.dirty = !!(gr.nodes && gr.nodes.length); $("#fv-dirty", el).hidden = !FULL.dirty; }
   $("#fv-save", el).onclick = async e => { const b = e.currentTarget; b.setAttribute("aria-busy", "true");
     const gg = FULL.g || (FULL.ed.getGraph ? FULL.ed.getGraph() : gr); gg.name = $("#fv-name", el).value.trim() || gg.name || "árvore";
@@ -1454,7 +1455,7 @@ async function runCommand(text, context, th) {
     let e; try { e = await api(`/api/command/${encodeURIComponent(id)}/etapas`, undefined, {quiet409: true}); misses = 0; }
     catch (er) { if (er.status === 404 && ++misses > 3) break; if (er.status === 409) throw er; continue; }
     if (th && th._etapas) th._etapas(asList(e, "etapas"));
-    if (e && e.pronto) { if (e.resultado) return e.resultado; if (e.erro || e.error) throw new ApiError(e.erro || e.error, 400, e); break; }
+    if (e && e.pronto) { if (e.resultado && e.resultado.error && !isResult(e.resultado)) throw new ApiError(e.resultado.error, 400, e.resultado); if (e.resultado) return e.resultado; if (e.erro || e.error) throw new ApiError(e.erro || e.error, 400, e); break; }
   }
   return await api("/api/command", {text, context}, {quiet409: true});
 }
@@ -1500,7 +1501,7 @@ function wireDicas(el, text, ds, qs) {
   $$("[data-q]", el).forEach(b => b.onclick = () => { const o = (qs[+b.dataset.q].opcoes || qs[+b.dataset.q].options)[+b.dataset.o], pt = o.patch;
     $$("[data-q]", el).forEach(x => x.disabled = true); b.classList.add("on");
     const nt = typeof pt === "string" ? pt : (pt && (pt.text || pt.texto)) || (o.texto && o.texto !== o.rotulo ? o.texto : text);
-    submit({text: nt, context: pt && typeof pt === "object" ? {patch: pt, original: text} : {original: text}}); });
+    submit({text: nt, context: pt && typeof pt === "object" ? {patch: pt, original: text, ...(pt.tool ? {tool: pt.tool} : {})} : {original: text}}); });
 }
 /* ----- cartão de resultado ----- */
 function fieldChip(f) {
@@ -1552,7 +1553,9 @@ function resultCard(r, text) {
     const done = (ok, msg) => { ract.innerHTML = `<div class="rdone ${ok ? "" : "no"}">${ico(ok ? "check" : "x", "sm")} ${esc(msg)}</div>`; $$("input,textarea,.sel button,.seg button,.pkind button", pb).forEach(x => x.disabled = true); };
     $("[data-ok]", ract).onclick = async e => { const b = e.currentTarget; b.setAttribute("aria-busy", "true");
       const edits = collectEdits(pb, p, state);
-      if (edits.action === "abrir_app") { openWhatsApp(edits.telefone, edits.body, edits.url); tryApi("/api/command/confirm", {id: r.id, approve: true, edits}, {silent: true}); done(true, "WhatsApp aberto com a mensagem pronta"); return; }
+      if (edits.action === "abrir_app") { let o = null; try { o = await api("/api/command/confirm", {id: r.id, approve: true, edits}); } catch (x) {}
+        if (o && o.abrir && o.url) { window.open(o.url, "_blank", "noopener"); toast("Abrindo o WhatsApp. O envio final é seu."); } else if (!(o && o.abrir === false)) openWhatsApp(edits.telefone, edits.body, edits.url);
+        done(true, "WhatsApp aberto com a mensagem pronta"); return; }
       try { const out = await api("/api/command/confirm", {id: r.id, approve: true, edits}, {strict: false});
         if (out && out.error) throw new ApiError(out.error, 400, out);
         afterConfirm(edits.action ? {...p, action: edits.action} : p, out, el, edits); done(true, confirmMsg(edits.action ? {action: edits.action} : p, out, state.W));
@@ -1583,7 +1586,7 @@ function initW(p, r) {
       dateKey: c.due && !c.start ? "due" : "start", people: (c.people || []).map(x => ({...x, nome: titleCase(x.nome || x.email)})), tags: c.tags || [], checklist: c.checklist || [], recurrence: c.recurrence || ""});
     W.to = W.people[0] ? W.people[0].nome : ""; W.phone = W.people[0] && (W.people[0].telefone || W.people[0].phone) || ""; W.msg = W.body; }
   else { const to = p.to || p.destino || p.contato && p.contato.nome || "";
-    Object.assign(W, {kind: "mensagem", to: titleCase(to), msg: p.body || p.corpo || p.texto || r.corpo || "", subject: p.subject || p.assunto || "", phone: p.telefone || p.phone || (p.contato && p.contato.telefone) || "", url: p.url || ""});
+    Object.assign(W, {kind: "mensagem", to: titleCase(to), msg: p.body || p.corpo || p.texto || r.corpo || "", subject: p.subject || p.assunto || "", phone: p.telefone || p.phone || (p.contato && p.contato.telefone) || "", url: p.app_url || p.url || ""});
     W.title = r.titulo || (to ? `Falar com ${titleCase(String(to).split(/[(<]/)[0].trim())}` : "Mensagem"); W.body = W.msg; if (to) W.people = [{nome: titleCase(String(to).split(/[(<]/)[0].trim()), tipo: "pessoa", telefone: W.phone}]; }
   const opts = chanOpts().map(o => o[0]); const want = p.action === "abrir_app" || p.action === "open_app" ? "app_whatsapp" : (p.channel || p.integration || p.canal || "whatsapp");
   W.channel = opts.includes(want) ? want : opts[0];
