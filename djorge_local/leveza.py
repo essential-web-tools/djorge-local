@@ -154,8 +154,12 @@ def memoria_mb() -> float:
                             ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
                             ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
             c = PMC(); c.cb = ctypes.sizeof(PMC)
-            h = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(h, ctypes.byref(c), c.cb):
+            k32 = ctypes.WinDLL("kernel32")
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            fn = getattr(k32, "K32GetProcessMemoryInfo", None) or ctypes.WinDLL("psapi").GetProcessMemoryInfo
+            fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+            fn.restype = wintypes.BOOL
+            if fn(k32.GetCurrentProcess(), ctypes.byref(c), c.cb):
                 return round(c.WorkingSetSize / 1e6, 1)
             return 0.0
         with open("/proc/self/statm") as f:

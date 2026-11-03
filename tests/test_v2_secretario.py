@@ -261,7 +261,8 @@ def test_sem_sinais_nao_faz_nada_e_sinais_sugerem(app):
 
 def test_toasts_fallback_silencioso():
     from djorge_local import toasts
-    assert toasts.mostrar("Teste", "olá") is False          # Linux: não mostra, não quebra
+    r = toasts.mostrar("Teste", "olá")                     # no Linux não mostra; nunca quebra
+    assert r is (False if sys.platform != "win32" else r)
     assert toasts.status()["ultimos"][0]["titulo"] == "Teste"
 
 

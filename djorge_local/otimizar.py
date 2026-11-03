@@ -38,7 +38,7 @@ ENCODER_KEYS = ("adapter.", "proj.", "role.", "ln.", "mix", "special")
 META_DROP = ("train_args", "train_log", "train_seconds", "teacher", "distill", "dev_curve", "init_from",
              "public_file", "dataset_version", "seed")
 TOKENIZER_KEEP = ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json")
-LADDER = ("all", "mlp", "embed", "none")
+LADDER = ("all", "all_fr", "attn", "mlp", "embed", "none")
 
 
 def _tem(mod):
@@ -166,12 +166,15 @@ def quantize(fp32, out, mode, reduce_range=True, inter=None):
     m = onnx.load(fp32, load_external_data=False)
     shapes = {t.name: list(t.dims) for t in m.graph.initializer}
     exclude = []
-    if mode in ("mlp", "embed"):
+    if mode == "all_fr":                       # int8 completo com faixa cheia (mais precisão)
+        mode, reduce_range = "all", False
+    if mode in ("mlp", "embed", "attn"):
         for n in m.graph.node:
             if n.op_type != "MatMul":
                 continue
             dims = next((shapes[i] for i in n.input if i in shapes), None)
-            if mode == "embed" or not (dims and inter and inter in dims):
+            is_mlp = bool(dims and inter and inter in dims)
+            if mode == "embed" or (mode == "mlp" and not is_mlp) or (mode == "attn" and is_mlp):
                 exclude.append(n.name)
     quantize_dynamic(fp32, out, weight_type=QuantType.QInt8, per_channel=True, reduce_range=reduce_range,
                      nodes_to_exclude=exclude, use_external_data_format=False)
