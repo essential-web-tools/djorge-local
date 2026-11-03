@@ -17,16 +17,21 @@ import urllib.request
 from typing import Callable, Dict, List, Optional
 
 API = "https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1"
-HTML = "https://html.duckduckgo.com/html/?q={q}"
+HTML = "https://html.duckduckgo.com/html/?q={q}&kl=br-pt"
+LITE = "https://lite.duckduckgo.com/lite/?q={q}&kl=br-pt"
 TIMEOUT = 8.0
-AGENTE = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Djorge/2"
+# User-Agent genérico de navegador: o HTML do DuckDuckGo devolve a página de "anomalia" (sem resultados) para agentes
+# desconhecidos, e era isso que deixava a busca vazia.
+AGENTE = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 "
+          "Safari/537.36")
 SAI_DO_COMPUTADOR = True
 
 Transporte = Callable[[str, float], object]
 
 
 def _http(url: str, timeout: float) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": AGENTE, "Accept-Language": "pt-BR,pt;q=0.9"})
+    req = urllib.request.Request(url, headers={"User-Agent": AGENTE, "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.5",
+                                               "Accept": "text/html,application/json;q=0.9,*/*;q=0.8"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read(2_000_000)
 
@@ -82,32 +87,65 @@ def _da_api(raw) -> List[Dict]:
     return [x for x in out if x]
 
 
-_A = re.compile(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
-_SN = re.compile(r'class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</(?:a|div|td)>', re.S | re.I)
+_TAG_A = re.compile(r"<a\b([^>]*)>(.*?)</a\s*>", re.S | re.I)
+_TAG_SN = re.compile(r"<(a|div|td|span)\b([^>]*\bclass\s*=\s*[\"'][^\"']*\bresult[_-]{1,2}snippet\b[^\"']*[\"'][^>]*)>(.*?)</\1\s*>",
+                     re.S | re.I)
+_HREF = re.compile(r"""\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+_CLASSE = re.compile(r"""\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_ANOMALIA = re.compile(r"anomaly[-_]modal|challenge-form|g-recaptcha|Unfortunately, bots use DuckDuckGo", re.I)
+
+
+class Bloqueado(Exception):
+    """O DuckDuckGo devolveu a página de verificação (sem resultados)."""
+
+
+def _attr(rx, attrs: str) -> str:
+    m = rx.search(attrs or "")
+    return next((g for g in (m.groups() if m else ()) if g is not None), "")
 
 
 def _real(href: str) -> str:
-    href = html.unescape(href)
+    """Link de redirecionamento do DuckDuckGo (//duckduckgo.com/l/?uddg=<url codificada>&rut=...) -> URL real."""
+    href = html.unescape(href or "").strip()
     if href.startswith("//"):
         href = "https:" + href
     q = urllib.parse.urlparse(href)
-    if "duckduckgo.com" in q.netloc and q.path.startswith("/l/"):
+    if ("duckduckgo.com" in q.netloc or not q.netloc) and q.path.startswith("/l/"):
         u = urllib.parse.parse_qs(q.query).get("uddg")
         if u:
             return u[0]
     return href
 
 
+def _anuncio(url: str, classes: str) -> bool:
+    u = urllib.parse.urlparse(url)
+    return ("duckduckgo.com" in u.netloc and (u.path.startswith("/y.js") or "ad_" in u.query)) or \
+        "result--ad" in classes or "badge--ad" in classes
+
+
 def _do_html(raw) -> List[Dict]:
+    """Resultados do html.duckduckgo.com (a.result__a + .result__snippet) e do lite (a.result-link + td.result-snippet).
+    Atributos em qualquer ordem, aspas simples ou duplas; anúncios e links internos ficam de fora."""
     s = _txt(raw)
-    links = list(_A.finditer(s))
+    links = []
+    for m in _TAG_A.finditer(s):
+        cl = _attr(_CLASSE, m.group(1)).split()
+        if "result__a" in cl or "result-link" in cl:
+            links.append(m)
     out = []
     for i, m in enumerate(links):
         fim = links[i + 1].start() if i + 1 < len(links) else len(s)
-        sn = _SN.search(s, m.end(), fim)
-        it = _item(m.group(2), _real(m.group(1)), sn.group(1) if sn else "")
-        if it and "duckduckgo.com/y.js" not in it["url"]:
+        bloco_ini = s.rfind('class="result ', 0, m.start())
+        classes = s[bloco_ini:bloco_ini + 120] if bloco_ini >= 0 and m.start() - bloco_ini < 600 else ""
+        url = _real(_attr(_HREF, m.group(1)))
+        if _anuncio(url, classes):
+            continue
+        sn = _TAG_SN.search(s, m.end(), fim)
+        it = _item(m.group(2), url, sn.group(3) if sn else "")
+        if it and "duckduckgo.com" not in it["fonte"]:
             out.append(it)
+    if not out and _ANOMALIA.search(s):
+        raise Bloqueado("o DuckDuckGo pediu verificação")
     return out
 
 
@@ -129,11 +167,17 @@ def buscar(q: str, n: int = 6, transporte: Optional[Transporte] = None, timeout:
         achados = _da_api(get(API.format(q=qq), timeout))
     except Exception as e:                                   # sem rede, timeout, bloqueio
         erros.append(f"{type(e).__name__}: {e}")
-    if len(achados) < max(1, min(n, 3)):
+    for base in (HTML, LITE):                                # o lite só se o HTML falhar ou vier vazio
+        if len(achados) >= max(1, min(n, 3)):
+            break
         try:
-            achados += _do_html(get(HTML.format(q=qq), timeout))
+            novos = _do_html(get(base.format(q=qq), timeout))
         except Exception as e:
             erros.append(f"{type(e).__name__}: {e}")
+            continue
+        achados += novos
+        if novos:
+            break
     vistos, out = set(), []
     for r in achados:
         k = r["url"].rstrip("/")

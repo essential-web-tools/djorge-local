@@ -87,7 +87,7 @@ SINAIS = {
     ],
     "web": [
         ("internet", r"\b(na internet|na web|no google|na net|online|em sites?|no site)\b", 0.85),
-        ("pergunta de mundo", r"\b(quem (e|foi|ganhou|inventou)|o que (e|significa) (um|uma|o|a)?\s?\w|noticias?|cotacao|"
+        ("pergunta de mundo", r"\b(quem (e|foi|era|ganhou|inventou|descobriu|escreveu)|o que (e|significa) (um|uma|o|a)?\s?\w|noticias?|cotacao|"
                               r"previsao do tempo|resultado do jogo|wikipedia)\b", 0.45),
     ],
     "abrir": [
@@ -279,6 +279,58 @@ def decidir(model_probs, p: Dict, limiar: float = 0.3, margem: float = 0.12, tex
     motivo = "modelo e pistas concordam" if m and pist.get(top) else "pelas pistas" if not m else "pelo modelo"
     return {"tool": top, "confianca": round(min(0.99, v), 4), "motivo": motivo, "alternativas_uteis": [],
             "perguntar": [], "decidido": True}
+
+
+# ferramentas que o DOFL não conhece (vieram depois do treino): o modelo as vê como "buscar"/"nenhuma"; as pistas fortes
+# (ex.: "na internet", "abre o WhatsApp") levam a escolha para a ferramenta nova.
+NOVAS = {"web": (("buscar", "nenhuma"), 0.8), "abrir": (("buscar", "nenhuma", "bilhete"), 0.9)}
+
+
+def decidir_modelo(model_probs, p: Dict, texto: str = "", can: Optional[float] = None, seguro: float = 0.35,
+                   margem: float = 0.1) -> Dict:
+    """O MODELO decide (prioridade "modelo"): a ferramenta é a que o DOFL escolheu, com as pistas só como
+    confirmação e como guarda-corpo (campos incompatíveis, ferramentas novas que o modelo não conhece). Quando o
+    modelo está inseguro (< `seguro`), cai em decidir() (modelo + pistas). Devolve o mesmo formato de decidir() e
+    "por": "modelo" | "regras" (quem de fato escolheu)."""
+    m = _probs(model_probs)
+    if not m:
+        return dict(decidir(None, p, texto=texto), por="regras")
+    if p.get("explicito"):
+        return dict(decidir(m, p, texto=texto), por="regras")
+    pist = dict(p.get("ferramentas") or {})
+    # guarda-corpo mais leve que em decidir(): só a conta sem número cai de vez; o resto perde no máximo metade
+    fator = lambda t: 1.0 if t == "nenhuma" else compativel(t, p, texto) if t == "calcular" else \
+        0.5 + 0.5 * compativel(t, p, texto)
+    adj = {t: round(v * fator(t), 4) for t, v in m.items() if t in FERRAMENTAS}
+    for novo, (bases, lim) in NOVAS.items():
+        if pist.get(novo, 0) >= lim:
+            adj[novo] = round(max([adj.get(b, 0.0) for b in bases] + [0.0]) + 0.01, 4)
+            for b in bases:
+                if b in adj and b != "nenhuma":
+                    adj[b] = round(adj[b] * 0.5, 4)
+            adj["nenhuma"] = round(adj.get("nenhuma", 0.0) * 0.5, 4)
+    ordem = sorted(adj.items(), key=lambda x: -x[1])
+    if not ordem:
+        return dict(decidir(None, p, texto=texto), por="regras")
+    top, v = ordem[0]
+    if can is not None and can < 0.2 and top != "nenhuma" and pist.get(top, 0) < 0.5:
+        top, v = "nenhuma", max(v, 1 - can)
+    if v < seguro:                                        # o modelo não tem certeza: modelo + pistas juntos
+        d = decidir(m, p, texto=texto)
+        return dict(d, por="modelo" if d["tool"] == top else "regras")
+    if top == "nenhuma":
+        alt = [t for t, x in sorted(pist.items(), key=lambda x: -x[1]) if x >= 0.45 and t != "nenhuma"][:3]
+        return {"tool": "nenhuma", "confianca": round(v, 4), "motivo": "o modelo não vê ferramenta para isto",
+                "alternativas_uteis": alt, "perguntar": [pergunta(alt)] if len(alt) >= 2 else [], "decidido": True,
+                "por": "modelo"}
+    if len(ordem) > 1 and ordem[1][0] != "nenhuma" and ordem[1][1] >= 0.3 and v - ordem[1][1] < margem \
+            and pist.get(ordem[1][0], 0) > pist.get(top, 0):
+        alt = [top, ordem[1][0]]
+        return {"tool": top, "confianca": round(v, 4), "motivo": "duas ferramentas servem", "alternativas_uteis": alt,
+                "perguntar": [pergunta(alt)], "decidido": False, "por": "modelo"}
+    motivo = "o modelo decidiu e as pistas concordam" if pist.get(top) else "o modelo decidiu"
+    return {"tool": top, "confianca": round(min(0.99, v), 4), "motivo": motivo, "alternativas_uteis": [],
+            "perguntar": [], "decidido": True, "por": "modelo"}
 
 
 # ------------------------------------------------------------------ dicas --

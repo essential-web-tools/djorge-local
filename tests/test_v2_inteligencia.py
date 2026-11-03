@@ -326,8 +326,11 @@ def test_web_api_e_fallback():
 def test_comando_web_e_busca(app):
     app.command.web_transporte = lambda url, t: DDG_JSON
     r = app.command.run("pesquisa na internet linguagem python")
-    assert r["tool"] == "web" and r["proposal"] == {"action": "search", "q": "linguagem python", "web": True}
-    assert r["results"][0]["source"] == "web" and r["sai_do_computador"] and "na internet" in r["reply"]
+    # rodada 3: pergunta antes de sair do computador; a busca roda no confirm
+    assert r["tool"] == "web" and r["proposal"] == {"action": "web_search", "q": "linguagem python"}
+    assert r["needs_confirm"] and r["results"] == [] and r["sai_do_computador"] and "na internet" in r["reply"]
+    res = app.command.confirm(r["id"], True)
+    assert res["results"][0]["source"] == "web" and res["sai_do_computador"] and "linguagem python" in res["reply"]
     # busca local: só vai à internet se não houver nada local
     app.search.web_transporte = lambda url, t: DDG_JSON
     app.cards.create({"title": "Boleto da escola"})
@@ -400,11 +403,12 @@ def test_etapas_stream(app):
             break
         time.sleep(0.02)
     textos = [x["texto"] for x in e["etapas"]]
-    assert textos[0] == "Lendo o pedido…" and "Achando data e hora…" in textos and "Usando a ferramenta Cards…" in textos
+    assert textos[0] == "Lendo o seu pedido…" and "Djorge está entendendo o que você quer…" in textos
+    assert any(t.startswith("Reconheceu a data ") for t in textos) and "Djorge está usando a ferramenta Cards…" in textos
     assert textos[-1] == "Pronto" and all(x["estado"] == "ok" for x in e["etapas"])
     assert e["resultado"]["tool"] == "cards" and e["resultado"]["executed"]
     s = K.run("2+2")                                                     # sem stream também registra
-    assert K.etapas(s["id"])["pronto"] and "Usando a ferramenta Calcular…" in [x["texto"] for x in K.etapas(s["id"])["etapas"]]
+    assert K.etapas(s["id"])["pronto"] and "Djorge está usando a ferramenta Calcular…" in [x["texto"] for x in K.etapas(s["id"])["etapas"]]
     r = K.run("sempre que chegar boleto, me avisa", stream=True)          # sem modelo: erro amigável na etapa
     for _ in range(200):
         e = K.etapas(r["id"])
@@ -415,7 +419,7 @@ def test_etapas_stream(app):
     with pytest.raises(KeyError):
         K.etapas("nao-existe")
     c = K.run("pesquisa na internet clima", stream=False)
-    assert "Buscando na web…" in [x["texto"] for x in K.etapas(c["id"])["etapas"]]
+    assert "Entendeu: buscar na internet" in [x["texto"] for x in K.etapas(c["id"])["etapas"]]
 
 
 class _Integ:

@@ -33,6 +33,11 @@ from . import pistas as P
 
 CAMPOS = ["data", "hora", "período do dia", "pessoa", "evento ou compromisso", "lugar", "lista",
           "endereço de e-mail", "empresa ou estabelecimento", "frequência ou repetição"]
+# o que o modelo extrai (resolve ENTITY, com os nomes de campo do treino: SLOT_PT de commands_data). Datas, horas e
+# repetição ficam SEMPRE com as regras (o treino deixou de propósito para o relógio do app).
+CAMPOS_MODELO = ["pessoa", "empresa ou estabelecimento", "lugar", "evento ou compromisso", "lista", "aplicativo",
+                 "endereço de e-mail"]
+PRIORIDADES = ("modelo", "equilibrado", "regras")
 SEMANA = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
 MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro",
          "novembro", "dezembro"]
@@ -60,10 +65,12 @@ FRASE = {
     "msg_sem_destino": "Para quem devo mandar? Use, por exemplo, #ana@email.com &texto&.",
     "msg_sem_corpo": "O que devo dizer para {destino}?",
     "msg_enviada": "Mensagem enviada para {destino}.",
-    "busca_vazia": "Não achei nada para “{q}”.",
-    "busca": "Achei {n} {itens} para “{q}”.",
-    "busca_web": "Achei {n} {itens} na internet para “{q}”.",
-    "web_vazia": "Não achei nada na internet para “{q}”.",
+    "busca_vazia": "Não achei nada sobre “{q}” nos seus dados.",
+    "busca": "Aqui estão {n} {itens} sobre “{q}”.",
+    "busca_web": "Aqui estão resultados sobre “{q}”.",
+    "web_vazia": "Não achei nada na internet sobre “{q}”.",
+    "web_perguntar": "Quer que eu busque “{q}” na internet?",
+    "web_depois_local": "Não achei nada sobre “{q}” nos seus dados. Quer que eu busque “{q}” na internet?",
     "abrir": "Abrir {alvo}{com}{texto}?",
     "abrir_ok": "Abrindo {alvo}.",
     "regra": "Montei a regra: {resumo} Confira no editor antes de ativar.",
@@ -77,9 +84,26 @@ FRASE = {
 }
 TIPO_PT = {"tarefa": ("a", "tarefa"), "evento": ("o", "evento"), "lembrete": ("o", "lembrete"),
            "nota": ("a", "nota"), "lista": ("a", "lista"), "mensagem": ("a", "mensagem")}
-ETAPA = {"ler": "Lendo o pedido…", "datas": "Achando data e hora…", "modelo": "Entendendo o pedido com o modelo…",
-         "escolher": "Escolhendo a ferramenta…", "web": "Buscando na web…", "contato": "Procurando o contato…",
-         "pronto": "Pronto"}
+# etapas narradas: o agente (nome_agente das preferências) na 3ª pessoa, com os dados reais; uma linha por acontecimento
+ETAPA = {"ler": "Lendo o seu pedido…", "entender": "{agente} está entendendo o que {quem} quer…",
+         "data": "Reconheceu a data {data}", "prazo": "Reconheceu o prazo {data}", "repete": "Reconheceu a repetição {rec}",
+         "achou": "Encontrou “{x}”", "entendeu": "Entendeu: {intencao}",
+         "ferramenta": "{agente} está usando a ferramenta {nome}…", "web": "{agente} está buscando na internet…",
+         "contato": "{agente} está procurando o contato de {nome}…", "pronto": "Pronto"}
+INTENCAO = {"calcular": "fazer uma conta", "datas_horas": "ver uma data ou hora", "proximas_tarefas": "ver a agenda",
+            "listas": "mexer numa lista", "bilhete": "mandar uma mensagem", "buscar": "buscar nos seus dados",
+            "web": "buscar na internet", "abrir": "abrir um app", "regra": "criar uma regra automática",
+            "interface": "mudar a aparência do app"}
+INTENCAO_CARD = {"tarefa": "criar uma tarefa", "evento": "criar um evento", "lembrete": "criar um lembrete",
+                 "nota": "criar uma nota"}
+# "Encontre quem foi Silvio Santos" -> "Silvio Santos": o que sobra do pedido de busca sem o verbo e a pergunta
+_BUSCA_VERBO = re.compile(r"(?i)^\s*(?:(?:por favor|pf|djorge)[,\s]+)?(?:me\s+)?(?:diz(?:er)?|diga|conta|conte|fala|fale|"
+                          r"mostra|mostre)?\s*(?:procura|procure|busca|busque|acha|ache|encontra|encontre|pesquisa|"
+                          r"pesquise|descobre|descubra|veja|v[eê])?(?:r)?\s*(?:pra mim\s+|para mim\s+)?"
+                          r"(?:(?:na internet|na web|no google|na net)\s+)?(?:por\s+|pelo\s+|pela\s+|sobre\s+)?")
+_PERGUNTA = re.compile(r"(?i)^\s*(?:quem\s+(?:é|e|foi|era|s[aã]o|foram)|o\s+que\s+(?:é|e|foi|significa)|"
+                       r"(?:o\s+)?que\s+(?:é|e)|informa[cç][oõ]es\s+sobre|not[ií]cias\s+(?:sobre|de|do|da))\s+"
+                       r"(?:o\s+|a\s+|os\s+|as\s+|um\s+|uma\s+)?")
 SITES = {"youtube": "https://www.youtube.com", "google": "https://www.google.com", "gmail": "https://mail.google.com",
          "outlook": "https://outlook.live.com", "maps": "https://maps.google.com", "mapa": "https://maps.google.com",
          "spotify": "https://open.spotify.com", "navegador": "https://www.google.com", "chrome": "https://www.google.com",
@@ -236,21 +260,35 @@ class Command:
         z = m.get(names[0])
         return getattr(z.semantic, "engine", z.semantic)
 
+    def _prefs(self) -> Dict:
+        """prioridade (modelo|equilibrado|regras), nome do agente e da pessoa, das preferências gravadas."""
+        try:
+            u = self.app.ui.get() or {}
+        except Exception:
+            u = {}
+        pr = u.get("prioridade") if u.get("prioridade") in PRIORIDADES else "modelo"
+        return {"prioridade": pr, "agente": (str(u.get("nome_agente") or "").strip() or "Djorge"),
+                "usuario": str(u.get("nome_usuario") or "").strip()}
+
     def _model(self, eng, text: str) -> Dict:
+        """Uma só chamada ao DOFL com as perguntas do treino: NOUL (CAN: o app consegue?), CHOICE das ferramentas
+        (ASK_TOOL, TOOL_PT + descrições TOOLS) e resolve ENTITY dos campos do app (CAMPOS_MODELO)."""
         from djorge.runtime.semantic import SemReq
         names = list(TOOLS)
         reqs = [SemReq("NOUL", text, options=[CAN["pt"]]),
                 SemReq("CHOICE", text, options=[TOOL_PT[t] for t in names], descriptions=[TOOLS[t] for t in names],
                        ask=ASK_TOOL["pt"])]
-        reqs += [SemReq("resolve", text, mode="ENTITY", target=c.lower(), threshold=0.5) for c in CAMPOS]
+        reqs += [SemReq("resolve", text, mode="ENTITY", target=c, threshold=0.5) for c in CAMPOS_MODELO]
         out = eng.run(reqs)
         can = float(out[0].get("p_true", out[0].get("probability", 0)))
         back = {TOOL_PT[t]: t for t in names}
         dist = out[1].get("distribution") or {}
         tools = {back[k]: round(float(v), 4) for k, v in dist.items() if k in back}
         trechos = []
-        for campo, ms in zip(CAMPOS, out[2:]):
+        for campo, ms in zip(CAMPOS_MODELO, out[2:]):
             for m in getattr(ms, "matches", []) or []:
+                if (getattr(m, "attributes", None) or {}).get("polarity") == "negated":
+                    continue                                # "não é com a Ana" não vira a Ana
                 trechos.append(Trecho(m.start, m.end, campo, text[m.start:m.end], valor=text[m.start:m.end].strip(),
                                       p=float(m.probability), fonte="modelo"))
         return {"can": can, "tools": tools, "trechos": trechos}
@@ -300,44 +338,59 @@ class Command:
             text = raw
         agora = _now(self.app.cfg)
         hoje = agora.date()
-        regras = reconhecer(text, hoje, agora)
-        if any(r.campo in ("data", "hora", "período do dia", "frequência ou repetição", "duração") for r in regras):
-            self._etapa(cid, ETAPA["datas"])
+        pref = self._prefs()
+        agente = pref["agente"]
+        regras = reconhecer(text, hoje, agora)              # datas, horas, repetição, e-mail, telefone: sempre regras
         atalho = atalho_envio(text) if "#" in text else None
         corpo = corpo_mensagem(text)
         eng = self.engine()
         aviso = None
         ui = self.app.ui.parse(text, hoje) if not context.get("tool") else None
         model_tools, can = None, None
-        if eng is not None:
-            self._etapa(cid, ETAPA["modelo"])
+        self._etapa(cid, ETAPA["entender"].format(agente=agente, quem=pref["usuario"] or "você"))
+        if eng is not None and ui is None:
             md = self._model(eng, text)
             fields = combinar(text, md["trechos"], regras)
             model_tools, can = md["tools"], round(md["can"], 4)
-            if ui is not None:
-                from djorge.runtime.semantic import SemReq
-                r = eng.run([SemReq("NOUL", text, options=["Este pedido muda a aparência ou as preferências do app."])])[0]
-                if float(r.get("p_true", r.get("probability", 0))) < 0.35:
-                    ui = None
         else:
             fields = combinar(text, [], regras)
-            aviso = FRASE["sem_modelo"]
-        self._etapa(cid, ETAPA["escolher"])
-        pis = P.pistas(text, fields, context)
-        dec = P.decidir(model_tools, pis, texto=text)
-        tool = dec["tool"]
+            if eng is None:
+                aviso = FRASE["sem_modelo"]
         quando = resolver_quando(text, fields, agora)
+        self._etapa_quando(cid, quando, hoje)
+        for f in fields:                                    # o que o modelo (ou a regra) achou de nome
+            if f.campo in ("entidade", "lugar", "evento ou compromisso", "aplicativo") and f.valor and f.fonte == "modelo":
+                self._etapa(cid, ETAPA["achou"].format(x=F.nome(f.valor) if f.campo == "entidade" else f.valor), "ok")
+        pis = P.pistas(text, fields, context)
+        d_regras = P.decidir(None, pis, texto=text)          # o que as regras sozinhas diriam
+        if ui is not None:                                  # comando de interface reconhecido: sempre regras
+            dec, por = {"tool": "interface", "confianca": 0.99, "motivo": "comando de interface", "decidido": True,
+                        "perguntar": [], "alternativas_uteis": []}, "regras"
+        elif eng is None:
+            dec, por = d_regras, "regras"
+        else:
+            dec_m = P.decidir_modelo(model_tools, pis, texto=text, can=can)
+            forte = d_regras["decidido"] and d_regras["tool"] != "nenhuma"
+            if pis.get("explicito"):                         # atalho #destino &texto&, conta pura, contexto: certeza maior
+                dec, por = d_regras, "regras"
+            elif pref["prioridade"] == "regras" and forte and d_regras["confianca"] >= 0.5:
+                dec, por = d_regras, "regras"
+            elif pref["prioridade"] == "equilibrado" and forte and d_regras["confianca"] >= 0.8 \
+                    and d_regras["confianca"] > dec_m["confianca"]:
+                dec, por = d_regras, "regras"
+            else:
+                dec, por = dec_m, dec_m.get("por", "modelo")
+        tool = dec["tool"]
         out = {"id": cid, "text": text, "kind": "pedido", "tool": tool, "tool_p": dec["confianca"],
                "confianca": dec["confianca"], "motivo": dec["motivo"], "can_do_p": can, "model": eng is not None,
-               "aviso": aviso,
+               "decidido_por": por, "prioridade": pref["prioridade"], "agente": agente, "aviso": aviso,
                "fields": [{"campo": f.campo, "texto": f.texto, "valor": f.valor, "p": round(f.p, 4), "fonte": f.fonte,
                            "tipo": (f.extra or {}).get("tipo"), "ini": f.ini, "fim": f.fim} for f in fields],
                "quando": quando, "corpo": corpo.valor if corpo else None, "atalho": atalho, "reply": "", "titulo": "",
                "dicas": [], "perguntas": [], "proposal": {"action": "none"}, "authorization": dict(SEGUIR),
                "needs_confirm": False, "results": [], "context": context}
         if ui is not None:
-            out["tool"] = "interface"
-            self._etapa(cid, "Mudando a aparência…")
+            self._etapa(cid, ETAPA["entendeu"].format(intencao=ui["descricao"]))
             self._ui(out, ui)
         elif not dec["decidido"] and dec["perguntar"]:
             out["perguntas"] = dec["perguntar"]
@@ -345,7 +398,18 @@ class Command:
             out["reply"] = FRASE["perguntar"].format(opcoes=" ou ".join([", ".join(ops[:-1]), ops[-1]] if len(ops) > 1 else ops))
             out["tool"] = "perguntar"
         else:
-            self._etapa(cid, ETAPA["web"] if tool == "web" else f"Usando a ferramenta {P.NOME.get(tool, tool)}…")
+            s_ = _sem_acento(text.casefold())
+            if tool in ("buscar", "nenhuma") and self._mundo(pis):   # "quem foi Silvio Santos": a internet sabe
+                tool = out["tool"] = "web"
+            if tool == "cards":
+                intencao = INTENCAO_CARD.get(self._tipo_card(s_, quando.get("hora"), quando.get("recorrencia"),
+                                                             quando.get("prazo")), "criar um card")
+            else:
+                intencao = INTENCAO.get(tool)
+            if intencao:
+                self._etapa(cid, ETAPA["entendeu"].format(intencao=intencao), "ok")
+            if tool not in ("nenhuma", "web"):
+                self._etapa(cid, ETAPA["ferramenta"].format(agente=agente, nome=P.NOME.get(tool, tool)))
             if tool == "calcular":
                 self._calc(out, text)
             elif tool == "datas_horas":
@@ -360,7 +424,7 @@ class Command:
             elif tool == "buscar":
                 self._search(out, text, fields, eng, cid)
             elif tool == "web":
-                self._web(out, text)
+                self._web(out, text, fields, cid)
             elif tool == "abrir":
                 self._abrir(out, text, fields, corpo, cid)
             elif tool == "regra":
@@ -386,6 +450,39 @@ class Command:
         except Exception:
             pass
         return out
+
+    def _etapa_quando(self, cid, quando: Dict, hoje):
+        if not quando.get("achou"):
+            return
+        if quando.get("recorrencia_txt"):
+            self._etapa(cid, ETAPA["repete"].format(rec=quando["recorrencia_txt"]), "ok")
+        elif quando.get("inicio"):
+            w = quando["inicio"]
+            txt = F.intervalo(w, quando["termino"], hoje) if quando.get("fim") and quando.get("termino") else \
+                F.data(w, hoje, relativo=False)
+            self._etapa(cid, ETAPA["prazo" if quando.get("prazo") else "data"].format(data=txt), "ok")
+
+    @staticmethod
+    def _mundo(pis: Dict) -> bool:
+        """Pergunta sobre o mundo ("quem foi…", "o que é…", "notícias…"): resposta está na internet, não nos dados."""
+        return any(x["tool"] == "web" for x in pis.get("sinais") or [])
+
+    @staticmethod
+    def _consulta(text: str, fields) -> (str, bool):
+        """O que buscar: a entidade que o MODELO extraiu (pessoa, empresa, lugar, evento) ou, sem ela, o pedido sem o
+        verbo e sem a forma de pergunta. Devolve (consulta, veio_do_modelo)."""
+        ents = [f for f in fields if f.fonte == "modelo" and f.valor and f.campo in
+                ("entidade", "lugar", "evento ou compromisso", "aplicativo", "lista")]
+        if ents:
+            f = max(ents, key=lambda f: (f.p, f.fim - f.ini))
+            v = f.valor.strip(" ,.!?:;\"'“”")
+            return (F.nome(v) if f.campo == "entidade" else v), True
+        q = _BUSCA_VERBO.sub("", text, count=1)
+        sem = _PERGUNTA.sub("", q, count=1)
+        pessoa = sem != q and re.match(r"(?i)\s*quem\b", q)
+        q = re.sub(r"(?i)\b(?:na internet|na web|no google|na net|online|em sites?)\b", "", sem)
+        q = " ".join(q.split()).strip(" ?.!,:;\"'“”") or " ".join(text.split()).strip(" ?.!")
+        return (F.nome(q) if pessoa and len(q.split()) <= 5 else q), False
 
     # ------------------------------------------------------------------ ferramentas --
     def _calc(self, out, text):
@@ -459,11 +556,13 @@ class Command:
                                                   periodo=per, primeiro=f"{F.titulo(c['title'])}{_quando_pt(c)}")
 
     @staticmethod
-    def _tipo_card(s: str, hora, rec=None) -> str:
+    def _tipo_card(s: str, hora, rec=None, prazo=False) -> str:
         evento = re.search(r"\b(reuniao|consulta|encontro|jantar|call|aula|evento|compromisso|festa|aniversario|"
                            r"entrevista|voo|dentista|medic[oa]|exame|viagem|show|casamento)\b", s)
         if rec and not evento and not re.search(r"\b(anota|anote|nota|tarefa)\b", s):
             return "lembrete"
+        if prazo and not rec and not re.search(r"\blembr", s):        # "entregar o relatório até sexta"
+            return "tarefa"
         if not hora and evento and not re.search(r"\b(lembr|tarefa|pagar)", s):
             return "evento"
         if hora and (re.search(r"\b(reuniao|consulta|encontro|almoco|jantar|call|aula|evento|compromisso|festa|"
@@ -526,7 +625,7 @@ class Command:
                                                               if x["text"].casefold() not in {y["text"].casefold() for y in exist[0]["checklist"]}]}
             action = "update_card" if exist else "create_card"
         else:
-            kind = self._tipo_card(s, quando.get("hora"), quando.get("recorrencia"))
+            kind = self._tipo_card(s, quando.get("hora"), quando.get("recorrencia"), quando.get("prazo"))
             titulo = F.titulo(_sem_campos(text, fields) or text[:80], [p["nome"] for p in people if p.get("nome")])
             if not titulo:
                 titulo = {"evento": "Compromisso", "lembrete": "Lembrete", "nota": "Nota"}.get(kind, "Tarefa")
@@ -648,7 +747,7 @@ class Command:
                 if m:
                     destino = nome = m.group(1)
         if destino and "@" not in destino and not re.sub(r"\D", "", destino):
-            self._etapa(cid, ETAPA["contato"])
+            self._etapa(cid, ETAPA["contato"].format(agente=self._prefs()["agente"], nome=F.nome(destino)))
             c = self.contato(destino)
             if c and (c.get("email") or c.get("telefone")):
                 nome = c["nome"]
@@ -690,42 +789,50 @@ class Command:
             out["reply"] = FRASE["msg_confirmar"].format(destino=shown, canal=cname, corpo=body)
 
     def _search(self, out, text, fields, eng, cid=None):
-        q = re.sub(r"(?i)^\s*(?:me\s+)?(?:procura|procure|busca|busque|acha|ache|encontra|encontre|pesquisa|pesquise)"
-                   r"(?:r)?\s+(?:por\s+|pelo\s+|pela\s+|o\s+|a\s+|os\s+|as\s+)?", "", text).strip(" ?.!") or text
+        q, do_modelo = self._consulta(text, fields)
+        if not do_modelo:
+            q = re.sub(r"(?i)^\s*(?:o\s+|a\s+|os\s+|as\s+)", "", q) or q
         srch = self.app.search
-        if self.web_transporte is not None and getattr(srch, "web_transporte", None) is None:
-            srch.web_transporte = self.web_transporte
-        r = srch.search(q, engine=eng, limit=10, web="auto")
+        r = srch.search(q, engine=eng, limit=10)               # só local: a internet é perguntada antes
         out["proposal"] = {"action": "search", "q": q}
         out["results"] = r["results"]
         out["titulo"] = f"Busca: {q}"
         n = len(r["results"])
-        if r.get("web"):
-            out["sai_do_computador"] = True
-            out["proposal"]["web"] = True
-            self._etapa(cid, ETAPA["web"])
-        out["reply"] = (FRASE["busca_web" if r.get("web") else "busca"].format(
-            n=n, itens="resultado" if n == 1 else "resultados", q=q) if n else FRASE["busca_vazia"].format(q=q))
-        if not n:
-            out["dicas"] = [f"Tente: “pesquisa na internet {q}”", "Tente: “procura o boleto da escola”"]
+        if n:
+            out["reply"] = FRASE["busca"].format(n=n, itens="resultado" if n == 1 else "resultados", q=q)
+            return
+        out["reply"] = FRASE["busca_vazia"].format(q=q)
+        out["dicas"] = [f"Tente: “pesquisa na internet {q}”", "Tente: “procura o boleto da escola”"]
+        if q.strip():                                            # nada local: oferece a internet (com confirmação)
+            out["tool"] = "web"
+            self._web(out, text, fields, cid, q=q, depois_local=True)
 
-    def _web(self, out, text):
-        from . import web
-        q = re.sub(r"(?i)\b(?:me\s+)?(?:pesquis\w*|busc\w*|procur\w*|v[eê]|veja|olha|olhe)\b\s*(?:por\s+|sobre\s+)?", "", text)
-        q = re.sub(r"(?i)\b(?:na internet|na web|no google|na net|online|em sites?)\b", "", q)
-        q = " ".join(q.split()).strip(" ?.!,:") or text
-        r = web.buscar(q, 6, transporte=self.web_transporte or getattr(self.app, "web_transporte", None))
-        res = [dict(x, source="web", title=x["titulo"], snippet=x["trecho"]) for x in r["resultados"]]
-        out["proposal"] = {"action": "search", "q": q, "web": True}
-        out["results"] = res
+    def _web(self, out, text, fields=(), cid=None, q: Optional[str] = None, depois_local: bool = False):
+        """Não sai do computador sem perguntar: devolve a proposta web_search; a busca roda no confirm."""
+        if q is None:
+            q, _ = self._consulta(text, fields)
+        out["proposal"] = {"action": "web_search", "q": q}
+        out["results"] = []
+        out["needs_confirm"] = True
         out["sai_do_computador"] = True
         out["titulo"] = f"Na internet: {q}"
-        n = len(res)
-        if n:
-            out["reply"] = FRASE["busca_web"].format(n=n, itens="resultado" if n == 1 else "resultados", q=q)
+        out["reply"] = FRASE["web_depois_local" if depois_local else "web_perguntar"].format(q=q)
+        if not depois_local:
+            out["dicas"] = []
+
+    def _buscar_web(self, q: str, n: int = 6) -> Dict:
+        from . import web
+        r = web.buscar(q, n, transporte=self.web_transporte or getattr(self.app, "web_transporte", None))
+        res = [dict(x, source="web", title=x["titulo"], snippet=x["trecho"], sai_do_computador=True)
+               for x in r["resultados"]]
+        out = {"ok": True, "q": q, "results": res, "sai_do_computador": True}
+        if res:
+            out["reply"] = FRASE["busca_web"].format(q=q)
         else:
+            out["ok"] = not r.get("erro")
             out["reply"] = r.get("erro") or FRASE["web_vazia"].format(q=q)
-            out["dicas"] = [f"Tente: “procura {q}” (nos seus dados)", "Tente palavras mais curtas, ex.: “previsão do tempo hoje”"]
+            out["dicas"] = ["Tente palavras mais curtas, ex.: “previsão do tempo hoje”"]
+        return out
 
     def _abrir(self, out, text, fields, corpo, cid=None):
         s = _sem_acento(text.casefold())
@@ -753,7 +860,7 @@ class Command:
         contato = {"nome": F.nome(nome) if nome else None, "telefone": tel.valor if tel else None,
                    "email": em.valor if em else None}
         if nome and not (contato["telefone"] or contato["email"]):
-            self._etapa(cid, ETAPA["contato"])
+            self._etapa(cid, ETAPA["contato"].format(agente=self._prefs()["agente"], nome=F.nome(nome)))
             c = self.contato(nome)
             if c:
                 contato.update({k: v for k, v in c.items() if v})
@@ -945,6 +1052,13 @@ class Command:
                 r = fn(q) or {}
                 return dict({"ok": True, "reply": FRASE["abrir_ok"].format(alvo=alvo)}, **r, abrir=q)
             return {"ok": True, "abrir": q, "url": q.get("url"), "reply": FRASE["abrir_ok"].format(alvo=alvo)}
+        if a == "web_search":
+            q = " ".join(str((edits or {}).get("q") or p.get("q") or "").split())
+            if not q:
+                raise ValueError("escreva o que buscar na internet")
+            res = self._buscar_web(q)
+            rec["results"] = res["results"]
+            return res
         if a == "create_tree":
             tree = (edits or {}).get("tree") or p["tree"]
             if (edits or {}).get("graph"):

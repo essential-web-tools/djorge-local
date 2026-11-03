@@ -377,7 +377,7 @@ def test_inicio_e_comando_com_etapas(app, srv):
         if e["pronto"]:
             break
         time.sleep(0.05)
-    assert e["pronto"] and e["etapas"][0]["texto"] == "Lendo o pedido…" and "resultado" in e
+    assert e["pronto"] and e["etapas"][0]["texto"] == "Lendo o seu pedido…" and "resultado" in e
     code, e = srv("/api/command/nada/etapas")
     assert code == 404
     code, w = srv("/api/web?q=")                       # sem rede no teste: só a validação

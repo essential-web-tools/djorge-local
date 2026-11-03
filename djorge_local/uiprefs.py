@@ -18,7 +18,7 @@ from .cards import COLUMNS, KINDS
 
 ACCENTS = {"rosa": "#b56576", "vinho": "#6d2e46", "terracota": "#c06c4a", "mostarda": "#c9a227",
            "verde": "#5a7d5a", "azul": "#4a6c8c", "lavanda": "#8a7bb0", "grafite": "#4a4a4a"}
-VIEWS = ("inicio", "kanban", "agenda", "lista")
+VIEWS = ("inicio", "kanban", "agenda", "lista", "mensagens", "notificacoes", "automacoes")
 SIDEBAR = ("inicio", "kanban", "agenda", "lista", "busca", "integracoes", "regras", "modelo", "configuracoes")
 FILTER_KEYS = ("q", "kind", "column", "tag", "from", "to", "source", "priority", "done", "person")
 
@@ -33,10 +33,23 @@ DEFAULTS = {
     "voice_enabled": False,
     "speak_replies": False,
     "font_size": "normal",           # pequena | normal | grande | muito grande
+    "prioridade": "modelo",          # modelo (o DOFL decide) | equilibrado | regras (respostas rápidas)
+    "nome_usuario": "",              # vazio -> "você"
+    "nome_agente": "Djorge",
 }
 CHOICES = {"theme": ("claro", "escuro", "auto"), "density": ("compacta", "normal", "confortavel"),
            "accent": tuple(ACCENTS), "default_view": VIEWS,
-           "font_size": ("pequena", "normal", "grande", "muito grande")}
+           "font_size": ("pequena", "normal", "grande", "muito grande"),
+           "prioridade": ("modelo", "equilibrado", "regras")}
+# o front usa outros nomes para alguns valores e chaves: aceitos aqui e gravados no nome do servidor
+ALIAS_CHAVE = {"columns": "kanban_columns", "voice": "voice_enabled", "speak": "speak_replies",
+               "user_name": "nome_usuario", "agent_name": "nome_agente", "priority_mode": "prioridade"}
+ALIAS_VALOR = {"theme": {"light": "claro", "dark": "escuro"},
+               "density": {"compact": "compacta", "comfortable": "normal", "comfy": "confortavel", "confortável": "confortavel"},
+               "font_size": {"sm": "pequena", "md": "normal", "lg": "grande", "xl": "muito grande"},
+               "default_view": {"quadro": "kanban", "tarefas": "lista", "início": "inicio"},
+               "prioridade": {"rapido": "regras", "rápido": "regras", "rules": "regras", "model": "modelo"}}
+EXTRA_VIEWS = ("mensagens", "notificacoes", "automacoes")
 FONT_STEPS = CHOICES["font_size"]
 DENS_STEPS = CHOICES["density"]
 
@@ -57,6 +70,12 @@ def validate(patch: Dict) -> Dict:
         if k in CHOICES:
             if v not in CHOICES[k]:
                 raise ValueError(f"{k}: use {', '.join(CHOICES[k])}")
+        elif k in ("nome_usuario", "nome_agente"):
+            if not isinstance(v, str) or re.search(r"[<>{}\\]", v):
+                raise ValueError(f"{k}: escreva só o nome")
+            v = " ".join(v.split())[:40]
+            if k == "nome_agente" and not v:
+                v = DEFAULTS["nome_agente"]
         elif k in ("voice_enabled", "speak_replies"):
             if not isinstance(v, bool):
                 raise ValueError(f"{k}: verdadeiro ou falso")
@@ -64,8 +83,9 @@ def validate(patch: Dict) -> Dict:
             if not isinstance(v, list) or not v or any(c not in COLUMNS for c in v) or len(set(v)) != len(v):
                 raise ValueError(f"kanban_columns: lista sem repetição com {', '.join(COLUMNS)}")
         elif k == "sidebar_order":
-            if not isinstance(v, list) or sorted(v) != sorted(SIDEBAR):
-                raise ValueError(f"sidebar_order: todos os itens, uma vez cada: {', '.join(SIDEBAR)}")
+            if not isinstance(v, list) or not v or len(set(v)) != len(v) or \
+                    any(not isinstance(x, str) or x not in SIDEBAR + EXTRA_VIEWS + ("quadro", "tarefas") for x in v):
+                raise ValueError(f"sidebar_order: itens sem repetição entre {', '.join(SIDEBAR + EXTRA_VIEWS)}")
         elif k == "saved_filters":
             if not isinstance(v, list) or len(v) > 30:
                 raise ValueError("saved_filters: lista com até 30 filtros")
@@ -83,6 +103,21 @@ def validate(patch: Dict) -> Dict:
                     raise ValueError("saved_filters: column inválida")
                 clean.append({"name": str(f["name"]).strip()[:60], "filters": fl})
             v = clean
+        out[k] = v
+    return out
+
+
+def normalizar(patch: Dict) -> Dict:
+    """Troca os nomes do front pelos do servidor (theme "dark" -> "escuro", "columns" -> "kanban_columns"...)."""
+    if not isinstance(patch, dict):
+        return patch
+    out = {}
+    for k, v in patch.items():
+        k = ALIAS_CHAVE.get(k, k)
+        if isinstance(v, str) and k in ALIAS_VALOR:
+            v = ALIAS_VALOR[k].get(v, v)
+        if k in ("voice_enabled", "speak_replies") and v in (0, 1):
+            v = bool(v)
         out[k] = v
     return out
 
@@ -106,7 +141,16 @@ class UIPrefs:
         return cur
 
     def set(self, patch: Dict) -> Dict:
-        p = validate(patch)
+        """Grava as chaves válidas. Chaves desconhecidas (de versões novas do front, ou "_server") são ignoradas
+        quando há alguma chave conhecida no patch: antes um único campo estranho fazia a gravação inteira falhar
+        e nada ficava salvo. Valor inválido numa chave conhecida continua sendo erro (ValueError)."""
+        patch = normalizar(patch)
+        if not isinstance(patch, dict):
+            raise ValueError("preferências: objeto esperado")
+        conhecidas = {k: v for k, v in patch.items() if k in DEFAULTS}
+        if not conhecidas:
+            validate(patch)                                # nada conhecido: erro claro ("preferência desconhecida")
+        p = validate(conhecidas)
         with self.lock:
             cur = self.get()
             cur.update(p)
@@ -122,6 +166,22 @@ class UIPrefs:
         s = _fold(text).strip(" .!?")
         cur = self.get()
         hoje = hoje or _dt.date.today()
+        # nomes: "me chama de Arthur", "seu nome agora é Jorge"
+        m = re.search(r"(?i)^(?:(?:por favor|pode)\s+)?(?:me\s+cham[ae]r?|cham[ae]-me|meu nome (?:e|é))\s+(?:de\s+)?"
+                      r"([A-Za-zÀ-ÿ][\wÀ-ÿ'-]*(?:\s+[A-Za-zÀ-ÿ][\wÀ-ÿ'-]*)?)\s*[.!]?$", text.strip())
+        if m:
+            nome = " ".join(w[:1].upper() + w[1:] for w in m.group(1).split())
+            return {"patch": {"nome_usuario": nome}, "descricao": f"chamar você de {nome}"}
+        m = re.search(r"(?i)^(?:(?:agora\s+)?(?:o\s+)?seu nome (?:agora\s+)?(?:e|é|vai ser|sera|será)|vou te chamar de|"
+                      r"(?:pode\s+)?se chamar)\s+([A-Za-zÀ-ÿ][\wÀ-ÿ'-]*)\s*[.!]?$", text.strip())
+        if m:
+            nome = m.group(1)[:1].upper() + m.group(1)[1:]
+            return {"patch": {"nome_agente": nome}, "descricao": f"o assistente agora se chama {nome}"}
+        if re.search(r"\b(respostas? rapidas?|regras primeiro|prioridade (as|para as|pras) regras)\b", s) and \
+                re.search(r"\b(prefir\w*|usa|use|quero|ativa|ative|liga|ligue|prioriza\w*|da|de)\b", s):
+            return {"patch": {"prioridade": "regras"}, "descricao": "respostas rápidas (regras primeiro)"}
+        if re.search(r"\b(modelo primeiro|prioridade (ao|para o|pro) modelo|deixa o modelo decidir)\b", s):
+            return {"patch": {"prioridade": "modelo"}, "descricao": "o modelo decide primeiro"}
         # tema
         if re.search(r"\b(tema|modo|deixa|deixe|muda|mude|coloca|coloque|poe|bota|usa|use|ativa|ative|liga|ligue)\b.*"
                      r"\b(escuro|noturno|dark|claro|light|automatico|auto)\b", s) or re.fullmatch(r"(tema |modo )?(escuro|claro)", s):

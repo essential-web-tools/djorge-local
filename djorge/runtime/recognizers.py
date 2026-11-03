@@ -65,6 +65,15 @@ _NH = r"uma|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze"
 _HH = r"\d{1,2}(?::\d{2}|h\d{2}|h)?"
 _ORD = r"primeir[ao]|segund[ao]|terceir[ao]|quart[ao]|quint[ao]|[uú]ltim[ao]|pen[uú]ltim[ao]"
 _UN = r"dias?|semanas?|m[eê]s(?:es)?|anos?|horas?|minutos?|min"
+# feriados nacionais de data fixa (e datas fixas muito usadas): nome sem acento -> (mês, dia)
+FERIADOS = {"vespera de natal": (12, 24), "natal": (12, 25), "reveillon": (12, 31), "virada do ano": (12, 31),
+            "ano novo": (1, 1), "confraternizacao universal": (1, 1), "tiradentes": (4, 21),
+            "dia do trabalho": (5, 1), "dia do trabalhador": (5, 1), "independencia": (9, 7),
+            "sete de setembro": (9, 7), "nossa senhora aparecida": (10, 12), "dia das criancas": (10, 12),
+            "finados": (11, 2), "proclamacao da republica": (11, 15), "consciencia negra": (11, 20)}
+_FER = (r"v[eé]spera\s+de\s+natal|natal|r[eé]veillon|virada\s+do\s+ano|ano\s+novo|confraterniza[cç][aã]o\s+universal|"
+        r"tiradentes|dia\s+do\s+trabalh(?:o|ador)|independ[eê]ncia|sete\s+de\s+setembro|nossa\s+senhora\s+aparecida|"
+        r"dia\s+das\s+crian[cç]as|finados|proclama[cç][aã]o\s+da\s+rep[uú]blica|consci[eê]ncia\s+negra")
 
 # (campo, certeza média, regex) - a ordem decide quem fica com um trecho disputado entre regras
 PADROES = [
@@ -97,20 +106,25 @@ PADROES = [
     ("hora", 0.96, rf"\bd[ao]s\s+(?:{_HH})\s+(?:[àa]s|at[ée](?:\s+[àa]s)?)\s+(?:{_HH})(?:\s+da\s+(?:manh[aã]|tarde|noite))?(?!\w)"
                    rf"|\b(?:de|entre)\s+\d{{1,2}}(?::\d{{2}}|h\d{{0,2}})\s+(?:[àa]s|a|e|at[ée])\s+\d{{1,2}}(?::\d{{2}}|h\d{{0,2}})(?!\w)"
                    rf"|\b\d{{1,2}}(?::\d{{2}}|h\d{{0,2}})\s*[-–]\s*\d{{1,2}}(?::\d{{2}}|h\d{{0,2}})(?!\w)"),
-    ("hora", 0.95, rf"\b(?:daqui\s+a|em|dentro\s+de)\s+(?:\d+|{_NH}|meia)\s+(?:horas?|h|minutos?|min)(?:\s+e\s+meia)?\b"),
+    ("hora", 0.95, rf"\b(?:daqui\s+a|em|dentro\s+de)\s+(?:\d+|{_NH}|meia)\s+(?:horas?|h|minutos?|min)(?:\s+e\s+meia)?\b"
+                   r"|\bdaqui\s+a\s+(?:pouc[oa]|pouquinho)\b|\bj[aá]\s+j[aá]\b"),
     ("duração", 0.88, rf"\b(?:por|durante|dura(?:ndo)?|de)\s+(?:\d+(?:[,.]\d+)?|{_NH}|meia)\s+(?:horas?|h|minutos?|min)(?:\s+e\s+meia)?\b"
                       r"|\b\d+h\d{1,2}\s?min\b"),
     # datas
     ("data", 0.97, r"\b(?:hoje|amanh[aã]|depois\s+de\s+amanh[aã]|ontem|anteontem)\b"),
     ("data", 0.95, rf"\b(?:n[ao]\s+)?(?:{_D})\s+(?:d[ae]\s+|n[ae]\s+)?(?:semana\s+que\s+vem|pr[oó]xima\s+semana)\b"
                    rf"|\b(?:semana\s+que\s+vem|pr[oó]xima\s+semana),?\s+n[ao]\s+(?:{_D})\b"),
-    ("data", 0.95, r"\bpr[oó]ximo\s+dia\s+[uú]til\b|\b(?:no\s+)?(?:fim|final)\s+do\s+m[eê]s(?:\s+que\s+vem)?\b"),
-    ("data", 0.95, rf"\b(?:dia\s+)?\d{{1,2}}\s+(?:de\s+)?(?:{_MA})\b\.?(?:\s+de\s+\d{{4}})?|\b\d{{1,2}}/\d{{1,2}}(?:/\d{{2,4}})?\b"
+    ("data", 0.95, rf"\b(?:(?:n[ao]|para\s+o|pr[oó]|at[eé]\s+o)\s+)?(?:(?:dia|feriado)\s+d[aeo]s?\s+)?(?:{_FER})\b"),
+    ("data", 0.95, r"\b(?:no\s+)?dia\s+\d{1,2}[º°]?\s+d[oe]\s+(?:m[eê]s\s+que\s+vem|pr[oó]ximo\s+m[eê]s)\b"),
+    ("data", 0.95, r"\bpr[oó]ximo\s+dia\s+[uú]til\b|\b(?:no\s+)?(?:fim|final|in[ií]cio|come[cç]o|meio|metade)\s+do\s+m[eê]s"
+                   r"(?:\s+que\s+vem)?\b"),
+    ("data", 0.95, rf"\b(?:dia\s+)?\d{{1,2}}[º°]?\s+(?:de\s+)?(?:{_MA})\b\.?(?:\s+de\s+\d{{4}})?|\b\d{{1,2}}/\d{{1,2}}(?:/\d{{2,4}})?\b"
                    rf"|\b\d{{4}}-\d{{2}}-\d{{2}}\b|\bdaqui\s+a\s+(?:\d+|{_NH})\s+(?:dias|semanas|meses)\b"
-                   rf"|\b(?:daqui\s+a|em)\s+(?:um|uma)\s+(?:semana|m[eê]s)\b"),
+                   rf"|\b(?:daqui\s+a|em)\s+(?:um|uma)\s+(?:semana|m[eê]s)\b"
+                   rf"|\bem\s+(?:\d+|{_NH})\s+(?:dias|semanas|meses)\b"),
     ("data", 0.9, r"\b(?:(?:semana|m[eê]s|ano)\s+que\s+vem|pr[oó]xim[ao]\s+(?:semana|m[eê]s|ano)|fim\s+de\s+semana)\b"),
     ("data", 0.85, rf"\b(?:(?:n[ao]|nest[ae]|pr[oó]xim[ao]|est[ae])\s+)(?:{_D})(?:\s+que\s+vem)?\b|\b(?:{_D})(?:-feira|\s+que\s+vem)\b"),
-    ("data", 0.8, r"\bdia\s+\d{1,2}\b"),
+    ("data", 0.8, r"\bdia\s+\d{1,2}(?:[º°]|\b)"),
     ("data", 0.7, rf"\b(?:{_D})\b"),                     # "segunda" sozinha pode ser "segunda vez"
     ("hora", 0.97, r"\b\d{1,2}(?::\d{2}|h\d{2}|h)(?!\w)|\bmeio[- ]dia(?:\s+e\s+meia)?\b|\bmeia[- ]noite\b"),
     ("hora", 0.93, rf"\b(?:\d{{1,2}}|{_NH})\s+(?:e\s+meia\s+)?da\s+(?:manh[aã]|tarde|noite|madrugada)\b|\b(?:{_NH})\s+e\s+meia\b"),
@@ -181,7 +195,23 @@ def _dia_semana(s: str) -> Optional[int]:
 
 
 def _norm_data(t: str, hoje: _dt.date) -> Optional[str]:
-    s = _sem_acento(t.casefold())
+    s = " ".join(_sem_acento(re.sub(r"(\d)[º°]", r"\1", t.casefold())).split())
+    for nome, (mo, d) in sorted(FERIADOS.items(), key=lambda x: -len(x[0])):
+        if re.search(rf"\b{nome}\b", s) and not re.search(r"\d", s):
+            x = _dt.date(hoje.year, mo, d)
+            return (x if x >= hoje else _dt.date(hoje.year + 1, mo, d)).isoformat()
+    m = re.search(r"dia (\d{1,2}) d[oe] (?:mes que vem|proximo mes)", s)
+    if m:
+        base = _mais_meses(hoje.replace(day=1), 1)
+        return base.replace(day=max(1, min(int(m.group(1)), _ultimo_dia(base.year, base.month)))).isoformat()
+    m = re.search(r"(inicio|comeco|meio|metade) do mes( que vem)?", s)
+    if m:
+        dia = 1 if m.group(1) in ("inicio", "comeco") else 15
+        base = _mais_meses(hoje.replace(day=1), 1) if m.group(2) else hoje.replace(day=1)
+        x = base.replace(day=dia)
+        if x < hoje and not m.group(2):
+            x = _mais_meses(base, 1).replace(day=dia)
+        return x.isoformat()
     if re.search(r"proximo dia util", s):
         return _proximo_util(hoje).isoformat()
     m = re.search(r"(?:fim|final) do mes( que vem)?", s)
@@ -498,8 +528,8 @@ def reconhecer(texto: str, hoje: Optional[_dt.date] = None, agora: Optional[_dt.
             if campo == "data":
                 t.valor = _norm_data(t.texto, hoje)
             elif campo == "hora":
-                if re.match(r"(?:daqui a|em|dentro de)\s", low):        # "daqui a 3 horas" -> hora e data
-                    mins = _duracao_min(low)
+                if re.match(r"(?:daqui a|em|dentro de)\s|ja ja\b", low):        # "daqui a 3 horas" -> hora e data
+                    mins = (15 if "pouquinho" in low else 30) if re.search(r"pou[cq]|^ja ja", low) else _duracao_min(low)
                     if mins is None:
                         continue
                     w = agora + _dt.timedelta(minutes=mins)
@@ -571,6 +601,9 @@ def resolver_quando(texto: str, trechos: Optional[List[Trecho]] = None, agora: O
     ts = trechos if trechos is not None else reconhecer(texto, hoje, agora)
     get = lambda c: [t for t in ts if t.campo == c and t.valor]
     data = next((t.valor for t in get("data")), None)
+    d0 = next((t for t in get("data")), None)                 # "até sexta" = prazo, não começo
+    prazo = bool(d0 and (re.search(r"(?i)\bat[eé]\s+(?:o\s+|a\s+|no\s+|na\s+|dia\s+)?$", texto[max(0, d0.ini - 12):d0.ini])
+                         or re.match(r"(?i)at[eé]\s", d0.texto)))
     horas = get("hora")
     hora = next((t.valor for t in horas if not (t.extra or {}).get("relativo_min")), None)
     rel = next((t for t in horas if (t.extra or {}).get("relativo_min")), None)
@@ -607,7 +640,7 @@ def resolver_quando(texto: str, trechos: Optional[List[Trecho]] = None, agora: O
             termino = (a + _dt.timedelta(minutes=dur)).isoformat(timespec="minutes")
     return {"data": data, "hora": hora, "fim": fim, "duracao_min": dur, "recorrencia": rec,
             "recorrencia_txt": descrever_recorrencia(rec), "inicio": inicio, "termino": termino,
-            "achou": bool(data or hora or rec)}
+            "achou": bool(data or hora or rec), "prazo": prazo}
 
 
 def data_humana(valor, agora: Optional[_dt.datetime] = None) -> Optional[str]:
