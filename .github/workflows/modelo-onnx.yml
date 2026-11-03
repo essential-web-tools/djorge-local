@@ -24,7 +24,7 @@ jobs:
       - name: Dependências
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          grep -viE "directml|pywin|comtypes|webview|pystray|winotify|faster" requirements.txt > req-linux.txt && pip install -r req-linux.txt
           pip install onnx onnxscript onnxruntime transformers safetensors gdown
       - name: Baixar o artefato de treino
         run: |
