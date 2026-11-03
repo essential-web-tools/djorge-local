@@ -189,13 +189,35 @@ def _default_tts_factory():
     raise RuntimeError("Nenhum mecanismo de fala disponível (" + "; ".join(errors) + ").")
 
 
+MALE_HINTS = ("daniel", "antonio", "antônio", "donato", "fabio", "fábio", "humberto", "julio", "júlio",
+              "nicolau", "valerio", "valério", "duarte", "helio", "hélio", "ricardo", "male", "masculin",
+              "david", "mark", "george", "james", "guy", "pablo", "raul", "jorge")
+FEMALE_HINTS = ("maria", "francisca", "thalita", "brenda", "elza", "giovanna", "leila", "leticia", "manuela",
+                "yara", "raquel", "fernanda", "helena", "female", "feminin", "zira", "hazel", "susan")
+
+
+def _is_male(n: str) -> bool:
+    s = n.lower()
+    return any(h in s for h in MALE_HINTS) and not any(h in s for h in FEMALE_HINTS)
+
+
+def sort_voices(names: list[str]) -> list[str]:
+    """Vozes masculinas primeiro; dentro disso, português do Brasil primeiro."""
+    def k(n):
+        s = n.lower()
+        pt = next((i for i, h in enumerate(PT_HINTS) if h in s), len(PT_HINTS))
+        return (0 if _is_male(n) else 1, pt)
+    return sorted(names, key=k)
+
+
 def pick_voice(names: list[str]) -> str | None:
-    """Prefere vozes em português do Brasil."""
-    for hint in PT_HINTS:
-        for n in names:
-            if hint in n.lower():
-                return n
-    return names[0] if names else None
+    """Prefere voz masculina em português do Brasil; depois qualquer pt-BR; depois masculina."""
+    pt = [n for n in names if any(h in n.lower() for h in PT_HINTS)]
+    for grupo in ([n for n in pt if _is_male(n)], pt, [n for n in names if _is_male(n)], names):
+        if grupo:
+            return grupo[0] if grupo is not pt else sorted(grupo, key=lambda n: next(
+                (i for i, h in enumerate(PT_HINTS) if h in n.lower()), 99))[0]
+    return None
 
 
 def _default_whisper_factory(model: str, model_dir: Path, download: bool):
@@ -392,7 +414,7 @@ class Voice:
             "tts": eng is not None,
             "tts_engine": getattr(eng, "name", None),
             "tts_error": "" if eng else (self._tts_error or "Fala indisponível."),
-            "voices": list(self._voices),
+            "voices": sort_voices(list(self._voices)),
             "voice": self.default_voice or pick_voice(self._voices),
             "speaking": self._speaking.is_set(),
             "stt": ok and self._model is not None,
