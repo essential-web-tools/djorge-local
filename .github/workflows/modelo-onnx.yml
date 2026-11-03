@@ -1,5 +1,8 @@
 name: Gerar pacote ONNX int8 do modelo
 on:
+  push:
+    branches: [v2-windows]
+    paths: [".github/workflows/modelo-onnx.yml"]
   workflow_dispatch:
     inputs:
       fonte:
@@ -25,7 +28,7 @@ jobs:
           pip install onnx onnxscript onnxruntime transformers safetensors gdown
       - name: Baixar o artefato de treino
         run: |
-          mkdir -p art && gdown --fuzzy "https://drive.google.com/file/d/${{ inputs.fonte }}/view" -O art/modelo.zip
+          mkdir -p art && gdown --fuzzy "https://drive.google.com/file/d/${{ inputs.fonte || '1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo' }}/view" -O art/modelo.zip
           cd art && unzip -q modelo.zip && rm modelo.zip
           dirname "$(find . -path '*metadata/djorge.json' | head -1)" | xargs dirname > ../art_dir.txt
           cat ../art_dir.txt
@@ -53,5 +56,5 @@ jobs:
         run: |
           cd flash_onnx && zip -qr ../dofl_v2_onnx.zip . && cd ..
           ls -la dofl_v2_onnx.zip
-          gh release view "${{ inputs.tag }}" >/dev/null 2>&1 || gh release create "${{ inputs.tag }}" --target "${{ github.ref_name }}" -t "DOFL V2 — pacote ONNX int8" -n "Modelo DOFL V2 convertido para ONNX int8 (CPU), com teste de paridade."
-          gh release upload "${{ inputs.tag }}" dofl_v2_onnx.zip --clobber
+          gh release view "${{ inputs.tag || 'dofl-v2-onnx' }}" >/dev/null 2>&1 || gh release create "${{ inputs.tag || 'dofl-v2-onnx' }}" --target "${{ github.ref_name }}" -t "DOFL V2 — pacote ONNX int8" -n "Modelo DOFL V2 convertido para ONNX int8 (CPU), com teste de paridade."
+          gh release upload "${{ inputs.tag || 'dofl-v2-onnx' }}" dofl_v2_onnx.zip --clobber
