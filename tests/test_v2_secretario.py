@@ -329,8 +329,10 @@ def test_historico_apagar(app, srv):
 # ----------------------------------------------------------------------------- API local / leveza / início --
 def test_api_local_pausar_retomar_recursos(app, srv, monkeypatch):
     code, r = srv("/api/local_api")
-    assert code == 200 and {x["modelo"] for x in r["apis"]} >= {"flash"} and r["apis"][0]["ativa"] is False
-    assert "curl" in r["apis"][0]["exemplo"]
+    assert code == 200 and {x["modelo"] for x in r["apis"]} >= {"flash"}
+    fl = next(x for x in r["apis"] if x["modelo"] == "flash")
+    assert fl["rodando"] is False                      # "ativa" = escolha da pessoa; "rodando" = servidor no ar
+    assert "curl" in fl["exemplo"]
     # modelo "carregado" falso: ligar chama _start_api, desligar para o servidor
     started = []
 

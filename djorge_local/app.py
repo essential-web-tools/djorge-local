@@ -95,6 +95,11 @@ class App:
         self.cfg = cfg
         self.hist = History(cfg)
         self.models = Models(cfg)
+        try:                                              # APIs desligadas pela interface continuam desligadas
+            for _n in (cfg.get("api") or {}).get("desligadas") or []:
+                self.models._api_on[_n] = False
+        except Exception:
+            pass
         self.actions = Actions(cfg, self.hist)
         self.runner = Runner(cfg, self.models, self.actions)
         from .actions import desktop_notify
@@ -168,16 +173,20 @@ class App:
     def has_model(self) -> bool:
         return self.command.engine() is not None
 
-    def save_tree(self, tree: dict) -> dict:
-        """Grava (substitui pelo nome ou acrescenta) uma árvore em arvores.yaml, guardando o .bak."""
+    def save_tree(self, tree: dict, original: str = None) -> dict:
+        """Grava (substitui pelo nome ou acrescenta) uma árvore em arvores.yaml, guardando o .bak.
+        original: nome antigo quando a árvore foi renomeada no editor (substitui aquela, sem duplicar)."""
         validate([tree])
         p = self.trees_path()
         data = (yaml.safe_load(p.read_text(encoding="utf-8")) if p.is_file() else None) or {}
         if p.is_file():
             p.with_suffix(p.suffix + ".bak").write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
         trees = data.setdefault("trees", [])
+        old = str(original) if original else tree["name"]
+        if old != tree["name"] and any(t.get("name") == tree["name"] for t in trees):
+            raise ValueError(f"já existe outra árvore chamada “{tree['name']}”")
         for i, t in enumerate(trees):
-            if t.get("name") == tree["name"]:
+            if t.get("name") == old:
                 trees[i] = tree; break
         else:
             trees.append(tree)
@@ -192,8 +201,9 @@ class App:
         raw["models"] = {k: {f: v[f] for f in ("enabled", "path", "role") if f in v}
                          for k, v in self.cfg["models"].items()}
         raw.setdefault("api", {})["ports"] = dict(self.cfg["api"].get("ports") or {})
-        if self.cfg["api"].get("desligadas"):
-            raw["api"]["desligadas"] = list(self.cfg["api"]["desligadas"])
+        raw["api"]["desligadas"] = list(self.cfg["api"].get("desligadas") or [])   # lista vazia também grava
+        if "enabled" in self.cfg["api"]:
+            raw["api"]["enabled"] = bool(self.cfg["api"]["enabled"])
         raw["device"], raw["threads"] = self.cfg["device"], self.cfg["threads"]
         p.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
@@ -461,7 +471,9 @@ class App:
         out = []
         for name, m in self.cfg["models"].items():
             url = self.models.apis.get(name)
-            out.append({"modelo": name, "porta": (a.get("ports") or {}).get(name), "ativa": bool(url), "url": url,
+            ligada = bool(url) or (bool(a.get("enabled", True)) and name not in (a.get("desligadas") or []))
+            out.append({"modelo": name, "porta": (a.get("ports") or {}).get(name), "ativa": ligada, "rodando": bool(url),
+                        "url": url,
                         "carregado": name in self.models.loaded(), "servico": bool(m.get("service")),
                         "token_dica": (tok[:4] + "…") if tok else "",
                         "exemplo": (f"curl -s {url or 'http://127.0.0.1:' + str((a.get('ports') or {}).get(name))}"
@@ -541,7 +553,7 @@ class App:
             pass
         import uuid as _uuid
         sid = _uuid.uuid4().hex[:12]
-        st = {"etapas": [{"t": 0, "texto": "Lendo o pedido…", "estado": "agora"}], "pronto": False}
+        st = {"etapas": [{"t": 0, "texto": "Lendo o seu pedido…", "estado": "agora"}], "pronto": False}
         with self.hist.lock:
             self._streams[sid] = st
             while len(self._streams) > 100:
@@ -553,13 +565,7 @@ class App:
                 out = cmd.run(text, context)
                 ms = int((time.perf_counter() - t0) * 1000)
                 st["etapas"][0]["estado"] = "ok"
-                ferr = {"calcular": "Fazendo a conta…", "datas_horas": "Achando data e hora…",
-                        "proximas_tarefas": "Olhando a agenda…", "cards": "Usando a ferramenta Cards…",
-                        "listas": "Usando a ferramenta Listas…", "bilhete": "Preparando a mensagem…",
-                        "buscar": "Buscando…", "regra": "Montando a regra…", "web": "Buscando na web…",
-                        "abrir": "Preparando para abrir…"}.get(out.get("tool"))
-                if ferr:
-                    st["etapas"].append({"t": ms, "texto": ferr, "estado": "ok"})
+                st["etapas"].append({"t": ms, "texto": "Pronto", "estado": "ok"})
                 st["resultado"] = out
             except ModeloAusente as e:
                 st["etapas"][-1]["estado"] = "erro"
@@ -684,7 +690,8 @@ def v2_get(app: App, path: str, q: dict):
     if path == "/api/integrations":
         return 200, {"integrations": app.service("integrations").list()}
     if path == "/api/voice/status":
-        return 200, app.service("voice").status()
+        st = app.service("voice").status()
+        return 200, dict(st, prefs=_voz_prefs())
     if path == "/api/trees/graph":
         tg = app.service("treegraph")
         return 200, {"graphs": [dict(tg.tree_to_graph(t), name=t["name"]) for t in app.trees]}
@@ -692,6 +699,27 @@ def v2_get(app: App, path: str, q: dict):
     if r is not None:
         return r
     return None
+
+
+def _voz_prefs(patch: dict = None) -> dict:
+    """Voz escolhida e velocidade da fala (HOME/voz.json): a interface relê daqui ao abrir."""
+    f = _home() / "voz.json"
+    try:
+        cur = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    except (OSError, ValueError):
+        cur = {}
+    cur = {"voz": str(cur.get("voz") or ""), "velocidade": float(cur.get("velocidade") or 1.0)}
+    if patch is not None:
+        if "voz" in patch:
+            cur["voz"] = str(patch.get("voz") or "")[:120]
+        if "velocidade" in patch:
+            v = float(patch["velocidade"])
+            if not 0.5 <= v <= 2.0:
+                raise ValueError("velocidade: entre 0,5 e 2")
+            cur["velocidade"] = round(v, 2)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+    return cur
 
 
 def _sec(app):
@@ -800,6 +828,41 @@ def _testar_automacao(app: App, a: dict, b: dict) -> dict:
                                                               "status")} for s in r["trail"]]}
 
 
+def _salvar_arvore_automacao(app: App, aid: str, b: dict):
+    """Grafo editado de uma automação: volta a ser a automação quando dá; senão vira árvore própria (e a
+    automação original é pausada para não rodar duas vezes)."""
+    from .automacoes import de_arvore
+    A = _sec(app).automacoes
+    a = A.get(aid)
+    if a is None:
+        return 404, {"error": "automação não encontrada"}
+    g = b.get("graph")
+    if not isinstance(g, dict):
+        raise ValueError("faltou o desenho da árvore (graph)")
+    tg = app.service("treegraph")
+    g = dict(g, name=g.get("name") or f"auto-{aid}")
+    errs = [e for e in tg.validate_graph(g) if e.get("level") == "erro"]
+    if errs:
+        return 400, {"error": "a árvore tem erros", "errors": errs}
+    tree = tg.graph_to_tree(g)
+    volta = de_arvore(tree)
+    if volta is not None:
+        nome = str(b.get("nome") or "").strip()
+        if not nome:
+            gn = str(g.get("name") or "")
+            nome = a.get("nome") if gn.startswith("auto-") else gn
+        salvo = A.salvar(dict(volta, id=aid, nome=nome or a.get("nome")))
+        return 200, {"modo": "automacao", "automacao": salvo}
+    nome = str(b.get("nome") or "").strip() or (a.get("nome") if str(tree.get("name", "")).startswith("auto-")
+                                                  else tree.get("name")) or f"automação {aid}"
+    tree["name"] = nome
+    for k in ("origem", "automacao"):
+        tree.pop(k, None)
+    r = app.save_tree(tree)
+    A.salvar({"id": aid, "ativa": False})
+    return 200, {"modo": "arvore", "saved": r["saved"], "trees": r["trees"], "automacao_pausada": True}
+
+
 def v21_post(app: App, path: str, b: dict):
     """Rotas POST da rodada 2."""
     if path == "/api/automacoes":
@@ -839,6 +902,8 @@ def v21_post(app: App, path: str, b: dict):
         A = _sec(app).automacoes
         if act == "delete":
             return 200, {"ok": A.apagar(aid)}
+        if act == "arvore":                              # salvar o que foi editado no editor visual
+            return _salvar_arvore_automacao(app, aid, b)
         if act == "testar":
             a = b.get("automacao") or A.get(aid) or next((m for m in A.modelos() if m["id"] == aid), None)
             if a is None:
@@ -952,6 +1017,8 @@ def v2_post(app: App, path: str, b: dict):
             kw = {k: b[k] for k in ("template", "lang", "params") if b.get(k)}
             return 200, integ.send(pid, b["to"], b["body"], subject=b.get("subject"), **kw)
         return None
+    if path == "/api/voice/prefs":
+        return 200, {"prefs": _voz_prefs(b)}
     if path.startswith("/api/voice/"):
         act = path.rsplit("/", 1)[1]
         v = app.service("voice")
@@ -984,7 +1051,7 @@ def v2_post(app: App, path: str, b: dict):
         if not name:
             raise ValueError("a árvore precisa de um nome")
         tree["name"] = str(name)
-        return 200, app.save_tree(tree)
+        return 200, app.save_tree(tree, original=b.get("original"))
     return v21_post(app, path, b)
 
 

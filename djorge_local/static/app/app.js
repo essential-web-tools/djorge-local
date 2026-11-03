@@ -28,6 +28,8 @@ function fmtDT(v, opt = {}) {
 function relDayWord(d) { const t = new Date(); t.setHours(0, 0, 0, 0); const x = new Date(d); x.setHours(0, 0, 0, 0); const n = Math.round((x - t) / 864e5); return n === 0 ? "hoje" : n === 1 ? "amanhã" : n === -1 ? "ontem" : ""; }
 function ago(v) { const d = v ? new Date(v) : null; if (!d || isNaN(d)) return ""; const s = (Date.now() - d) / 1000;
   if (s < 60) return "agora"; if (s < 3600) return `há ${Math.floor(s / 60)} min`; if (s < 86400) return `há ${Math.floor(s / 3600)} h`; return fmtDT(d); }
+/* emoji/sinal no início de textos do sistema (ex.: “⚠ Golpe”) vira ícone; o texto fica limpo */
+const stripEmo = t => String(t ?? "").replace(/^\s*(?:[\u2600-\u27BF\u2B50]|\p{Extended_Pictographic})\uFE0F?\s*/u, "");
 const asList = (r, ...keys) => Array.isArray(r) ? r : r ? (keys.map(k => r[k]).find(Array.isArray) || []) : [];
 
 /* ---------------------------------------------------------------- API */
@@ -103,9 +105,10 @@ const TOOL_PT = {calcular: ["Calcular", "calc"], datas_horas: ["Datas e horas", 
   regra: ["Automação", "tree"], web: ["Busca na web", "search"], abrir: ["Abrir app", "send"], perguntar: ["Só para confirmar", "spark"], interface: ["Interface", "gear"], nenhuma: ["Vamos ajustar o pedido", "spark"], triagem: ["Triagem", "shield"]};
 const FIELD_CLS = {data: "c-data", hora: "c-hora", "período do dia": "c-periodo", pessoa: "c-pessoa", "endereço de e-mail": "c-email",
   lugar: "c-lugar", "empresa ou estabelecimento": "c-empresa", endereco: "c-endereco"};
-const FIELD_EMO = {data: "📅", hora: "🕒", "período do dia": "🌤", pessoa: "👤", "evento ou compromisso": "📌", lugar: "📍", lista: "🗒",
-  "endereço de e-mail": "✉", "empresa ou estabelecimento": "🏢", "frequência ou repetição": "🔁"};
-const SRC_EMO = {google: "🟦", microsoft: "🟪", whatsapp: "🟩", gemini: "✦", local: "🏠"};
+const FIELD_ICO = {data: "cal", hora: "clock", "período do dia": "partsun", pessoa: "user", "evento ou compromisso": "pin", lugar: "mappin", lista: "note",
+  "endereço de e-mail": "mail", "empresa ou estabelecimento": "building", "frequência ou repetição": "repeat", endereco: "mappin", valor: "receipt"};
+const SRC_COLOR = {google: "#4a78c2", microsoft: "#7d5a86", whatsapp: "#4f9a6a", gemini: "#8e75f0"};
+const srcIco = src => src === "local" ? ico("house", "xs") : `<i class="srcdot" style="background:${SRC_COLOR[src] || "var(--ink3)"}"></i>`;
 const MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
 const WD = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 const PHRASES = ["lendo seu pedido", "separando as palavras", "achando a data", "procurando pessoas e lugares", "escolhendo a ferramenta",
@@ -326,7 +329,8 @@ function normPrefs(resp) {
     columns: p.kanban_columns || p.columns || COLS.map(c => c.id),
     saved_filters: (p.saved_filters || []).map(f => f.filters && !f._c ? {name: f.name, ...filtFromServer(f.filters), _raw: f.filters} : f),
     voice: p.voice_enabled ?? p.voice ?? true, speak: p.speak_replies ?? p.speak ?? false,
-    font_size: P_FONT[p.font_size] || p.font_size || "md", sidebar_order: p.sidebar_order || null, _server: p};
+    font_size: P_FONT[p.font_size] || p.font_size || "md", sidebar_order: p.sidebar_order || null,
+    nome_usuario: p.nome_usuario || "", nome_agente: p.nome_agente || "Djorge", prioridade: p.prioridade || "modelo", _server: p};
 }
 function toServer(patch) {
   const o = {};
@@ -474,10 +478,10 @@ const SORTS = [["manual", "Ordem manual"], ["data", "Data"], ["prioridade", "Pri
 function filterBarHTML() {
   const F = S.filters;
   const chip = d => { if (d.range && !F.period && (F.from || F.to)) { const f = x => x ? x.slice(8, 10) + "/" + x.slice(5, 7) : "…";
-      return `<button type="button" class="chip on" data-f="period" aria-haspopup="menu" aria-expanded="false">${ico(d.icon, "sm")}${f(F.from)} – ${f(F.to)}<span class="x" data-clear="period" role="button" aria-label="Limpar período">✕</span></button>`; }
+      return `<button type="button" class="chip on" data-f="period" aria-haspopup="menu" aria-expanded="false">${ico(d.icon, "sm")}${f(F.from)} – ${f(F.to)}<span class="x" data-clear="period" role="button" aria-label="Limpar período">${ico("x", "xs")}</span></button>`; }
     const v = F[d.k]; const on = d.single ? !!v : v && v.length;
     const txt = on ? (d.single ? (d.opts().find(o => o[0] === v) || [, v])[1] : d.label + (v.length > 1 ? ` · ${v.length}` : `: ${(d.opts().find(o => String(o[0]) === String(v[0])) || [, v[0]])[1]}`)) : d.label;
-    return `<button type="button" class="chip ${on ? "on" : ""}" data-f="${d.k}" aria-haspopup="menu" aria-expanded="false">${ico(d.icon, "sm")}${esc(txt)}${on ? `<span class="x" data-clear="${d.k}" role="button" aria-label="Limpar ${d.label}">✕</span>` : ""}</button>`; };
+    return `<button type="button" class="chip ${on ? "on" : ""}" data-f="${d.k}" aria-haspopup="menu" aria-expanded="false">${ico(d.icon, "sm")}${esc(txt)}${on ? `<span class="x" data-clear="${d.k}" role="button" aria-label="Limpar ${d.label}">${ico("x", "xs")}</span>` : ""}</button>`; };
   const saved = S.prefs.saved_filters || [];
   return `<div class="fbar" role="toolbar" aria-label="Filtros">
     <label class="fsearch">${ico("search", "sm")}<input id="fq" type="search" placeholder="Filtrar cards…" value="${esc(S.q)}" aria-label="Filtrar cards"></label>
@@ -527,9 +531,9 @@ function kcardHTML(c) {
       <span class="tag">${ico(KIND_ICO[c.kind] || "check", "sm")} ${esc(KINDS[c.kind] || c.kind || "")}</span>
       ${cardDate(c) ? `<span class="when ${isLate(c) ? "late" : ""}">${ico("clock", "sm")}${esc(whenTxt(c))}</span>` : ""}
       ${c.priority ? `<span class="pri p${c.priority}"><i></i>${esc(PRI[c.priority])}</span>` : ""}
-      ${ck.length ? `<span class="chk">☑ ${dn}/${ck.length}</span>` : ""}
+      ${ck.length ? `<span class="chk">${ico("boxok", "xs")} ${dn}/${ck.length}</span>` : ""}
       ${(c.tags || []).slice(0, 3).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}
-      ${src ? `<span class="src" title="${esc(src)}">${SRC_EMO[src] || "•"}</span>` : ""}
+      ${src ? `<span class="src" title="${esc(src)}">${srcIco(src)}</span>` : ""}
       ${(c.people || []).length ? `<span class="ppl" style="margin-left:auto">${c.people.slice(0, 3).map(p => `<i data-tip="${esc(titleCase(p.nome || p.email))}">${esc(initials(p.nome || p.email))}</i>`).join("")}</span>` : ""}
     </div></article>`;
 }
@@ -684,8 +688,9 @@ function openCard(id, draft) {
   setTimeout(() => $("#dr-title", d).focus(), 60);
 }
 function tagInput(box, vals, id, ph, onChange) {
-  const draw = () => { box.innerHTML = vals.map((v, i) => `<span class="chip on">${esc(v)}<button type="button" class="x" data-i="${i}" aria-label="Remover ${esc(v)}">✕</button></span>`).join("") + `<input id="${id}" placeholder="${esc(ph)}">`;
+  const draw = () => { box.innerHTML = vals.map((v, i) => `<span class="chip on">${esc(v)}<button type="button" class="x" data-i="${i}" aria-label="Remover ${esc(v)}">${ico("x", "xs")}</button></span>`).join("") + `<input id="${id}" placeholder="${esc(ph)}">`;
     const inp = $("input", box);
+    inp.onblur = () => { const t = inp.value.trim().replace(/^#/, ""); if (t && !vals.includes(t)) { vals.push(t); onChange(vals); draw(); } };   /* texto digitado sem Enter também vale */
     inp.onkeydown = e => { if ((e.key === "Enter" || e.key === ",") && inp.value.trim()) { e.preventDefault(); vals.push(inp.value.trim().replace(/^#/, "")); onChange(vals); draw(); $("input", box).focus(); }
       else if (e.key === "Backspace" && !inp.value && vals.length) { vals.pop(); onChange(vals); draw(); $("input", box).focus(); } };
     $$("[data-i]", box).forEach(b => b.onclick = () => { vals.splice(+b.dataset.i, 1); onChange(vals); draw(); }); };
@@ -702,6 +707,9 @@ const empty = (t, p, btn) => `<div class="empty">${ART}<h3>${esc(t)}</h3><p>${es
 
 /* ---------------------------------------------------------------- INÍCIO */
 function greet() { const h = new Date().getHours(); return h < 5 ? "Boa madrugada" : h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite"; }
+/* Perfil: como a pessoa quer ser chamada e o nome do assistente (a marca/logo continua Djorge) */
+const AG = () => (S.prefs && S.prefs.nome_agente || "").trim() || "Djorge";
+const USER = () => (S.prefs && S.prefs.nome_usuario || "").trim();
 /* ----- relógios ----- */
 const ZONES = [["America/Sao_Paulo", "São Paulo"], ["America/Manaus", "Manaus"], ["America/Fortaleza", "Fortaleza"], ["America/Rio_Branco", "Rio Branco"], ["America/Noronha", "Fernando de Noronha"],
   ["America/New_York", "Nova York"], ["America/Chicago", "Chicago"], ["America/Los_Angeles", "Los Angeles"], ["America/Mexico_City", "Cidade do México"], ["America/Argentina/Buenos_Aires", "Buenos Aires"],
@@ -731,10 +739,10 @@ function wireClock(v) {
   clearInterval(clockTimer); clockTimer = setInterval(tick, 1000);
 }
 /* ----- clima (Open-Meteo, sem chave; tudo com cache e falha silenciosa) ----- */
-const WMO = {0: ["Céu limpo", "☀️"], 1: ["Quase limpo", "🌤️"], 2: ["Parcialmente nublado", "⛅"], 3: ["Nublado", "☁️"], 45: ["Neblina", "🌫️"], 48: ["Neblina", "🌫️"],
-  51: ["Garoa fraca", "🌦️"], 53: ["Garoa", "🌦️"], 55: ["Garoa forte", "🌧️"], 56: ["Garoa gelada", "🌧️"], 57: ["Garoa gelada", "🌧️"], 61: ["Chuva fraca", "🌦️"], 63: ["Chuva", "🌧️"], 65: ["Chuva forte", "🌧️"],
-  66: ["Chuva gelada", "🌧️"], 67: ["Chuva gelada", "🌧️"], 71: ["Neve fraca", "🌨️"], 73: ["Neve", "🌨️"], 75: ["Neve forte", "❄️"], 77: ["Granizo fino", "🌨️"], 80: ["Pancadas de chuva", "🌦️"],
-  81: ["Pancadas de chuva", "🌧️"], 82: ["Temporal", "⛈️"], 85: ["Neve", "🌨️"], 86: ["Neve forte", "❄️"], 95: ["Trovoadas", "⛈️"], 96: ["Trovoadas com granizo", "⛈️"], 99: ["Trovoadas com granizo", "⛈️"]};
+const WMO = {0: ["Céu limpo", "sun"], 1: ["Quase limpo", "partsun"], 2: ["Parcialmente nublado", "partsun"], 3: ["Nublado", "cloud"], 45: ["Neblina", "fog"], 48: ["Neblina", "fog"],
+  51: ["Garoa fraca", "rain"], 53: ["Garoa", "rain"], 55: ["Garoa forte", "rain"], 56: ["Garoa gelada", "rain"], 57: ["Garoa gelada", "rain"], 61: ["Chuva fraca", "rain"], 63: ["Chuva", "rain"], 65: ["Chuva forte", "rain"],
+  66: ["Chuva gelada", "rain"], 67: ["Chuva gelada", "rain"], 71: ["Neve fraca", "snow"], 73: ["Neve", "snow"], 75: ["Neve forte", "snow"], 77: ["Granizo fino", "snow"], 80: ["Pancadas de chuva", "rain"],
+  81: ["Pancadas de chuva", "rain"], 82: ["Temporal", "storm"], 85: ["Neve", "snow"], 86: ["Neve forte", "snow"], 95: ["Trovoadas", "storm"], 96: ["Trovoadas com granizo", "storm"], 99: ["Trovoadas com granizo", "storm"]};
 const TZ_PLACE = {"America/Sao_Paulo": [-23.55, -46.63, "São Paulo"], "America/Manaus": [-3.12, -60.02, "Manaus"], "America/Fortaleza": [-3.73, -38.52, "Fortaleza"], "America/Recife": [-8.05, -34.9, "Recife"],
   "America/Bahia": [-12.97, -38.5, "Salvador"], "America/Belem": [-1.46, -48.5, "Belém"], "America/Cuiaba": [-15.6, -56.1, "Cuiabá"], "America/Campo_Grande": [-20.47, -54.62, "Campo Grande"],
   "America/Porto_Velho": [-8.76, -63.9, "Porto Velho"], "America/Rio_Branco": [-9.97, -67.81, "Rio Branco"], "America/Maceio": [-9.65, -35.73, "Maceió"], "America/Araguaina": [-7.19, -48.2, "Araguaína"],
@@ -759,12 +767,12 @@ async function getWeather(force) {
 }
 function weatherHTML(w) {
   if (!w || !w.d || !w.d.current) return `<section class="dcard dwx" aria-label="Clima"><header><span class="kicker">Clima</span></header><div class="wxnone">${w === undefined ? `<div class="sk" style="height:96px"></div>` : `<p class="hint">Clima indisponível agora. Tento de novo mais tarde.</p>`}</div></section>`;
-  const cu = w.d.current, dy = w.d.daily || {}, [desc, em] = WMO[cu.weather_code] || ["—", "🌡️"];
-  const days = (dy.time || []).slice(0, 5).map((t, i) => { const d = new Date(t + "T12:00:00"); const [dd, ee] = WMO[dy.weather_code[i]] || ["", "🌡️"];
-    return `<div class="wday" data-tip="${esc(dd)}${dy.precipitation_probability_max ? ` · chuva ${dy.precipitation_probability_max[i] ?? 0}%` : ""}"><small>${i === 0 ? "hoje" : WD[d.getDay()]}</small><span class="we">${ee}</span><b>${Math.round(dy.temperature_2m_max[i])}°</b><small>${Math.round(dy.temperature_2m_min[i])}°</small></div>`; }).join("");
+  const cu = w.d.current, dy = w.d.daily || {}, [desc, em] = WMO[cu.weather_code] || ["—", "temp"];
+  const days = (dy.time || []).slice(0, 5).map((t, i) => { const d = new Date(t + "T12:00:00"); const [dd, ee] = WMO[dy.weather_code[i]] || ["", "temp"];
+    return `<div class="wday" data-tip="${esc(dd)}${dy.precipitation_probability_max ? ` · chuva ${dy.precipitation_probability_max[i] ?? 0}%` : ""}"><small>${i === 0 ? "hoje" : WD[d.getDay()]}</small><span class="we" aria-hidden="true">${ico(ee)}</span><b>${Math.round(dy.temperature_2m_max[i])}°</b><small>${Math.round(dy.temperature_2m_min[i])}°</small></div>`; }).join("");
   return `<section class="dcard dwx" aria-label="Clima"><header><span class="kicker">Clima</span><span class="sp"></span><span class="hint">${esc(w.city || "sua região")}</span>
     <button class="iconbtn sm" id="wxr" aria-label="Atualizar clima" data-tip="Atualizar">${ico("sync", "sm")}</button></header>
-    <div class="wxnow"><span class="we big" aria-hidden="true">${cu.is_day === 0 && cu.weather_code <= 1 ? "🌙" : em}</span><div><div class="temp">${Math.round(cu.temperature_2m)}°</div><p class="dsub">${esc(desc)}</p></div>
+    <div class="wxnow"><span class="we big" aria-hidden="true">${ico(cu.is_day === 0 && cu.weather_code <= 1 ? "moon" : em)}</span><div><div class="temp">${Math.round(cu.temperature_2m)}°</div><p class="dsub">${esc(desc)}</p></div>
       <dl class="wxkv"><div><dt>Sensação</dt><dd>${Math.round(cu.apparent_temperature)}°</dd></div><div><dt>Umidade</dt><dd>${Math.round(cu.relative_humidity_2m)}%</dd></div><div><dt>Vento</dt><dd>${Math.round(cu.wind_speed_10m)} km/h</dd></div></dl></div>
     <div class="wdays">${days}</div></section>`;
 }
@@ -799,7 +807,7 @@ function notifRowHTML(n, compact) {
     ${compact ? "" : `<button type="button" class="cbx" role="checkbox" aria-checked="${NSEL.has(String(n.id))}" data-nsel="${esc(n.id)}" aria-label="Selecionar">${ico("check")}</button>`}
     <span class="av app" aria-hidden="true">${esc((app[0] || "?").toUpperCase())}</span>
     <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${(n.prioridade || 0) >= 2 ? `<span class="pri p${Math.min(3, n.prioridade)}"><i></i>${esc(PRI[Math.min(3, n.prioridade)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
-      <span class="msubj">${esc(n.titulo || n.title || "")}</span>${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
+      <span class="msubj">${/^\s*[⚠✅❗❌]/.test(n.titulo || n.title || "") ? ico("warn", "xs") + " " : ""}${esc(stripEmo(n.titulo || n.title || ""))}</span>${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
       ${compact ? "" : `${(n.regra || asList(n.regras).length) ? `<span class="nrule">${ico("tree", "sm")} Regra: ${esc([].concat(n.regra || n.regras).map(x => typeof x === "object" ? (x.nome || x.name || "") : x).join(", "))}</span>` : ""}
       ${done.length ? `<span class="nacts">${done.map(a => `<span class="chip ok">${ico("check", "sm")}${esc(actLabel(a))}</span>`).join("")}</span>` : ""}
       ${sug.length ? `<span class="nacts">${sug.map((a, i) => `<button type="button" class="chip sug" data-nact="${esc(n.id)}" data-ai="${i}" data-tip="Aprovar e fazer agora">${ico("spark", "sm")}${esc(actLabel(a))}</button>`).join("")}</span>` : ""}`}</span></div>`;
@@ -835,7 +843,7 @@ function viewHome() {
   const frase = I.resumo_frase || (S.cardsLoaded ? `${today ? `${today} coisa${today > 1 ? "s" : ""} para hoje` : "Nada marcado para hoje"}${late ? ` · ${late} atrasada${late > 1 ? "s" : ""}` : ""}${evs.length ? ` · próximo: ${cardTitle(byCardId(evs[0]))}` : ""}.` : "");
   v.innerHTML = `<div class="view-inner dash">
     ${S.thread.length ? `<div class="backconv"><span>${ico("msg", "sm")} Você tem uma conversa em andamento.</span><button class="btn sm" id="bconv">Voltar à conversa</button></div>` : ""}
-    <div class="dhero"><img src="/static/icon.svg" alt=""><div><h1>${greet()}, <em>o que vamos organizar?</em></h1><p>${esc(frase)}</p></div></div>
+    <div class="dhero"><img src="/static/icon.svg" alt=""><div><h1>${greet()}${USER() ? `, ${esc(USER())}` : ""}, <em>o que vamos organizar?</em></h1><p>${esc(frase)}</p></div></div>
     ${noModel ? inviteHTML() : ""}
     <div class="dtop">${clockHTML()}${weatherHTML(S.wx)}</div>
     <div class="dgrid">
@@ -1025,7 +1033,7 @@ async function viewMessages() {
     <div id="pend"></div>
     ${imp.length ? `<section class="group"><h3>Importantes <span>${imp.length}</span></h3><div class="mlist">${imp.map(msgRowHTML).join("")}</div></section>` : ""}
     <section class="group"><h3>${imp.length ? "Outras" : "Mensagens"} <span>${rest.length}</span></h3>${rest.length ? `<div class="mlist">${rest.map(msgRowHTML).join("")}</div>` :
-      empty("Sem mensagens por aqui", conn.length ? "As mensagens importadas e as que você pedir para enviar aparecem aqui." : "Cole uma mensagem recebida para o Djorge triar, ou escreva “#ana &chego em 10 minutos&”.")}</section></div>`;
+      empty("Sem mensagens por aqui", conn.length ? "As mensagens importadas e as que você pedir para enviar aparecem aqui." : "Cole uma mensagem recebida para o " + AG() + " triar, ou escreva “#ana &chego em 10 minutos&”.")}</section></div>`;
   wireSeg(v, "mf", x => { store.set("msgFilter", x); viewMessages(); });
   $$(".mrow[data-id]", v).forEach(r => { r.onclick = e => { if (e.ctrlKey || e.shiftKey) return; openCard(r.dataset.id); }; r.onkeydown = e => { if (e.key === "Enter") openCard(r.dataset.id); }; r.oncontextmenu = e => msgCtx(e, r.dataset.id); });
   $("#tri", v).onclick = () => { setMode("mensagem"); $("#in").focus(); };
@@ -1077,7 +1085,7 @@ async function viewNotifs(keepFocus) {
   if (!keepFocus) v.innerHTML = `<div class="view-inner narrow notifs"><div class="vh"><div><span class="kicker">Notificações</span><h1>Tudo que <em>chegou</em></h1></div></div><div class="sk"></div><div class="sk" style="margin-top:8px"></div></div>`;
   await loadNotifs(); if (S.view !== "notificacoes") return;
   if (!S.notifOk) { v.innerHTML = `<div class="view-inner narrow notifs"><div class="vh"><div><span class="kicker">Notificações</span><h1>Tudo que <em>chegou</em></h1></div></div>
-    ${empty("As notificações ainda não estão disponíveis", "Ligue o secretário para o Djorge acompanhar as notificações do Windows e organizar o que importa.", `<button class="btn primary" id="sw">${ico("spark", "sm")} Configurar o secretário</button>`)}</div>`;
+    ${empty("As notificações ainda não estão disponíveis", "Ligue o secretário para o " + AG() + " acompanhar as notificações do Windows e organizar o que importa.", `<button class="btn primary" id="sw">${ico("spark", "sm")} Configurar o secretário</button>`)}</div>`;
     $("#sw", v).onclick = () => secretaryWizard(); return; }
   const apps = [...new Set(NOTIFS.map(n => n.app || n.fonte).filter(Boolean))].sort();
   const unread = NOTIFS.filter(n => !n.lida).length; S.notifUnread = unread; renderNav();
@@ -1155,7 +1163,7 @@ function notifCtx(e, id) {
     if (v === "sel") toggleNSel(id);
     if (v === "mute") { const cfg = await tryApi("/api/secretario", undefined, {silent: true}) || {}; const ig = [...new Set([...(cfg.apps_ignorados || []), n.app].filter(Boolean))];
       if (await tryApi("/api/secretario", {...cfg, apps_ignorados: ig})) toast(`O secretário vai ignorar ${titleCase(n.app)}`); }
-    if (v === "rule") { go("automacoes"); setTimeout(() => autoBuilder({nome: `Notificações de ${titleCase(n.app || "")}`, ativa: true, quando: {fontes: ["notificacoes"], apps: n.app ? [n.app] : [], palavras: []}, entao: [{acao: "criar_card", params: {titulo: "{titulo}"}}]}), 60); }
+    if (v === "rule") { go("automacoes"); setTimeout(() => autoBuilder({nome: `Notificações de ${titleCase(n.app || "")}`, ativa: true, quando: {fontes: ["notifications"], apps: n.app ? [n.app] : [], palavras: []}, entao: [{acao: "criar_card", params: {titulo: "{titulo}"}}]}), 60); }
     if (v === "copy") copyText([n.titulo, n.texto].filter(Boolean).join("\n"));
   });
 }
@@ -1173,9 +1181,10 @@ function confirmBox(title, text, okLabel, onOk, danger = true) {
 /* ---------------------------------------------------------------- AUTOMAÇÕES */
 let treeEditorLoaded = null;
 function loadScript(src) { return new Promise(res => { if ($(`script[src="${src}"]`)) return res(true); const s = document.createElement("script"); s.src = src; s.onload = () => res(true); s.onerror = () => { s.remove(); res(false); }; document.head.appendChild(s); }); }
-const FONTES = [["notificacoes", "Notificações do Windows"], ["email", "E-mail"], ["whatsapp", "WhatsApp"], ["mensagens", "Mensagens coladas"], ["cards", "Cards novos"]];
+const FONTES = [["notifications", "Notificações do Windows"], ["email", "E-mail"], ["whatsapp", "WhatsApp"], ["mensagem", "Mensagens coladas"]];
+const FONTE_ALIAS = {notificacoes: "notifications", "notificações": "notifications", mensagens: "mensagem", imap: "email"};
 const ACOES = [["criar_card", "Criar um card"], ["alerta", "Criar um alerta"], ["tarefa", "Criar uma tarefa"], ["notificar", "Me avisar"], ["etiquetar", "Pôr uma etiqueta"], ["arquivar", "Arquivar"], ["abrir_app", "Abrir um app"], ["responder_sugestao", "Sugerir uma resposta"]];
-const CAMPOS = [["valor", "Valor"], ["prazo", "Prazo"], ["remetente", "Quem mandou"], ["empresa", "Empresa"], ["data", "Data"], ["assunto", "Assunto"], ["codigo", "Código"], ["link", "Link"]];
+const CAMPOS = [["valor", "Valor"], ["prazo", "Prazo"], ["remetente", "Quem mandou"], ["empresa", "Empresa"], ["data", "Data"], ["hora", "Hora"], ["codigo", "Código"], ["link", "Link"]];
 const joinPt = a => a.length <= 1 ? (a[0] || "") : a.slice(0, -1).join(", ") + " e " + a[a.length - 1];
 function autoPhrase(a) {
   const w = a.quando || {}, fs = (w.fontes || []).map(f => (FONTES.find(x => x[0] === f) || [, f])[1].toLowerCase());
@@ -1215,7 +1224,7 @@ async function drawSec(v) {
   const box = $("#secbox", v); if (!box) return;
   const on = SEC && SEC.ativo, modo = SEC && SEC.modo === "agir" ? "age e avisa" : "sugere e você aprova";
   box.innerHTML = `<section class="dcard secc ${on ? "on" : ""}"><div class="secic">${ico("spark")}</div><div class="sect"><h3>Secretário ${on ? `<span class="chip on"><i class="okdot"></i>ligado</span>` : `<span class="chip">desligado</span>`}</h3>
-    <p>${SEC === null ? "O secretário ainda não está disponível nesta versão." : on ? `Lê as notificações e mensagens, ${modo}. ${(SEC.vips || []).length ? `VIPs: ${esc(joinPt(SEC.vips.slice(0, 3).map(titleCase)))}. ` : ""}${(SEC.apps_ignorados || []).length ? `Ignora ${esc(joinPt(SEC.apps_ignorados.slice(0, 3).map(titleCase)))}.` : ""}` : "Ligue para o Djorge organizar sozinho o que chega: etiquetar, criar cards e avisar só o que importa."}</p></div>
+    <p>${SEC === null ? "O secretário ainda não está disponível nesta versão." : on ? `Lê as notificações e mensagens, ${modo}. ${(SEC.vips || []).length ? `VIPs: ${esc(joinPt(SEC.vips.slice(0, 3).map(titleCase)))}. ` : ""}${(SEC.apps_ignorados || []).length ? `Ignora ${esc(joinPt(SEC.apps_ignorados.slice(0, 3).map(titleCase)))}.` : ""}` : "Ligue para o " + AG() + " organizar sozinho o que chega: etiquetar, criar cards e avisar só o que importa."}</p></div>
     ${SEC === null ? "" : `<button class="btn ${on ? "" : "primary"}" id="secw">${on ? "Ajustar" : "Configurar em 3 passos"}</button>`}</section>`;
   const w = $("#secw", box); if (w) w.onclick = () => secretaryWizard(() => drawSec(v));
 }
@@ -1223,9 +1232,9 @@ async function drawRecipes(v) {
   const box = $("#rec", v); if (!box) return;
   try { MODELOS = asList(await api("/api/automacoes/modelos"), "modelos", "items"); } catch (e) { MODELOS = []; }
   if (!box.isConnected) return;
-  const IC = {boleto: "🧾", boletos: "🧾", orcamento: "💼", orcamentos: "💼", entrega: "📦", entregas: "📦", reuniao: "📅", reunioes: "📅", codigo: "🔑", codigos: "🔑", chefe: "⭐", vip: "⭐"};
+  const IC = {boleto: "receipt", boletos: "receipt", orcamento: "briefcase", orcamentos: "briefcase", entrega: "box", entregas: "box", reuniao: "cal", reunioes: "cal", codigo: "key", codigos: "key", chefe: "star", vip: "star"};
   box.innerHTML = MODELOS.length ? MODELOS.map((m, i) => { const au = m.automacao || m, ph = autoPhrase(au), k = String(m.id || m.nome || "").toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").split(/[^a-z]/)[0];
-    return `<article class="recipe" data-ri="${i}"><span class="rem" aria-hidden="true">${m.icone || IC[k] || "✨"}</span><div><b>${esc(m.nome || au.nome || "Receita")}</b><p>${esc(m.descricao || ph.se + ". " + ph.entao + ".")}</p></div>
+    return `<article class="recipe" data-ri="${i}"><span class="rem" aria-hidden="true">${ico(IC[k] || "spark")}</span><div><b>${esc(m.nome || au.nome || "Receita")}</b><p>${esc(m.descricao || ph.se + ". " + ph.entao + ".")}</p></div>
       <div class="ract2"><button class="btn sm primary" data-use="${i}">Usar</button><button class="btn sm ghost" data-see="${i}" data-tip="Ver e ajustar antes">Ajustar</button></div></article>`; }).join("") :
     `<p class="hint">As receitas prontas aparecem aqui quando o secretário estiver disponível.</p>`;
   const pick = i => { const m = MODELOS[i], au = JSON.parse(JSON.stringify(m.automacao || m)); delete au.id; au.nome = au.nome || m.nome; if (au.ativa === undefined) au.ativa = true; return au; };
@@ -1249,8 +1258,8 @@ async function drawAutos(v) {
     $(".sw", el).onclick = e => e.stopPropagation();
     el.onclick = e => { if (e.target.closest(".aa")) return; autoBuilder(a); };
     el.onkeydown = e => { if (e.key === "Enter" && e.target === el) autoBuilder(a); };
-    const items = [{value: "edit", label: "Editar", icon: "edit"}, {value: "test", label: "Testar com um texto", icon: "spark"}, {value: "dup", label: "Duplicar", icon: "plus"}, {value: "tog", label: a.ativa === false ? "Ligar" : "Pausar", icon: "check"}, {hr: 1}, {value: "del", label: "Apagar", icon: "trash", danger: true}];
-    const pickA = async x => { if (x === "edit") autoBuilder(a); if (x === "test") autoBuilder(a, [], true);
+    const items = [{value: "edit", label: "Editar", icon: "edit"}, {value: "tree", label: "Abrir no editor visual", icon: "tree"}, {value: "test", label: "Testar com um texto", icon: "spark"}, {value: "dup", label: "Duplicar", icon: "plus"}, {value: "tog", label: a.ativa === false ? "Ligar" : "Pausar", icon: "check"}, {hr: 1}, {value: "del", label: "Apagar", icon: "trash", danger: true}];
+    const pickA = async x => { if (x === "edit") autoBuilder(a); if (x === "test") autoBuilder(a, [], true); if (x === "tree") openAutoTree(a);
       if (x === "dup") { const c = JSON.parse(JSON.stringify(a)); delete c.id; c.nome = (a.nome || "Automação") + " (cópia)"; if (await tryApi("/api/automacoes", c)) { toast("Duplicada"); drawAutos(v); } }
       if (x === "tog") { const r = await tryApi(`/api/automacoes/${encodeURIComponent(a.id)}/${a.ativa === false ? "ativar" : "desativar"}`, {}); if (r) drawAutos(v); }
       if (x === "del") confirmBox("Apagar automação?", `“${a.nome || "Automação"}” deixa de rodar.`, "Apagar", async () => { if (await tryApi(`/api/automacoes/${encodeURIComponent(a.id)}/delete`, {})) { toast("Automação apagada"); drawAutos(v); } }); };
@@ -1265,13 +1274,20 @@ async function drawTrees(v) {
   S.trees = graphs;
   const names = graphs ? graphs.map(g => g.name || g.title) : ((S.status && S.status.trees) || []);
   tl.innerHTML = names.length ? names.map((n, i) => `<button type="button" data-ti="${i}" data-ctx="tree">${ico("tree", "sm")}<b>${esc(titleCase(n || "árvore " + (i + 1)))}</b>${graphs && (graphs[i].graph || graphs[i]).nodes ? `<small>${(graphs[i].graph || graphs[i]).nodes.length} passos</small>` : ""}</button>`).join("") : `<p class="hint">Nenhuma árvore ainda.</p>`;
-  $$("[data-ti]", tl).forEach(b => { const open = () => graphs ? openFull({graph: graphs[+b.dataset.ti]}) : openFull({yaml: true}); b.onclick = open;
+  $$("[data-ti]", tl).forEach(b => { const open = async () => { if (!graphs) return openFull({yaml: true}); const nm = names[+b.dataset.ti];
+      let g = graphs[+b.dataset.ti]; try { const r = await api("/api/trees/graph"); g = ((r && r.graphs) || []).find(x => x.name === nm) || g; } catch (e) {}
+      openFull({graph: g}); }; b.onclick = open;
     b.oncontextmenu = e => ctxMenu(e, [{value: "o", label: "Abrir no editor visual", icon: "tree"}, {value: "y", label: "Editar como texto", icon: "edit"}], x => x === "o" ? open() : openFull({yaml: true})); });
+}
+async function openAutoTree(a) {
+  try { const r = await api(`/api/automacoes/${encodeURIComponent(a.id)}/arvore`); const g = r && (r.graph || (r.tree && {name: r.tree.name, tree: r.tree, nodes: [], edges: []}));
+    if (!g) throw new ApiError("não consegui montar a árvore", 500); openFull({graph: {...g, name: a.nome || g.name}, auto: a}); }
+  catch (e) { toast(human(e), "bad"); }
 }
 /* ----- construtor “Se… / Então…” ----- */
 function autoBuilder(a0, notes = [], focusTest) {
-  const a = JSON.parse(JSON.stringify(a0 || {nome: "", ativa: true, quando: {fontes: ["notificacoes"], apps: [], remetente: "", palavras: [], assunto: ""}, entao: [{acao: "criar_card", params: {titulo: "", campos: []}}]}));
-  a.quando = a.quando || {}; a.entao = a.entao && a.entao.length ? a.entao : [{acao: "criar_card", params: {}}];
+  const a = JSON.parse(JSON.stringify(a0 || {nome: "", ativa: true, quando: {fontes: ["notifications"], apps: [], remetente: "", palavras: [], assunto: ""}, entao: [{acao: "criar_card", params: {titulo: "", campos: []}}]}));
+  a.quando = a.quando || {}; a.quando.fontes = [...new Set((a.quando.fontes || []).map(f => FONTE_ALIAS[f] || f))]; a.entao = a.entao && a.entao.length ? a.entao : [{acao: "criar_card", params: {}}];
   const w = a.quando;
   const m = modal({title: a0 && a0.id ? "Editar automação" : "Nova automação", cls: "builder", body: `<div class="bbody">
     ${notes.length ? `<div class="leave">${ico("spark", "sm")}<div>${notes.map(esc).join("<br>")}</div></div>` : ""}
@@ -1281,12 +1297,12 @@ function autoBuilder(a0, notes = [], focusTest) {
       <div class="grid2"><div class="field"><label for="b-appi">De qual app <small>(opcional)</small></label><div class="tagin" id="b-apps"></div></div>
         <div class="field"><label for="b-rem">De quem <small>(opcional)</small></label><input class="inp" id="b-rem" value="${esc(w.remetente || "")}" placeholder="ex.: Carlos, @empresa.com" list="b-cont"><datalist id="b-cont"></datalist></div></div>
       <div class="field"><label for="b-pali">Com alguma destas palavras <small>(opcional)</small></label><div class="tagin" id="b-pal"></div></div>
-      <div class="field"><label for="b-ass">Sobre o assunto <small>(descreva do seu jeito; o Djorge julga)</small></label><input class="inp" id="b-ass" value="${esc(w.assunto || "")}" placeholder="ex.: mensagem sobre orçamento ou proposta de preço"></div>
+      <div class="field"><label for="b-ass">Sobre o assunto <small>(descreva do seu jeito; o ${AG()} julga)</small></label><input class="inp" id="b-ass" value="${esc(w.assunto || "")}" placeholder="ex.: mensagem sobre orçamento ou proposta de preço"></div>
     </section>
     <section class="bsec"><h4><span class="kw">Então…</span> faça isto</h4><div id="b-acts"></div><button type="button" class="addc" id="b-add">${ico("plus", "sm")} Adicionar outra ação</button></section>
     <section class="bsec test"><h4>Testar com um exemplo</h4><div class="ftrow"><textarea class="ta" id="b-tt" rows="2" placeholder="Cole uma mensagem de exemplo: “Oi, segue o orçamento de R$ 3.200, válido até sexta. — Carlos”"></textarea><button class="btn" id="b-test">${ico("spark", "sm")} Testar</button></div><div id="b-tr" aria-live="polite"></div></section>
     <p class="bphrase" id="b-ph"></p></div>`,
-    foot: `${a0 && a0.id ? `<button class="btn ghost danger" id="b-del">${ico("trash", "sm")} Apagar</button>` : ""}<span style="flex:1"></span>${swHTML("b-on", a.ativa !== false, "Ligada")}<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="b-save">${ico("check", "sm")} Salvar automação</button>`});
+    foot: `${a0 && a0.id ? `<button class="btn ghost danger" id="b-del">${ico("trash", "sm")} Apagar</button>` : ""}${a0 && a0.id ? `<button class="btn ghost" id="b-tree">${ico("tree", "sm")} Editor visual</button>` : ""}<span style="flex:1"></span>${swHTML("b-on", a.ativa !== false, "Ligada")}<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="b-save">${ico("check", "sm")} Salvar automação</button>`});
   const B = m.box;
   const phrase = () => { const ph = autoPhrase(a); $("#b-ph", B).innerHTML = `<span class="kw">Se</span> ${esc(ph.se.slice(3))} <span class="kw">Então</span> ${esc(ph.entao.slice(6))}`; };
   $$("#b-fontes [data-f]", B).forEach(b => b.onclick = () => { const s = new Set(w.fontes || []); s.has(b.dataset.f) ? s.delete(b.dataset.f) : s.add(b.dataset.f); w.fontes = [...s]; b.classList.toggle("on"); b.setAttribute("aria-pressed", s.has(b.dataset.f)); phrase(); });
@@ -1325,8 +1341,9 @@ function autoBuilder(a0, notes = [], focusTest) {
   if (focusTest) setTimeout(() => $("#b-tt", B).focus(), 60);
   $("#b-save", B).onclick = async e => { a.nome = $("#b-nome", B).value.trim() || autoPhrase(a).se.slice(0, 60); a.ativa = $("#b-on", B).checked;
     if (!(w.fontes || []).length && !(w.palavras || []).length && !w.assunto && !w.remetente && !(w.apps || []).length) { toast("Diga pelo menos quando a automação deve rodar (o “Se…”).", "warn"); return; }
-    e.currentTarget.setAttribute("aria-busy", "true"); const r = await tryApi("/api/automacoes", a); e.currentTarget.removeAttribute("aria-busy");
+    const sb = e.currentTarget; sb.setAttribute("aria-busy", "true"); const r = await tryApi("/api/automacoes", a); sb.removeAttribute("aria-busy");
     if (r) { m.close(); toast("Automação salva", "", {title: a.nome}); if (S.view === "automacoes") drawAutos(viewEl()); } };
+  const bt = $("#b-tree", B); if (bt) bt.onclick = () => { m.close(); openAutoTree(a0); };
   const del = $("#b-del", B); if (del) del.onclick = () => confirmBox("Apagar automação?", `“${a.nome}” deixa de rodar.`, "Apagar", async () => { if (await tryApi(`/api/automacoes/${encodeURIComponent(a.id)}/delete`, {})) { m.close(); toast("Automação apagada"); drawAutos(viewEl()); } });
 }
 let contT = null;
@@ -1354,14 +1371,14 @@ async function secretaryWizard(after) {
       tagInput($("#w-ax", wb), st.apps_ignorados.filter(x => !apps.includes(x)), "w-ai", "nome do app + Enter", x => { st.apps_ignorados = [...new Set([...st.apps_ignorados.filter(y => apps.includes(y)), ...x])]; });
       tagInput($("#w-vip", wb), st.vips, "w-vi", "nome + Enter", x => st.vips = x); }
     if (step === 2) { wb.innerHTML = `<h3>Sugerir ou agir?</h3><p class="hint">Você pode mudar depois.</p><div class="wopts" role="radiogroup" aria-label="Modo">
-      <button type="button" role="radio" class="wopt" data-m="sugerir" aria-checked="${st.modo === "sugerir"}"><span class="rem">🤝</span><b>Sugerir</b><p>O secretário propõe (criar card, etiquetar, arquivar) e você aprova num clique. Recomendado para começar.</p></button>
-      <button type="button" role="radio" class="wopt" data-m="agir" aria-checked="${st.modo === "agir"}"><span class="rem">⚡</span><b>Agir e avisar</b><p>Ele faz sozinho e te avisa. Tudo pode ser desfeito.</p></button></div>`;
+      <button type="button" role="radio" class="wopt" data-m="sugerir" aria-checked="${st.modo === "sugerir"}"><span class="rem">${ico("hand")}</span><b>Sugerir</b><p>O secretário propõe (criar card, etiquetar, arquivar) e você aprova num clique. Recomendado para começar.</p></button>
+      <button type="button" role="radio" class="wopt" data-m="agir" aria-checked="${st.modo === "agir"}"><span class="rem">${ico("bolt")}</span><b>Agir e avisar</b><p>Ele faz sozinho e te avisa. Tudo pode ser desfeito.</p></button></div>`;
       $$(".wopt", wb).forEach(b => b.onclick = () => { st.modo = b.dataset.m; $$(".wopt", wb).forEach(x => x.setAttribute("aria-checked", x === b)); }); }
   };
   $("#wback", B).onclick = () => { step = Math.max(0, step - 1); draw(); };
-  $("#wnext", B).onclick = async e => { if (step < 2) { step++; draw(); return; } e.currentTarget.setAttribute("aria-busy", "true");
+  $("#wnext", B).onclick = async e => { if (step < 2) { step++; draw(); return; } const nb = e.currentTarget; nb.setAttribute("aria-busy", "true");
     const hs = /^(\d\d:\d\d)\s*-\s*(\d\d:\d\d)$/.exec(st.horario_silencio.trim());
-    const r = await tryApi("/api/secretario", {...st, horario_silencio: hs ? {ativo: true, inicio: hs[1], fim: hs[2]} : {ativo: false}}); e.currentTarget.removeAttribute("aria-busy");
+    const r = await tryApi("/api/secretario", {...st, horario_silencio: hs ? {ativo: true, inicio: hs[1], fim: hs[2]} : {ativo: false}}); nb.removeAttribute("aria-busy");
     if (r) { m.close(); toast(st.ativo ? `Secretário ligado · ${st.modo === "agir" ? "age e avisa" : "sugere e você aprova"}` : "Secretário desligado", "", {title: "Secretário"}); after && after(); } };
   draw();
 }
@@ -1369,7 +1386,11 @@ async function secretaryWizard(after) {
 let FULL = null;
 function closeFull(force) { if (!FULL) return true; if (!force && FULL.dirty && !confirm("Sair sem salvar as mudanças da árvore?")) return false;
   try { FULL.ed && FULL.ed.destroy && FULL.ed.destroy(); } catch (e) {} FULL.el.remove(); FULL = null; document.body.classList.remove("fullopen"); return true; }
-async function openFull({graph, yaml, isNew}) {
+/* erros de validação em linguagem simples: “no passo X, …” */
+function treeErrText(er) { const es = (er && er.data && er.data.errors) || [];
+  if (!es.length) return human(er);
+  return "Não deu para salvar: " + es.slice(0, 3).map(x => (x.node ? `no passo “${x.node}”, ` : "") + (x.message || x.msg || x.text || "")).join("; ") + (es.length > 3 ? ` (e mais ${es.length - 3})` : "") + "."; }
+async function openFull({graph, yaml, isNew, auto}) {
   closeFull(true);
   const el = document.createElement("div"); el.className = "fullview"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Editor de automação");
   const g0 = graph || {}, name = g0.name || g0.title || (yaml ? "Árvores (texto)" : "nova árvore");
@@ -1377,7 +1398,7 @@ async function openFull({graph, yaml, isNew}) {
     <span class="sp"></span><span class="hint fvhelp">${yaml ? "" : "Cada caixa é uma pergunta (“Se…”) ou uma ação (“Então…”). Arraste da bolinha de uma resposta até a próxima caixa para ligar."}</span>
     <span class="chip" hidden id="fv-dirty">alterações não salvas</span>${yaml ? "" : `<button class="btn primary" id="fv-save">${ico("check", "sm")} Salvar</button>`}</header><div class="fvbody" id="fv-body"><div class="sk" style="height:100%;border-radius:0"></div></div>`;
   document.body.appendChild(el); document.body.classList.add("fullopen");
-  FULL = {el, dirty: false};
+  FULL = {el, dirty: false, original: isNew ? null : (g0.name || g0.title || null), auto};
   $("#fv-back", el).onclick = () => closeFull();
   el.addEventListener("keydown", e => { if (e.key === "Escape" && !openMenu && !e.target.closest("input,textarea,select,.te-root")) { e.stopPropagation(); closeFull(); } });
   const body = $("#fv-body", el);
@@ -1388,15 +1409,29 @@ async function openFull({graph, yaml, isNew}) {
   let gr = g0.graph || g0;
   if ((!gr.nodes || !gr.nodes.length) && g0.tree && window.TreeEditor.fromTree) { try { gr = await window.TreeEditor.fromTree(g0.tree); } catch (e) { toast(human(e), "bad"); } }
   body.innerHTML = ""; const host = document.createElement("div"); host.className = "fvhost"; body.appendChild(host);
-  try { FULL.ed = window.TreeEditor.mount(host, {graph: gr, onChange: x => { FULL.g = x; if (!FULL.ready) return; FULL.dirty = true; FULL.g = x; $("#fv-dirty", el).hidden = false; }}); }
+  if (auto && gr.name && /^auto-/.test(gr.name)) gr = {...gr, name: auto.nome || gr.name};
+  $("#fv-name", el).value = gr.name || name;
+  try { FULL.ed = window.TreeEditor.mount(host, {graph: gr, onChange: x => { FULL.g = x; const ni = $("#fv-name", el); if (x.name && ni.value !== x.name && document.activeElement !== ni) ni.value = x.name;
+    if (!FULL.ready) return; FULL.dirty = true; $("#fv-dirty", el).hidden = false; }}); }
   catch (e) { console.warn(e); yamlEditor(body, "Não consegui abrir o editor visual."); return; }
   setTimeout(() => { if (FULL) FULL.ready = true; }, 400);
   if (isNew) { FULL.dirty = !!(gr.nodes && gr.nodes.length); $("#fv-dirty", el).hidden = !FULL.dirty; }
-  $("#fv-save", el).onclick = async e => { const b = e.currentTarget; b.setAttribute("aria-busy", "true");
-    const gg = FULL.g || (FULL.ed.getGraph ? FULL.ed.getGraph() : gr); gg.name = $("#fv-name", el).value.trim() || gg.name || "árvore";
-    try { await api("/api/trees/graph", {graph: gg, name: gg.name}); FULL.dirty = false; $("#fv-dirty", el).hidden = true; toast("Árvore salva", "", {title: titleCase(gg.name)}); pollStatus(); }
-    catch (er) { toast(er.data && er.data.errors ? "A árvore tem problemas: " + er.data.errors.slice(0, 2).map(x => x.msg || x.message || x.text || JSON.stringify(x)).join("; ") : human(er), "bad"); }
+  $("#fv-save", el).onclick = async e => { const b = e.currentTarget; if (b.getAttribute("aria-busy")) return; b.setAttribute("aria-busy", "true");
+    const F = FULL, gg = F.ed.getGraph ? F.ed.getGraph() : (F.g || gr); gg.name = $("#fv-name", el).value.trim() || gg.name || "árvore";
+    try {
+      if (F.auto && F.auto.id) {
+        const r = await api(`/api/automacoes/${encodeURIComponent(F.auto.id)}/arvore`, {graph: gg, nome: gg.name});
+        if (r && r.modo === "arvore") { F.auto = null; F.original = r.saved; toast("Salva como árvore avançada. A automação antiga foi pausada para não rodar duas vezes.", "", {title: titleCase(r.saved), ms: 6500}); }
+        else toast("Automação salva", "", {title: titleCase((r && r.automacao && r.automacao.nome) || gg.name)});
+      } else {
+        await api("/api/trees/graph", {graph: gg, name: gg.name, original: F.original || undefined});
+        F.original = gg.name; toast("Árvore salva", "", {title: titleCase(gg.name)});
+      }
+      F.dirty = false; $("#fv-dirty", el).hidden = true; pollStatus();
+      if (S.view === "automacoes") { drawTrees(viewEl()); drawAutos(viewEl()); }
+    } catch (er) { toast(treeErrText(er), "bad", {ms: 9000}); }
     b.removeAttribute("aria-busy"); };
+  el.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); $("#fv-save", el).click(); } });
   $("#fv-name", el).oninput = () => { FULL.dirty = true; $("#fv-dirty", el).hidden = false; };
 }
 async function yamlEditor(el, note) {
@@ -1414,7 +1449,7 @@ function setInput(t) { const i = inp(); i.value = t; autoGrow(); i.focus(); i.se
 function setMode(m) {
   S.mode = m; const b = $("#btn-mode"); b.dataset.m = m; b.querySelector("span").textContent = {auto: "Automático", pedido: "Pedido", mensagem: "Mensagem recebida"}[m];
   $("#extra-in").classList.toggle("on", m === "mensagem");
-  inp().placeholder = m === "mensagem" ? "Cole a mensagem que você recebeu para o Djorge triar…" : m === "pedido" ? "Diga o que quer que o Djorge faça…" : "Peça algo ao Djorge… (ex.: reunião com Ana amanhã às 15h)";
+  inp().placeholder = m === "mensagem" ? "Cole a mensagem que você recebeu para o " + AG() + " triar…" : m === "pedido" ? "Diga o que quer que o " + AG() + " faça…" : "Peça algo ao " + AG() + "… (ex.: reunião com Ana amanhã às 15h)";
   renderSuggest();
 }
 function renderSuggest() {
@@ -1426,16 +1461,26 @@ function thinkingEl() {
   const el = document.createElement("div"); el.className = "thinking"; el.setAttribute("role", "status");
   const petals = Array.from({length: 8}, (_, i) => { const a = i * 45, rad = a * Math.PI / 180; return `<i style="--r:${a}deg;--dx:${Math.round(Math.cos(rad) * 26)}px;--dy:${Math.round(Math.sin(rad) * 26)}px;animation-delay:${i * 0.07}s"></i>`; }).join("");
   el.innerHTML = `<div class="bloom" aria-hidden="true">${petals}<b></b></div><div class="thb"><div class="ph"><span>${PHRASES[0]}</span><span class="dots"></span></div><ol class="etapas" aria-label="Etapas"></ol></div>`;
-  let k = 0, live = false;
-  const t = setInterval(() => { if (live) return; k = (k + 1) % PHRASES.length; setPh(PHRASES[k]); }, 1100);
-  const setPh = txt => { const s = el.querySelector(".ph span"); if (s && s.textContent !== txt) { s.textContent = txt; s.style.animation = "none"; void s.offsetWidth; s.style.animation = ""; } };
-  el._stop = () => clearInterval(t);
-  /* etapas reais vindas do backend: [{t, texto, estado}] */
+  let k = 0, live = false, shown = "", swapT = null;
+  const t = setInterval(() => { if (live) return; k = (k + 1) % PHRASES.length; setPh(PHRASES[k]); }, 1600);
+  /* troca o texto só quando ele muda, com um fade curto (nada de re-render a cada consulta) */
+  const setPh = txt => { if (txt === shown) return; shown = txt; const sp = el.querySelector(".ph span"); if (!sp) return;
+    clearTimeout(swapT); if (REDUCED) { sp.textContent = txt; return; }
+    sp.classList.add("out"); swapT = setTimeout(() => { sp.textContent = shown; sp.classList.remove("out"); }, 160); };
+  el._stop = () => { clearInterval(t); clearTimeout(swapT); };
+  const clean = x => String(x.texto || x.text || "").replace(/[.…]+$/, "");
+  /* etapas reais vindas do backend: [{t, texto, estado}] — a atual fica em cima, as concluídas acumulam embaixo */
   el._etapas = list => { if (!list || !list.length) return; live = true;
-    const cur = list.find(x => x.estado === "agora") || list[list.length - 1];
-    setPh(String(cur.texto || "").replace(/[.…]+$/, "").replace(/^./, c => c.toLowerCase()));
-    const done = list.filter(x => x !== cur);
-    $(".etapas", el).innerHTML = done.slice(-4).map(x => `<li class="${x.estado === "erro" ? "err" : "ok"}">${ico(x.estado === "erro" ? "x" : "check", "sm")}${esc(String(x.texto || "").replace(/[.…]+$/, ""))}</li>`).join(""); };
+    let ci = list.findIndex(x => x.estado === "agora"); if (ci < 0) ci = list.length - 1;
+    setPh(clean(list[ci]));
+    const ol = $(".etapas", el), have = ol.children;
+    const done = list.filter((x, i) => i !== ci);
+    done.forEach((x, i) => { const cls = x.estado === "erro" ? "err" : "ok", txt = clean(x);
+      let li = have[i];
+      if (li && li.dataset.txt === txt && li.className === cls) return;
+      if (!li) { li = document.createElement("li"); ol.appendChild(li); }
+      li.className = cls; li.dataset.txt = txt; li.innerHTML = `${ico(x.estado === "erro" ? "x" : "check", "sm")}${esc(txt)}`; });
+    while (have.length > done.length) ol.lastChild.remove(); };
   return el;
 }
 function pushThread(el) {
@@ -1509,7 +1554,7 @@ function fieldChip(f) {
   let val = f.valor_fmt || f.fmt || (f.valor && f.valor !== f.texto ? (typeof f.valor === "object" ? (f.valor.texto || f.valor.nome || "") : String(f.valor)) : "");
   if (!f.valor_fmt && val) { if (f.campo === "data" && /^\d{4}-\d\d-\d\d/.test(val)) val = fmtDT(val, {rel: true}); else if (f.campo === "pessoa") val = titleCase(val); else if (/valor|dinheiro|money/i.test(f.campo + (f.tipo || ""))) val = fmtMoney(val); }
   const txt = f.campo === "pessoa" ? titleCase(f.texto || f.valor) : (f.texto || f.valor);
-  return `<span class="fchip ${cls}" data-tip="${esc(titleCase(f.campo))} · ${isModel ? "entendido pelo modelo" : "achado pelas regras"}"><span aria-hidden="true">${FIELD_EMO[f.campo] || ""}</span><b>${esc(txt)}</b>${val && val !== txt ? `<small>→ ${esc(val)}</small>` : ""}</span>`;
+  return `<span class="fchip ${cls}" data-tip="${esc(titleCase(f.campo))} · ${isModel ? "entendido pelo modelo" : "achado pelas regras"}">${FIELD_ICO[f.campo] ? ico(FIELD_ICO[f.campo], "xs") : ""}<b>${esc(txt)}</b>${val && val !== txt ? `<small>→ ${esc(val)}</small>` : ""}</span>`;
 }
 const PKINDS = [["mensagem", "Mensagem"], ["tarefa", "Tarefa"], ["lembrete", "Lembrete"], ["evento", "Evento"], ["nota", "Nota"], ["lista", "Lista"]];
 function resultCard(r, text) {
@@ -1517,9 +1562,9 @@ function resultCard(r, text) {
   const el = document.createElement("div"); el.className = "rcard"; el.setAttribute("aria-label", "Resultado do pedido");
   const tool = r.tool || "nenhuma", [tl, ti] = TOOL_PT[tool] || [titleCase(String(tool).replace(/_/g, " ")), "spark"], p = r.proposal || {action: "none"};
   const ds = asList(r.dicas), qs = asList(r.perguntas);
-  el.innerHTML = `<div class="rhead"><div class="rtool"><span class="ti">${ico(ti)}</span>${esc(tl)}</div>${tool === "web" ? `<span class="tag out">${ico("plug", "sm")} sai do computador</span>` : ""}</div>
+  el.innerHTML = `<div class="rhead"><div class="rtool"><span class="ti">${ico(ti)}</span>${esc(tl)}</div>${tool === "web" || p.action === "web_search" ? `<span class="tag out">${ico("globe", "sm")} sai do computador</span>` : ""}${r.decidido_por ? `<span class="sp"></span><span class="decby" data-tip="Quem entendeu o pedido">decidido ${r.decidido_por === "modelo" ? "pelo modelo" : r.decidido_por === "regras" ? "pelas regras" : "por " + esc(r.decidido_por)}</span>` : ""}</div>
     ${r.reply ? `<p class="reply">${esc(r.reply)}</p>` : ""}
-    ${r.warning || r.aviso ? `<p class="hint">⚠ ${esc(r.warning || r.aviso)}</p>` : ""}
+    ${r.warning || r.aviso ? `<p class="hint">${ico("warn", "sm")} ${esc(r.warning || r.aviso)}</p>` : ""}
     ${(r.fields || []).length ? `<div class="fields" aria-label="O que eu entendi">${r.fields.map(fieldChip).join("")}</div>` : ""}
     <div class="propbox"></div>${dicasHTML(ds, qs)}
     <div class="ract"></div>
@@ -1529,10 +1574,11 @@ function resultCard(r, text) {
   const state = {W: null};
   renderProposal(pb, p, r, state);
   const editable = ["create_card", "update_card", "send_message", "abrir_app", "open_app"].includes(p.action);
-  const confirmable = p.action && !["none", "search", "calc", "time", "show_agenda", "web"].includes(p.action);
+  const confirmable = p.action && !["none", "search", "calc", "time", "show_agenda", "web", "web_search"].includes(p.action);
   if (p.action === "ui" && p.patch) { state.prevServer = {...(S.prefs._server || {})};
     api("/api/ui").then(u => { S.prefs = normPrefs(u); applyPrefs(S.prefs); if (S.view !== "inicio") render(); }).catch(() => {}); }
-  if (r.executed) {
+  if (p.action === "web_search" && !r.executed) webAsk(el, r, p, pb, ract);
+  else if (r.executed) {
     ract.innerHTML = `<div class="rdone">${ico("check", "sm")} ${p.action === "ui" ? "Interface ajustada" : p.action === "update_card" ? "Card atualizado" : "Feito"}</div>
       ${(r.results || [])[0] && (r.results[0] || {}).id ? `<button class="btn sm" data-open>Abrir card</button>` : ""}<button class="btn sm ghost" data-undo>Desfazer</button>`;
     $$("input,textarea,.sel button,.seg button", pb).forEach(x => x.disabled = true);
@@ -1569,6 +1615,26 @@ function resultCard(r, text) {
   }
   return el;
 }
+/* busca na internet: pergunta antes de sair do computador; ao confirmar mostra os resultados */
+function webAsk(el, r, p, pb, ract) {
+  const q = p.q || "";
+  if (!r.reply) { const rp = document.createElement("p"); rp.className = "reply"; rp.textContent = `Quer que eu busque “${q}” na internet?`; $(".rhead", el).after(rp); }
+  ract.innerHTML = `<button class="btn primary" data-wok>${ico("search", "sm")} <span>Buscar</span></button><button class="btn ghost" data-wno>Agora não</button><span class="note">Só busca se você confirmar.</span>`;
+  $("[data-wno]", ract).onclick = () => { tryApi("/api/command/confirm", {id: r.id, approve: false}, {silent: true}); ract.innerHTML = `<div class="rdone no">${ico("x", "sm")} Sem busca na internet</div>`; };
+  $("[data-wok]", ract).onclick = async e => { const b = e.currentTarget; if (b.getAttribute("aria-busy")) return; b.setAttribute("aria-busy", "true");
+    pb.innerHTML = `<div class="prop"><h4>${ico("globe", "sm")} Buscando na internet…</h4><div class="sk" style="height:54px"></div></div>`;
+    try { const out = await api("/api/command/confirm", {id: r.id, approve: true, edits: {q}}, {strict: false});
+      if (out && out.error && !(out.results || []).length) throw new ApiError(out.error, 400, out);
+      const items = asList(out && (out.results || out.resultados));
+      const rp = $(".reply", el); if (rp && out && out.reply) rp.textContent = out.reply;
+      pb.innerHTML = `<div class="prop"><h4>${ico("globe", "sm")} Na internet · ${items.length}</h4>${items.length ? `<div class="rlist">${items.slice(0, 8).map(resultItemHTML).join("")}</div>` : (out && out.ok === false || /n[aã]o consegui acessar/i.test((out && out.reply) || "") ? "" : `<p class="hint">Não achei nada na internet sobre “${esc(q)}”. Tente com outras palavras.</p>`)}</div>`;
+      if (!items.length && (out && out.ok === false || /n[aã]o consegui acessar/i.test((out && out.reply) || ""))) pb.innerHTML = "";
+      wireResultItems(pb);
+      ract.innerHTML = items.length ? `<div class="rdone">${ico("check", "sm")} Busca feita</div>` : `<button class="btn sm" data-wre>${ico("sync", "sm")} Tentar de novo</button>`;
+      const re = $("[data-wre]", ract); if (re) re.onclick = () => webAsk(el, r, p, pb, ract); }
+    catch (er) { b.removeAttribute("aria-busy"); pb.innerHTML = `<div class="prop"><p class="hint warnc">${ico("warn", "sm")} ${esc(human(er))}</p></div>`; } };
+}
+function openUrl(url) { api("/api/abrir", {app: "navegador", url}).then(o => { if (!o || o.status !== "aberto") window.open(url, "_blank", "noopener"); }).catch(() => window.open(url, "_blank", "noopener")); }
 function confirmMsg(p, out, W) { if (W && W.kind && W.kind !== "mensagem" && (p.action === "create_card")) return `${KINDS[W.kind] || "Card"} criad${W.kind === "lista" || W.kind === "nota" || W.kind === "tarefa" || W.kind === "mensagem" ? "a" : "o"}`;
   return {create_card: "Card criado", update_card: "Card atualizado", send_message: out && out.status === "aguardando confirmação" ? "Na fila de confirmação" : "Mensagem enviada", create_tree: "Automação salva", ui: "Interface ajustada"}[p.action] || "Feito"; }
 async function afterConfirm(p, out, el) {
@@ -1612,7 +1678,7 @@ function renderProposal(pb, p, r, state) {
             <div class="field acwrap"><label>Para</label><input class="inp" data-k="to" value="${esc(W.to)}" placeholder="nome, telefone ou e-mail" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false"></div></div>
           ${W.channel === "google" || W.channel === "microsoft" ? inputRow("Assunto", "subject", W.subject) : ""}
           ${inputRow("Texto", "msg", W.msg, "area", "Escreva a mensagem")}
-          ${W.channel === "app_whatsapp" ? `<p class="hint">${ico("send", "sm")} O Djorge abre o WhatsApp com a mensagem pronta. Quem aperta enviar é você.</p>` : ""}</div>`;
+          ${W.channel === "app_whatsapp" ? `<p class="hint">${ico("send", "sm")} O ${AG()} abre o WhatsApp com a mensagem pronta. Quem aperta enviar é você.</p>` : ""}</div>`;
         wireSel(pb, "pch", opts, v => { syncW(pb, W); W.channel = v; draw(); });
         contactAuto($('[data-k="to"]', pb), c => { W.to = titleCase(c.nome || c.email || c.telefone); W.phone = c.telefone || c.phone || ""; W.email = c.email || ""; W.contato = c; });
       } else {
@@ -1624,8 +1690,8 @@ function renderProposal(pb, p, r, state) {
           <div class="field"><span class="lbl">Prioridade</span>${selHTML("pp", pris, String(W.priority || 0), "Prioridade")}</div>
           ${W.kind === "nota" ? "" : `<div class="field"><span class="lbl">${W.kind === "tarefa" ? "Prazo" : "Quando"}</span><div class="dt"><input type="date" data-k="date" value="${esc(W.date)}" aria-label="Data"><input type="time" data-k="time" value="${esc(W.time)}" aria-label="Hora"></div></div>`}</div>
           ${W.date ? `<p class="hint whenf">${ico("cal", "sm")} ${esc(fmtDT(W.date + "T" + (W.time || "00:00") + ":00", {rel: true}))}</p>` : ""}
-          ${W.people.length || W.recurrence ? `<div class="row" style="gap:6px">${W.people.map(x => `<span class="chip">${ico("msg", "sm")}${esc(titleCase(x.nome || x.email))}</span>`).join("")}${W.recurrence ? `<span class="chip">🔁 ${esc(typeof W.recurrence === "object" ? (W.recurrence.texto || JSON.stringify(W.recurrence)) : W.recurrence)}</span>` : ""}</div>` : ""}
-          ${W.kind === "lista" || W.checklist.length ? `<div class="field" style="margin-top:8px"><span class="lbl">Itens</span><div class="row" style="gap:6px">${W.checklist.map(x => `<span class="chip">☐ ${esc(x.text)}</span>`).join("") || `<span class="hint">Adicione os itens depois, no card.</span>`}</div></div>` : ""}</div>`;
+          ${W.people.length || W.recurrence ? `<div class="row" style="gap:6px">${W.people.map(x => `<span class="chip">${ico("msg", "sm")}${esc(titleCase(x.nome || x.email))}</span>`).join("")}${W.recurrence ? `<span class="chip">${ico("repeat", "sm")}${esc(typeof W.recurrence === "object" ? (W.recurrence.texto || JSON.stringify(W.recurrence)) : W.recurrence)}</span>` : ""}</div>` : ""}
+          ${W.kind === "lista" || W.checklist.length ? `<div class="field" style="margin-top:8px"><span class="lbl">Itens</span><div class="row" style="gap:6px">${W.checklist.map(x => `<span class="chip">${ico("box0", "sm")}${esc(x.text)}</span>`).join("") || `<span class="hint">Adicione os itens depois, no card.</span>`}</div></div>` : ""}</div>`;
         wireSel(pb, "pc", cols); wireSel(pb, "pp", pris);
         $$('[data-k="date"],[data-k="time"]', pb).forEach(i => i.onchange = () => { syncW(pb, W); draw(); });
       }
@@ -1656,10 +1722,10 @@ function renderProposal(pb, p, r, state) {
 function resultItemHTML(x) {
   const d = parseD(x.start || x.due || x.date || x.t);
   const src = x.fonte || (x.source && (SRC_NAME[x.source.integration || x.source] || "")) || "";
-  return `<button type="button" class="rli" ${x.id ? `data-cid="${esc(x.id)}"` : ""} ${x.url ? `data-url="${esc(x.url)}"` : ""}><span style="min-width:0"><b>${esc(x.titulo || x.title || x.text || x.name || "item")}</b>${x.snippet || x.trecho ? `<p>${esc(x.snippet || x.trecho)}</p>` : ""}${src ? `<em class="src2">${esc(src)}</em>` : ""}</span><small>${d ? esc(fmtDT(d, {rel: true})) : ""}</small></button>`;
+  return `<button type="button" class="rli" ${x.id ? `data-cid="${esc(x.id)}"` : ""} ${x.url ? `data-url="${esc(x.url)}"` : ""}><span style="min-width:0"><b>${esc(x.titulo || x.title || x.text || x.name || "item")}</b>${x.snippet || x.trecho ? `<p>${esc(x.snippet || x.trecho)}</p>` : ""}${src ? `<em class="src2">${x.url && !x.id ? ico("globe", "xs") + " " : ""}${esc(src)}</em>` : ""}</span><small>${d ? esc(fmtDT(d, {rel: true})) : ""}</small></button>`;
 }
 function wireResultItems(root) { $$("[data-cid]", root).forEach(b => b.onclick = () => { if (S.cards.find(c => c.id === b.dataset.cid)) openCard(b.dataset.cid); });
-  $$("[data-url]:not([data-cid])", root).forEach(b => b.onclick = () => window.open(b.dataset.url, "_blank", "noopener")); }
+  $$("[data-url]:not([data-cid])", root).forEach(b => b.onclick = () => openUrl(b.dataset.url)); }
 function collectEdits(pb, p, state) {
   const e = {}; $$("[data-k]", pb).forEach(i => { if (i.dataset.k.startsWith("q:")) (e.answers = e.answers || {})[i.dataset.k.slice(2)] = i.value; });
   const W = state && state.W; if (!W) { $$("[data-k]", pb).forEach(i => { if (!i.dataset.k.startsWith("q:")) e[i.dataset.k] = i.value; }); return e; }
@@ -1746,7 +1812,7 @@ async function pollModel() {
   try { S.model = await api("/api/model/info") || {}; } catch (e) { if (e.status === 0) S.model = {...S.model}; }
   const s = modelUiState();
   if (lastModelState && lastModelState !== s) {
-    if (s === "pronto") toast("O modelo DOFL está pronto. Agora o Djorge entende bem mais.", "", {title: "Modelo instalado"});
+    if (s === "pronto") toast("O modelo DOFL está pronto. Agora o " + AG() + " entende bem mais.", "", {title: "Modelo instalado"});
     if (s === "erro") toast(S.model.error || "Falha ao baixar o modelo.", "bad", {action: "Ver", onAction: openModel});
     if (S.view === "inicio") render();
   }
@@ -1762,7 +1828,7 @@ function openModel() {
     const m = S.model || {}, s = modelUiState(), pct = m.progress || 0, d = m.details || {};
     $("#mpb", m0.box).innerHTML = `<div class="mhero"><div class="big">${ringSVG(s === "pronto" ? 1 : pct, 32, 72)}<img src="/static/icon.svg" alt=""></div>
       <div><span class="kicker">Djorge Origo Flash Local</span><h3>${esc(m.name || "DOFL V2")} ${m.version ? `<small class="mono" style="color:var(--ink3)">v${esc(m.version)}</small>` : ""}</h3>
-      <p>${{ausente: "Ainda não está neste computador. Sem ele, o Djorge usa só as regras (datas, horas, atalhos) — funciona, mas entende menos.", baixando: "Baixando… você pode continuar usando o app.", verificando: "Conferindo os arquivos baixados…", carregando: "Instalado. Carregando na memória…", pronto: "Pronto e rodando só no seu computador.", erro: "Algo deu errado: " + (m.error || "erro desconhecido")}[s]}</p></div></div>
+      <p>${{ausente: "Ainda não está neste computador. Sem ele, o " + AG() + " usa só as regras (datas, horas, atalhos) — funciona, mas entende menos.", baixando: "Baixando… você pode continuar usando o app.", verificando: "Conferindo os arquivos baixados…", carregando: "Instalado. Carregando na memória…", pronto: "Pronto e rodando só no seu computador.", erro: "Algo deu errado: " + (m.error || "erro desconhecido")}[s]}</p></div></div>
       <div style="padding:0 24px 18px">
       ${s === "baixando" || s === "verificando" ? `<div class="pbar" role="progressbar" aria-valuenow="${Math.round(pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do download"><i style="width:${Math.round(pct * 100)}%"></i></div><p class="hint mono">${fmtMB(m.bytes)} de ${m.total ? fmtMB(m.total) : (m.size_mb || 447) + " MB"} · ${Math.round(pct * 100)}%</p>` : ""}
       <div class="kv" style="margin-top:10px">
@@ -1792,7 +1858,7 @@ async function modelAction(a, btn) {
 }
 function inviteHTML(fromErr) {
   const s = modelUiState();
-  return `<div class="invite" role="region" aria-label="Convite para baixar o modelo"><div class="ic">${ico("cpu")}</div><div><h3>${fromErr ? "Esse pedido precisa do modelo" : "Deixe o Djorge mais esperto"}</h3>
+  return `<div class="invite" role="region" aria-label="Convite para baixar o modelo"><div class="ic">${ico("cpu")}</div><div><h3>${fromErr ? "Esse pedido precisa do modelo" : "Deixe o " + AG() + " mais esperto"}</h3>
     <p>${fromErr ? "As regras não deram conta sozinhas. Baixe o DOFL (447 MB, roda só no seu computador) e tente de novo." : "Baixe o modelo DOFL (447 MB). Ele roda só no seu computador — nada sai daqui. Enquanto isso, as regras já funcionam."}</p></div>
     <div class="row">${s === "baixando" ? `<button class="btn" data-inv="open">Ver progresso</button>` : `<button class="btn primary" data-inv="dl">${ico("dl", "sm")} Baixar</button>`}${fromErr ? "" : `<button class="btn ghost" data-inv="later">Agora não</button>`}</div></div>`;
 }
@@ -1826,7 +1892,7 @@ function openPalette(initial = "") {
     const seen = new Set(local.map(x => x.t));
     const rem = (remote || []).filter(x => !seen.has(x.title || x.titulo)).slice(0, 8).map(x => ({t: x.title || x.titulo || x.text || "resultado", s: [x.snippet || x.trecho, x.fonte || (x.source && (x.source.integration || x.source)) || x.scope].filter(Boolean).join(" · "), i: x.scope === "history" ? "clock" : x.source ? "plug" : "search", g: "Resultados",
       run: () => { if (x.id && S.cards.find(c => c.id === x.id)) openCard(x.id); else if (x.url) window.open(x.url, "_blank", "noopener"); else setInput(x.title || ""); }}));
-    const ask = qq ? [{t: `Pedir ao Djorge: “${qq}”`, s: "envia como comando", i: "spark", g: "Pedido", run: () => { setInput(qq); submit(); }}] : [];
+    const ask = qq ? [{t: `Pedir ao ${AG()}: “${qq}”`, s: "envia como comando", i: "spark", g: "Pedido", run: () => { setInput(qq); submit(); }}] : [];
     items = [...ask, ...local, ...rem, ...cm]; ai = 0;
     let g = ""; pl.innerHTML = items.map((it, i) => { const h = it.g !== g ? `<div class="pgroup">${esc(it.g)}</div>` : ""; g = it.g;
       return h + `<button type="button" class="pitem ${i === 0 ? "act" : ""}" role="option" id="po${i}" aria-selected="${i === 0}" data-i="${i}"><span class="pi">${ico(it.i, "sm")}</span><span class="pt"><b>${hi(it.t, qq)}</b>${it.s ? `<small>${esc(it.s)}</small>` : ""}</span></button>`; }).join("") ||
@@ -1848,10 +1914,10 @@ function setRow(title, sub, ctrl) { return `<div class="setrow"><div class="st">
 function openSettings(start = "geral") {
   if ($(".modal [data-settings]")) return;
   const m = tabsModal({title: `<span data-settings>Configurações</span>`, start, tabs: [
-    {id: "geral", label: "Geral", icon: "gear"}, {id: "voz", label: "Voz", icon: "mic"}, {id: "modelo", label: "Modelo", icon: "cpu"},
+    {id: "geral", label: "Geral", icon: "gear"}, {id: "perfil", label: "Perfil", icon: "user"}, {id: "voz", label: "Voz", icon: "mic"}, {id: "modelo", label: "Modelo", icon: "cpu"},
     {id: "leve", label: "Desempenho", icon: "spark"}, {id: "api", label: "API local", icon: "plug"},
     {id: "seguranca", label: "Segurança", icon: "shield"}, {id: "automacoes", label: "Automações", icon: "tree"}, {id: "avancado", label: "Avançado", icon: "edit"}],
-    onTab: (id, el) => ({geral: setGeneral, voz: setVoice, modelo: setModel, leve: setLeve, api: setLocalApi, seguranca: setSecurity, automacoes: setAutos, avancado: setAdvanced}[id])(el)});
+    onTab: (id, el) => ({geral: setGeneral, perfil: setProfile, voz: setVoice, modelo: setModel, leve: setLeve, api: setLocalApi, seguranca: setSecurity, automacoes: setAutos, avancado: setAdvanced}[id])(el)});
   return m;
 }
 function setGeneral(el) {
@@ -1864,7 +1930,7 @@ function setGeneral(el) {
     ${setRow("Tamanho do texto", "", segHTML("font", [["sm", "A−"], ["md", "A"], ["lg", "A+"], ["xl", "A++"]], typeof p.font_size === "string" ? p.font_size : "md", "Tamanho do texto"))}
     ${setRow("Visão inicial", "O que abre primeiro.", selHTML("dv", VIEWS.slice(0, 4).map(v => [v.id, v.label]), p.default_view, "Visão inicial"))}
     ${setRow("Colunas do quadro", "Quais colunas aparecem.", `<div class="row" style="gap:6px">${COLS.map(c => `<button type="button" class="chip ${(p.columns || []).includes(c.id) ? "on" : ""}" data-colt="${c.id}" aria-pressed="${(p.columns || []).includes(c.id)}">${c.label}</button>`).join("")}</div>`)}
-    ${setRow("Filtros salvos", (p.saved_filters || []).length ? "" : "Nenhum ainda — salve pela barra de filtros.", `<div class="row" style="gap:6px">${(p.saved_filters || []).map((f, i) => `<span class="chip">${esc(f.name || f.nome)}<button type="button" class="x" data-rmf="${i}" aria-label="Apagar filtro">✕</button></span>`).join("")}</div>`)}`;
+    ${setRow("Filtros salvos", (p.saved_filters || []).length ? "" : "Nenhum ainda — salve pela barra de filtros.", `<div class="row" style="gap:6px">${(p.saved_filters || []).map((f, i) => `<span class="chip">${esc(f.name || f.nome)}<button type="button" class="x" data-rmf="${i}" aria-label="Apagar filtro">${ico("x", "xs")}</button></span>`).join("")}</div>`)}`;
   wireSeg(el, "theme", v => savePrefs({theme: v}, true)); wireSeg(el, "density", v => savePrefs({density: v}, true)); wireSeg(el, "font", v => savePrefs({font_size: v}, true));
   wireSel(el, "dv", VIEWS.slice(0, 4).map(v => [v.id, v.label]), v => savePrefs({default_view: v}, true));
   $$("[data-acc]", el).forEach(b => b.onclick = () => { $$("[data-acc]", el).forEach(x => x.setAttribute("aria-checked", x === b)); savePrefs({accent: b.dataset.acc}, true); });
@@ -1872,17 +1938,27 @@ function setGeneral(el) {
     if (!cur.size) return toast("Deixe pelo menos uma coluna."); b.classList.toggle("on"); b.setAttribute("aria-pressed", cur.has(b.dataset.colt)); savePrefs({columns: COLS.map(c => c.id).filter(x => cur.has(x))}, true); });
   $$("[data-rmf]", el).forEach(b => b.onclick = () => { const l = [...(S.prefs.saved_filters || [])]; l.splice(+b.dataset.rmf, 1); savePrefs({saved_filters: l}, true); setGeneral(el); });
 }
+function setProfile(el) {
+  const p = S.prefs;
+  el.innerHTML = `<p class="lead">Como vocês dois se chamam e quem decide primeiro.</p>
+    ${setRow("Como quer ser chamado", "Aparece na saudação do Início.", `<input class="inp" id="pf-user" maxlength="40" value="${esc(p.nome_usuario || "")}" placeholder="você" style="width:220px" aria-label="Como quer ser chamado">`)}
+    ${setRow("Nome do assistente", "Como o assistente se apresenta nas mensagens.", `<input class="inp" id="pf-ag" maxlength="40" value="${esc(p.nome_agente || "Djorge")}" placeholder="Djorge" style="width:220px" aria-label="Nome do assistente">`)}
+    ${setRow("Quem decide primeiro", "Modelo: o DOFL entende o pedido e as regras ajudam. Regras: respostas mais rápidas, o modelo só quando as regras não bastam.", segHTML("pf-pri", [["modelo", "Modelo"], ["equilibrado", "Equilibrado"], ["regras", "Regras (respostas rápidas)"]], p.prioridade || "modelo", "Quem decide primeiro"))}`;
+  const saveName = (k, inp) => { const v = inp.value.trim(); if (v === (S.prefs[k] || "") ) return; savePrefs({[k]: v}, false).then(() => { if (k === "nome_agente") setMode(S.mode); if (S.view === "inicio") render(); }); };
+  [["nome_usuario", "#pf-user"], ["nome_agente", "#pf-ag"]].forEach(([k, id]) => { const i = $(id, el); i.onchange = () => saveName(k, i); i.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); i.blur(); } }; });
+  wireSeg(el, "pf-pri", v => savePrefs({prioridade: v}));
+}
 async function setVoice(el) {
-  el.innerHTML = `<p class="lead">Fale com o Djorge e, se quiser, ouça as respostas. O áudio é processado neste computador.</p><div class="sk"></div>`;
+  el.innerHTML = `<p class="lead">Fale com o ${AG()} e, se quiser, ouça as respostas. O áudio é processado neste computador.</p><div class="sk"></div>`;
   await loadVoice();
   const v = S.voice || {}, p = S.prefs;
   const voices = (v.voices || []).map(x => typeof x === "string" ? [x, x] : [x.id || x.name, x.name || x.id]);
   const st = v.stt_setup || {};
-  el.innerHTML = `<p class="lead">Fale com o Djorge e, se quiser, ouça as respostas. O áudio é processado neste computador.</p>
+  el.innerHTML = `<p class="lead">Fale com o ${AG()} e, se quiser, ouça as respostas. O áudio é processado neste computador.</p>
     ${setRow("Microfone", "Mostrar o botão de falar no campo de entrada.", swHTML("v-on", p.voice !== false))}
     ${setRow("Ler as respostas em voz alta", v.tts ? `Voz do Windows (${esc(v.tts_engine || "SAPI")}).` : "Usará a voz do navegador.", swHTML("v-speak", !!p.speak))}
-    ${voices.length ? setRow("Voz", "", selHTML("v-voice", voices, store.get("voice", null) || v.voice || voices[0][0], "Voz")) : ""}
-    ${setRow("Velocidade da fala", "", rngHTML("v-rate", store.get("rate", 1), .6, 1.6, .1, "×"))}
+    ${voices.length ? setRow("Voz", "", selHTML("v-voice", voices, vpref("voz") || v.voice || voices[0][0], "Voz")) : ""}
+    ${setRow("Velocidade da fala", "", rngHTML("v-rate", vpref("velocidade") || 1, .6, 1.6, .1, "×"))}
     ${setRow("Reconhecimento de fala local", v.stt ? `Ativo · ${esc(v.stt_engine || "")} ${esc(v.stt_model || "")}` : v.stt_available ? (v.stt_installed ? "Instalado, carrega ao usar." : "Disponível — precisa baixar o modelo de fala.") : "Indisponível; usaremos o reconhecimento do navegador se existir.",
       v.stt_available && !v.stt_installed ? `<button class="btn sm primary" id="v-setup">${ico("dl", "sm")} Ativar voz</button>` : `<span class="chip ${v.stt ? "on" : ""}">${v.stt ? "ativo" : v.stt_available ? "pronto" : "navegador"}</span>`)}
     ${st.state && st.state !== "idle" && st.state !== "pronto" ? `<div class="pbar"><i style="width:${Math.round((st.progress || 0) * 100)}%"></i></div><p class="hint">${esc(st.message || st.state)}</p>` : ""}
@@ -1890,9 +1966,9 @@ async function setVoice(el) {
   wireRanges(el);
   $("#v-on", el).onchange = e => { savePrefs({voice: e.target.checked}, true); syncMic(); };
   $("#v-speak", el).onchange = e => savePrefs({speak: e.target.checked}, true);
-  if (voices.length) wireSel(el, "v-voice", voices, x => store.set("voice", x));
-  $("#v-rate", el).onchange = e => store.set("rate", +e.target.value);
-  $("#v-test", el).onclick = () => speak("Olá! Eu sou o Djorge, e estou falando daqui do seu computador.");
+  if (voices.length) wireSel(el, "v-voice", voices, x => saveVoicePrefs({voz: x}));
+  $("#v-rate", el).onchange = e => saveVoicePrefs({velocidade: +e.target.value});
+  $("#v-test", el).onclick = () => speak("Olá! Eu sou o " + AG() + ", e estou falando daqui do seu computador.");
   $("#v-stop", el).onclick = stopSpeak;
   const su = $("#v-setup", el); if (su) su.onclick = async () => { su.setAttribute("aria-busy", "true"); await tryApi("/api/voice/setup", {}); const t = setInterval(async () => { await loadVoice(); const s = (S.voice || {}).stt_setup || {};
     if (!el.isConnected || !s.state || /pronto|done|ok|erro|error|idle/.test(s.state)) { clearInterval(t); if (el.isConnected) setVoice(el); syncMic(); } else { const b = $(".pbar i", el); if (b) b.style.width = Math.round((s.progress || 0) * 100) + "%"; else setVoice(el); } }, 1000); };
@@ -1922,12 +1998,12 @@ async function setLeve(el) {
   el.innerHTML = `<p class="lead">Deixe o Djorge leve: pause quando não precisar e libere memória quando quiser.</p><div class="sk"></div>`;
   const r = await loadRec(); if (!el.isConnected) return;
   if (!r) { el.innerHTML = `<p class="lead">Deixe o Djorge leve: pause quando não precisar e libere memória quando quiser.</p><p class="hint">Esses controles ainda não estão disponíveis nesta versão.</p>`; return; }
-  const run = asList(r.rodando || r.processos || r.partes, "items");
+  const run = asList(r.rodando || r.processos || r.partes, "items").map(x => typeof x === "string" ? {nome: x, estado: "rodando"} : x);
   el.innerHTML = `<p class="lead">Deixe o Djorge leve: pause quando não precisar e libere memória quando quiser.</p>
-    <div class="kv" style="margin-bottom:10px"><div><small>Memória em uso</small><b>${esc(mb(r.memoria_mb ?? r.memoria))}</b></div><div><small>Estado</small><b>${r.pausado ? "Pausado" : "Rodando"}</b></div>${r.modelo_carregado != null ? `<div><small>Modelo na memória</small><b>${r.modelo_carregado ? "Sim" : "Não"}</b></div>` : ""}</div>
+    <div class="kv" style="margin-bottom:10px"><div><small>Memória em uso</small><b>${esc(mb(r.memoria_mb ?? r.memoria))}</b></div><div><small>Estado</small><b>${r.pausado ? "Pausado" : "Rodando"}</b></div>${(r.modelo_carregado ?? (r.modelo && r.modelo.carregado)) != null ? `<div><small>Modelo na memória</small><b>${(r.modelo_carregado ?? r.modelo.carregado) ? "Sim" : "Não"}</b></div>` : ""}</div>
     ${setRow(r.pausado ? "Djorge pausado" : "Pausar Djorge", r.pausado ? "Nada roda em segundo plano. As suas coisas continuam salvas." : "Para sincronizações, secretário e modelo até você retomar.", r.pausado ? `<button class="btn primary" data-aa="retomar">Retomar</button>` : `<button class="btn" data-aa="pausar">Pausar</button>`)}
     ${setRow("Liberar memória", "Descarrega o modelo e limpa caches. Ele volta sozinho quando precisar.", `<button class="btn" data-aa="liberar_memoria">Liberar memória</button>`)}
-    ${setRow("Iniciar com o Windows", "Abre minimizado na bandeja, para os avisos chegarem mesmo com a janela fechada.", swHTML("lw-start", r.iniciar_com_windows ?? true))}
+    ${setRow("Iniciar com o Windows", "Abre minimizado na bandeja, para os avisos chegarem mesmo com a janela fechada.", swHTML("lw-start", (r.config && r.config.iniciar_com_windows) ?? r.iniciar_com_windows ?? true))}
     ${run.length ? `<h3>O que está rodando</h3><div class="tlist runl">${run.map(x => `<div class="trow" style="cursor:default"><i class="okdot ${x.ativo === false || /parad|paus|ocios/i.test(x.estado || "") ? "off" : ""}"></i><div class="tt"><b>${esc(x.nome || x.name)}</b><small>${esc(titleCase(x.estado || (x.ativo === false ? "parado" : "rodando")))}</small></div><span class="mono hint">${esc(mb(x.memoria_mb ?? x.memoria))}</span></div>`).join("")}</div>` : ""}`;
   $$("[data-aa]", el).forEach(b => b.onclick = async () => { b.setAttribute("aria-busy", "true"); await appAction(b.dataset.aa); if (el.isConnected) setLeve(el); });
   $("#lw-start", el).onchange = async e => { const on = e.target.checked; const x = await tryApi("/api/app/iniciar_com_windows", {ativo: on}); if (x) toast(on ? "Vai iniciar com o Windows (minimizado)" : "Não vai mais iniciar com o Windows"); else e.target.checked = !on; };
@@ -1946,7 +2022,7 @@ async function setLocalApi(el) {
       <div class="row"><label class="hint" for="la-p${i}">Porta</label><input class="inp" id="la-p${i}" type="number" min="1024" max="65535" value="${esc(x.porta || "")}" style="width:110px">
         <button class="btn sm" data-cp="url">Copiar URL</button><button class="btn sm" data-cp="tok">Copiar token</button><button class="btn sm" data-cp="curl">Copiar exemplo curl</button></div>
       ${x.token_dica ? `<p class="hint">${esc(x.token_dica)}</p>` : ""}<pre class="code">${esc(ex)}</pre></article>`; }).join("") : `<p class="hint">Nenhum modelo instalado ainda.</p>`) +
-    `<h3>Enviar eventos</h3><p class="hint">Qualquer programa pode mandar textos para o Djorge triar e rodar as automações.</p><pre class="code">${esc(evt)}</pre><div class="row" style="margin-top:8px"><button class="btn sm" id="la-evt">Copiar exemplo</button><button class="btn sm" id="la-tok">Copiar token</button></div>`;
+    `<h3>Enviar eventos</h3><p class="hint">Qualquer programa pode mandar textos para o ${AG()} triar e rodar as automações.</p><pre class="code">${esc(evt)}</pre><div class="row" style="margin-top:8px"><button class="btn sm" id="la-evt">Copiar exemplo</button><button class="btn sm" id="la-tok">Copiar token</button></div>`;
   $("#la-evt", el).onclick = () => copyText(evt, "Exemplo copiado"); $("#la-tok", el).onclick = () => tok ? copyText(tok, "Token copiado") : toast("O token está no arquivo token.txt da pasta do Djorge.");
   (list || []).forEach((x, i) => { const card = $(`.apic[data-i="${i}"]`, el), url = x.url || `http://127.0.0.1:${x.porta}`;
     const save = async patch => { const r = await tryApi("/api/local_api", {modelo: x.modelo || x.name, ativa: !!x.ativa, porta: +x.porta, ...patch}); if (r) { Object.assign(x, patch); toast(patch.ativa === undefined ? "Porta salva" : patch.ativa ? "API ligada" : "API desligada"); setLocalApi(el); } return r; };
@@ -2015,8 +2091,8 @@ async function setAdvanced(el) {
 const INT_META = {
   google: {c: "linear-gradient(135deg,#4285f4,#34a853)", l: "G", steps: ["No Google Cloud Console, crie um projeto e uma credencial OAuth do tipo “App para computador” (Desktop app).", "Habilite as APIs Gmail, Calendar e Tasks.", "Cole aqui o client ID e o client secret e clique em Conectar."]},
   microsoft: {c: "linear-gradient(135deg,#0078d4,#7b3fe4)", l: "M", steps: ["No portal Microsoft Entra, registre um app para contas pessoais e organizacionais.", "Adicione a plataforma “Mobile and desktop” com o redirect http://127.0.0.1:8765/oauth/callback e ligue “fluxos de cliente público”.", "Cole aqui o client ID (application ID) e clique em Conectar."]},
-  whatsapp: {c: "linear-gradient(135deg,#25d366,#128c7e)", l: "W", steps: ["No Meta for Developers, crie um app Business com o produto WhatsApp.", "Gere um token permanente de usuário do sistema.", "Cole o token e o phone number ID. O Djorge só envia; não lê mensagens recebidas."]},
-  gemini: {c: "linear-gradient(135deg,#8e75f0,#d96570)", l: "✦", steps: ["Crie uma chave no Google AI Studio.", "Cole a chave aqui. Só é usada quando você pedir um rascunho de texto."]}};
+  whatsapp: {c: "linear-gradient(135deg,#25d366,#128c7e)", l: "W", steps: ["No Meta for Developers, crie um app Business com o produto WhatsApp.", "Gere um token permanente de usuário do sistema.", "Cole o token e o phone number ID. O " + AG() + " só envia; não lê mensagens recebidas."]},
+  gemini: {c: "linear-gradient(135deg,#8e75f0,#d96570)", l: "", svg: "spark", steps: ["Crie uma chave no Google AI Studio.", "Cole a chave aqui. Só é usada quando você pedir um rascunho de texto."]}};
 async function openIntegrations(focusId) {
   const m = modal({title: "Integrações", body: `<div class="tabpanel" style="padding:4px 24px 24px"><div class="leave">${ico("shield")}<div><b>O que sai do seu computador?</b> Ao conectar, o Djorge fala direto com o serviço (Google, Microsoft, Meta) usando suas credenciais, guardadas no cofre do Windows. Nada passa por servidores do Djorge. O Gemini é o único que envia texto para uma IA de fora — e só quando você pedir.</div></div><div class="icards" id="ic"><div class="sk" style="height:180px"></div><div class="sk" style="height:180px"></div></div></div>`});
   const box = $("#ic", m.box);
@@ -2027,7 +2103,7 @@ async function openIntegrations(focusId) {
     if (!m.el.isConnected) return;
     box.innerHTML = list.map(it => { const meta = INT_META[it.id] || {c: "var(--rose)", l: (it.name || "?")[0], steps: []};
       const st = it.connected ? `<span class="st on">● conectado${it.account ? " · " + esc(it.account) : ""}</span>` : it.error ? `<span class="st err">● ${esc(it.error)}</span>` : `<span class="st">${it.configured ? "configurado · não conectado" : "não configurado"}</span>`;
-      return `<article class="icard" data-int="${esc(it.id)}"><header><span class="logo" style="background:${meta.c}">${esc(meta.l)}</span><div style="flex:1;min-width:0"><h4>${esc(it.name || it.id)} ${it.leaves_computer || it.id === "gemini" ? `<span class="tag" style="background:var(--bad-soft);color:var(--bad)">Sai do computador</span>` : ""}</h4>${st}</div></header>
+      return `<article class="icard" data-int="${esc(it.id)}"><header><span class="logo" style="background:${meta.c}">${meta.svg ? ico(meta.svg, "sm") : esc(meta.l)}</span><div style="flex:1;min-width:0"><h4>${esc(it.name || it.id)} ${it.leaves_computer || it.id === "gemini" ? `<span class="tag" style="background:var(--bad-soft);color:var(--bad)">Sai do computador</span>` : ""}</h4>${st}</div></header>
         ${(it.features || []).length ? `<div class="feats">${it.features.map(f => `<span class="tag">${esc(typeof f === "string" ? f : f.label || f.id)}</span>`).join("")}</div>` : ""}
         ${it.last_sync ? `<p class="hint">última sincronização: ${esc(String(it.last_sync).replace("T", " ").slice(0, 16))}</p>` : ""}
         ${it.leaves_computer || it.id === "gemini" ? `<div class="leave out">${ico("shield", "sm")}<span>O texto do rascunho vai para o Google. Só quando você pedir.</span></div>` : ""}
@@ -2083,7 +2159,7 @@ let rec = null, recTimer = null, recStart = 0;
 async function toggleMic() {
   if (rec) return stopRec(true);
   const mm = micMode();
-  if (mm === "setup") { openSettings("voz"); toast("Ative a voz local para falar com o Djorge."); return; }
+  if (mm === "setup") { openSettings("voz"); toast("Ative a voz local para falar com o " + AG() + "."); return; }
   const b = $("#btn-mic"), bar = $("#recbar"), wave = $("#wave");
   wave.innerHTML = "<i></i>".repeat(18);
   const level = v => { b.style.setProperty("--lv", 1 + Math.min(.6, v * 1.6)); const is = wave.children; for (let i = is.length - 1; i > 0; i--) is[i].style.height = is[i - 1].style.height; is[0].style.height = Math.max(3, Math.min(22, v * 70)) + "px"; };
@@ -2097,7 +2173,7 @@ async function toggleMic() {
         r.onend = () => { if (rec && rec.h === r) { rec = null; endRecUi(); } }; r.onerror = e => { toast("Microfone: " + (e.error === "not-allowed" ? "permissão negada." : e.error), "bad"); };
         rec = {kind: "web", h: r, get text() { return finalT; }}; r.start(); }
     }
-  } catch (e) { rec = null; toast(e && e.name === "NotAllowedError" ? "Permita o uso do microfone para falar com o Djorge." : "Não consegui abrir o microfone.", "bad"); return; }
+  } catch (e) { rec = null; toast(e && e.name === "NotAllowedError" ? "Permita o uso do microfone para falar com o " + AG() + "." : "Não consegui abrir o microfone.", "bad"); return; }
   b.classList.add("rec"); b.setAttribute("aria-pressed", "true"); b.setAttribute("aria-label", "Parar gravação"); bar.classList.add("on");
   recStart = Date.now(); recTimer = setInterval(() => { const s = Math.floor((Date.now() - recStart) / 1000); $("#rect").textContent = `gravando ${Math.floor(s / 60)}:${pad(s % 60)}`; }, 250);
 }
@@ -2113,10 +2189,16 @@ async function stopRec(use) {
 }
 function handleTranscript(o) { if (!o) return; if (o.error) { toast(human({message: o.error}), "bad"); return; } const t = (o.text || "").trim(); if (!t) { toast("Não ouvi nada. Tente de novo mais perto do microfone.", "warn"); return; }
   const i = inp(); i.value = (i.value ? i.value + " " : "") + t; autoGrow(); i.focus(); }
+/* voz e velocidade ficam no backend (/api/voice/prefs), relidas de /api/voice/status */
+const vpref = k => { const p = (S.voice && S.voice.prefs) || {}; return p[k] || store.get(k === "voz" ? "voice" : "rate", k === "voz" ? "" : 1); };
+async function saveVoicePrefs(patch) {
+  try { const r = await api("/api/voice/prefs", patch); if (S.voice) S.voice.prefs = (r && r.prefs) || {...(S.voice.prefs || {}), ...patch}; toast("Preferência de voz salva"); }
+  catch (e) { toast(human(e), "bad"); }
+}
 async function speak(text) {
-  const v = S.voice || {};
-  if (v.tts) { try { await api("/api/voice/speak", {text, voice: store.get("voice", undefined), rate: store.get("rate", 1)}); return; } catch (e) {} }
-  if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(text); u.lang = "pt-BR"; u.rate = store.get("rate", 1); const bv = maleVoice(); if (bv) u.voice = bv; speechSynthesis.cancel(); speechSynthesis.speak(u); }
+  const v = S.voice || {}, rate = +vpref("velocidade") || 1;
+  if (v.tts) { try { await api("/api/voice/speak", {text, voice: vpref("voz") || undefined, rate: Math.max(-10, Math.min(10, Math.round((rate - 1) * 10)))}); return; } catch (e) {} }
+  if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(text); u.lang = "pt-BR"; u.rate = rate; const bv = maleVoice(); if (bv) u.voice = bv; speechSynthesis.cancel(); speechSynthesis.speak(u); }
 }
 function maleVoice() { try { const vs = speechSynthesis.getVoices().filter(v => /^pt(-|_)?BR/i.test(v.lang) || /portugu/i.test(v.name)); if (!vs.length) return null;
   const M = /daniel|antonio|ant[oô]nio|donato|fabio|f[aá]bio|humberto|julio|j[uú]lio|nicolau|valerio|val[eé]rio|\bmale\b|masculin/i, F = /maria|francisca|thalita|female|feminin|luciana|vit[oó]ria/i;
@@ -2140,7 +2222,7 @@ function plusMenu() {
 }
 function helpPop(anchor) {
   const m = modal({title: "Como escrever pedidos", cls: "sm", body: `<div style="padding:0 24px 20px" class="help">
-    <p><b>Mensagem rápida:</b> <code>#destino &amp;texto&amp;</code><br><span class="hint">ex.: <code>#ana &amp;chego em 10 min&amp;</code> — o Djorge acha a Ana e propõe o envio, sempre pedindo sua confirmação.</span></p>
+    <p><b>Mensagem rápida:</b> <code>#destino &amp;texto&amp;</code><br><span class="hint">ex.: <code>#ana &amp;chego em 10 min&amp;</code> — o ${AG()} acha a Ana e propõe o envio, sempre pedindo sua confirmação.</span></p>
     <p><b>Datas e horas</b> em português: “amanhã às 15h”, “sexta de manhã”, “dia 10”, “toda segunda”.</p>
     <p><b>Listas:</b> “lista de compras: pão, café, leite”.</p>
     <p><b>Automações:</b> “quando chegar boleto, me avise”.</p>
@@ -2214,7 +2296,7 @@ async function init() {
   await ensureToken();
   let prefs = {};
   try { prefs = await api("/api/ui"); } catch (e) {}
-  S.prefs = normPrefs(prefs); applyPrefs(S.prefs);
+  S.prefs = normPrefs(prefs); applyPrefs(S.prefs); setMode(S.mode);
   const h = location.hash.slice(1);
   S.view = VIEW_ALIAS[h] || (VIEWS.find(v => v.id === h) ? h : S.prefs.default_view);
   if (!VIEWS.find(v => v.id === S.view)) S.view = "inicio";

@@ -20,15 +20,18 @@ import copy
 from collections import deque
 from typing import Any, Dict, List
 
-from .tree import TreeError, validate
+from .tree import NOVAS_ACOES, TreeError, validate
 
 KINDS = ("choice", "check", "score", "multi", "select", "query", "if", "action")
-ACTIONS = ("notify", "log", "write_file", "webhook", "command", "stop", "email_move")
+ACTIONS = ("notify", "log", "write_file", "webhook", "command", "stop", "email_move") + tuple(NOVAS_ACOES)
 KIND_NAMES = {"choice": "Pergunta de escolha", "check": "Verificação sim/não", "score": "Escala",
               "multi": "Múltipla escolha", "select": "Seleção/quantidade", "query": "Consulta avançada",
               "if": "Condição (se)", "action": "Ação"}
 ACTION_NAMES = {"notify": "Notificar", "log": "Registrar no histórico", "write_file": "Salvar em arquivo",
-                "webhook": "Webhook", "command": "Comando", "stop": "Parar", "email_move": "Mover e-mail"}
+                "webhook": "Webhook", "command": "Comando", "stop": "Parar", "email_move": "Mover e-mail",
+                "criar_card": "Criar card", "tarefa": "Criar tarefa", "alerta": "Criar alerta", "notificar": "Avisar",
+                "etiquetar": "Etiquetar", "arquivar": "Arquivar", "abrir_app": "Abrir app",
+                "responder_sugestao": "Sugerir resposta"}
 TREE_KEYS = ("name", "enabled", "when", "start", "nodes")
 
 NODE_W, NODE_H, PORT_H, GAP_X, GAP_Y = 240, 64, 26, 90, 40
@@ -43,7 +46,7 @@ def node_kind(n: dict) -> str:
 
 def _label(nid: str, kind: str, n: dict) -> str:
     if kind == "action":
-        for v in (n.get("title"), n.get("file"), n.get("url"), n.get("folder"), n.get("message"),
+        for v in (n.get("title"), n.get("titulo"), n.get("etiqueta"), n.get("file"), n.get("url"), n.get("folder"), n.get("message"),
                   " ".join(map(str, n.get("argv") or []))):
             if isinstance(v, str) and v.strip():
                 return v
@@ -294,7 +297,8 @@ def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
             c = p.get("if")
             if not isinstance(c, dict) or not any(c.get(k) for k in ("contains_any", "contains_all", "regex",
                                                                       "source_in", "app_in", "sender_has",
-                                                                      "seguranca_in")):
+                                                                      "seguranca_in", "categoria_in",
+                                                                      "prioridade_min", "vip")):
                 add(nid, "a condição está vazia: diga o que procurar no texto, remetente, app ou origem")
             elif c.get("regex"):
                 import re
@@ -314,6 +318,8 @@ def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
                 add(nid, "diga em qual arquivo salvar")
             elif a == "email_move" and not str(p.get("folder") or "").strip():
                 add(nid, "diga para qual pasta mover o e-mail")
+            elif a == "etiquetar" and not str(p.get("etiqueta") or "").strip():
+                add(nid, "diga qual etiqueta pôr")
         mp = p.get("min_probability")
         if mp is not None and not (isinstance(mp, (int, float)) and 0 <= mp <= 1):
             add(nid, "a confiança mínima deve estar entre 0 e 1")

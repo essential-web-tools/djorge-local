@@ -123,6 +123,78 @@ def compilar(a: Dict) -> Dict:
     return tree
 
 
+def _um(v):
+    if isinstance(v, list):
+        return v[0] if len(v) == 1 else None
+    return v
+
+
+_COND_QUANDO = {"source_in": "fontes", "app_in": "apps", "contains_any": "palavras"}
+
+
+def de_arvore(tree: Dict) -> Optional[Dict]:
+    """Volta de compilar(): árvore (editada no editor visual) -> {ativa, quando, entao}, ou None quando a árvore
+    tem um formato que uma automação não representa (aí ela é salva como árvore própria)."""
+    nodes = tree.get("nodes") or {}
+    nid, seen = tree.get("start"), set()
+    quando = {"fontes": [], "apps": [], "remetente": "", "palavras": [], "assunto": "", "categoria": "",
+              "prioridade_min": "", "vip": False}
+    n = nodes.get(nid)
+    if n is not None and "if" in n:
+        c = n.get("if") or {}
+        br = n.get("branches") or {}
+        if set(map(str, br)) - {"True", "true"} or not br or "then" in n:
+            return None
+        for k, v in c.items():
+            if k in _COND_QUANDO and isinstance(v, list):
+                quando[_COND_QUANDO[k]] = [str(x) for x in v]
+            elif k == "sender_has" and isinstance(v, list) and len(v) <= 1:
+                quando["remetente"] = str(v[0]) if v else ""
+            elif k == "categoria_in" and isinstance(v, list) and len(v) <= 1:
+                quando["categoria"] = str(v[0]) if v else ""
+            elif k == "prioridade_min":
+                quando["prioridade_min"] = str(v or "")
+            elif k == "vip":
+                quando["vip"] = bool(v)
+            else:
+                return None
+        seen.add(nid)
+        nid = _um(next(iter(br.values())))
+        if nid is None:
+            return None
+        n = nodes.get(nid)
+    if n is not None and "check" in n:
+        br = n.get("branches") or {}
+        if set(map(str, br)) - {"True", "true"} or not br or "then" in n:
+            return None
+        txt = str(n.get("check") or "").strip()
+        m = re.match(r"^esta mensagem é sobre (.+?)\.?$", txt, re.I)
+        quando["assunto"] = (m.group(1) if m else txt).strip()
+        seen.add(nid)
+        nid = _um(next(iter(br.values())))
+        if nid is None:
+            return None
+        n = nodes.get(nid)
+    entao = []
+    while n is not None:
+        if nid in seen or "action" not in n or n["action"] not in NOVAS_ACOES or n.get("branches"):
+            return None
+        seen.add(nid)
+        entao.append({"acao": n["action"], "params": {k: copy.deepcopy(v) for k, v in n.items()
+                                                      if k not in ("action", "then", "auto")}})
+        nxt = n.get("then")
+        if isinstance(nxt, list):
+            if len(nxt) > 1:
+                return None
+            nxt = nxt[0] if nxt else None
+        nid, n = nxt, (nodes.get(nxt) if nxt else None)
+        if nxt and n is None:
+            return None
+    if not entao or seen != set(nodes):
+        return None
+    return {"ativa": tree.get("enabled", True) is not False, "quando": quando, "entao": entao}
+
+
 def resumo(a: Dict) -> str:
     q = a["quando"]
     partes = []

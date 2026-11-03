@@ -13,36 +13,50 @@
   const W = 240, H = 64, PH = 26, GX = 90, GY = 40;
   const MODELS = [['', 'automático'], ['origo', 'Origo'], ['flash', 'Flash']];
   const KINDS = {
-    choice: {name: 'Pergunta com opções', icon: '◇', hint: 'Se o texto for sobre A, B ou C… cada opção segue um caminho',
+    choice: {name: 'Pergunta com opções', icon: 'diamond', hint: 'Se o texto for sobre A, B ou C… cada opção segue um caminho',
       make: () => ({choice: ['opção 1', 'opção 2'], ask: 'Do que se trata?'})},
-    check: {name: 'Pergunta sim ou não', icon: '✓', hint: 'Se o texto disser tal coisa… então sim, senão não',
+    check: {name: 'Pergunta sim ou não', icon: 'check', hint: 'Se o texto disser tal coisa… então sim, senão não',
       make: () => ({check: 'o texto pede uma resposta'})},
-    score: {name: 'Nota de 1 a 3', icon: '▤', hint: 'Dá uma nota (baixa, média, alta) e segue pelo nível',
+    score: {name: 'Nota de 1 a 3', icon: 'bars', hint: 'Dá uma nota (baixa, média, alta) e segue pelo nível',
       make: () => ({score: ['baixa', 'média', 'alta'], ask: 'Qual a urgência?'})},
-    multi: {name: 'Vários assuntos', icon: '☰', hint: 'Marca todos os assuntos que aparecem no texto',
+    multi: {name: 'Vários assuntos', icon: 'list', hint: 'Marca todos os assuntos que aparecem no texto',
       make: () => ({multi: ['rótulo 1', 'rótulo 2'], ask: 'Quais assuntos aparecem?'})},
-    if: {name: 'Regra exata', icon: '⑂', hint: 'Se tiver estas palavras, deste remetente ou deste app…',
+    if: {name: 'Regra exata', icon: 'branch', hint: 'Se tiver estas palavras, deste remetente ou deste app…',
       make: () => ({if: {contains_any: ['urgente']}})},
-    select: {name: 'Medir um valor', icon: '#', hint: 'Soma ou mede algo do texto (ex.: valores em R$)',
+    select: {name: 'Medir um valor', icon: 'hash', hint: 'Soma ou mede algo do texto (ex.: valores em R$)',
       make: () => ({select: 'TOTAL TYPE money'})},
-    query: {name: 'Consulta avançada', icon: '⌘', hint: 'Para quem conhece a linguagem DJORGE', make: () => ({query: 'NOUL "…" FROM text'})},
-    action: {name: 'Ação', icon: '▶', hint: '', make: () => ({action: 'notify'})}
+    query: {name: 'Consulta avançada', icon: 'term', hint: 'Para quem conhece a linguagem DJORGE', make: () => ({query: 'NOUL "…" FROM text'})},
+    action: {name: 'Ação', icon: 'play', hint: '', make: () => ({action: 'notify'})}
   };
   const ACTIONS = {
-    notify: {name: 'Me avisar', icon: '🔔', make: () => ({action: 'notify', title: '{title}', message: '{sender}: {text:140}'})},
-    log: {name: 'Anotar no histórico', icon: '✎', make: () => ({action: 'log', message: '{source} · {sender} · {title}'})},
-    write_file: {name: 'Salvar em arquivo', icon: '🗎', make: () => ({action: 'write_file', file: 'registro.txt', content: '{time} | {title}'})},
-    webhook: {name: 'Chamar um site (webhook)', icon: '⇄', make: () => ({action: 'webhook', url: 'https://', body: {texto: '{text}'}})},
-    command: {name: 'Rodar um programa', icon: '›_', make: () => ({action: 'command', argv: []})},
-    email_move: {name: 'Mover e-mail', icon: '✉', make: () => ({action: 'email_move', folder: '', uid: '{uid}', mailbox: '{mailbox}'})},
-    stop: {name: 'Parar aqui', icon: '■', make: () => ({action: 'stop'})}
+    notify: {name: 'Me avisar', icon: 'bell', make: () => ({action: 'notify', title: '{title}', message: '{sender}: {text:140}'})},
+    log: {name: 'Anotar no histórico', icon: 'edit', make: () => ({action: 'log', message: '{source} · {sender} · {title}'})},
+    write_file: {name: 'Salvar em arquivo', icon: 'file', make: () => ({action: 'write_file', file: 'registro.txt', content: '{time} | {title}'})},
+    webhook: {name: 'Chamar um site (webhook)', icon: 'swap', make: () => ({action: 'webhook', url: 'https://', body: {texto: '{text}'}})},
+    command: {name: 'Rodar um programa', icon: 'term', make: () => ({action: 'command', argv: []})},
+    email_move: {name: 'Mover e-mail', icon: 'mail', make: () => ({action: 'email_move', folder: '', uid: '{uid}', mailbox: '{mailbox}'})},
+    stop: {name: 'Parar aqui', icon: 'stop', make: () => ({action: 'stop'})},
+    // ações das automações e do secretário (tree.NOVAS_ACOES)
+    criar_card: {name: 'Criar um card', icon: 'board', fields: 'card', make: () => ({action: 'criar_card', titulo: '{title}', campos: []})},
+    alerta: {name: 'Criar um alerta', icon: 'warn', fields: 'card', make: () => ({action: 'alerta', titulo: 'Alerta: {title}', campos: []})},
+    tarefa: {name: 'Criar uma tarefa', icon: 'check', fields: 'card', make: () => ({action: 'tarefa', titulo: '{title}', campos: []})},
+    notificar: {name: 'Avisar no Windows', icon: 'bell', fields: 'card', make: () => ({action: 'notificar', titulo: '{title}'})},
+    etiquetar: {name: 'Pôr uma etiqueta', icon: 'tag', make: () => ({action: 'etiquetar', etiqueta: ''})},
+    arquivar: {name: 'Arquivar', icon: 'archive', make: () => ({action: 'arquivar'})},
+    abrir_app: {name: 'Abrir um app', icon: 'open', make: () => ({action: 'abrir_app', app: 'whatsapp'})},
+    responder_sugestao: {name: 'Sugerir uma resposta', icon: 'reply', make: () => ({action: 'responder_sugestao'})}
   };
-  const PALETTE = ['choice', 'check', 'score', 'multi', 'if', 'select', 'action:notify', 'action:log',
-    'action:write_file', 'action:webhook', 'action:command', 'action:stop'];
+  const NEW_ACTIONS = ['criar_card', 'alerta', 'tarefa', 'notificar', 'etiquetar', 'arquivar', 'abrir_app', 'responder_sugestao'];
+  // ícone do conjunto do app (<symbol id="i-…"> em ui.html); fora do app cai num ponto
+  const ico = (name) => { const sp = document.createElement('span'); sp.className = 'te-svg-i'; sp.setAttribute('aria-hidden', 'true');
+    sp.innerHTML = document.getElementById('i-' + name) ? `<svg class="i sm" aria-hidden="true"><use href="#i-${name}"/></svg>` : '•'; return sp; };
+  const PALETTE = ['choice', 'check', 'score', 'multi', 'if', 'select', 'action:criar_card', 'action:alerta', 'action:notificar',
+    'action:etiquetar', 'action:arquivar', 'action:notify', 'action:log', 'action:write_file', 'action:webhook', 'action:command', 'action:stop'];
   const PORT_NAMES = {'true': 'sim', 'false': 'não', abstain: 'não tenho certeza', 'default': 'qualquer outro caso', none: 'nenhum', then: 'e depois'};
   const COND = [['contains_any', 'Contém alguma destas palavras', 'chips'], ['contains_all', 'Contém todas estas palavras', 'chips'],
     ['sender_has', 'Remetente contém', 'chips'], ['app_in', 'Aplicativo', 'chips'], ['source_in', 'De onde veio (email, notifications, folder, clipboard, http)', 'chips'],
-    ['seguranca_in', 'Parece (seguro, spam, golpe, phishing, malware)', 'chips'], ['regex', 'Padrão avançado (expressão regular)', 'text']];
+    ['seguranca_in', 'Parece (seguro, spam, golpe, phishing, malware)', 'chips'], ['categoria_in', 'Categoria da triagem', 'chips'],
+    ['prioridade_min', 'Prioridade mínima (baixa, normal, alta, urgente)', 'text'], ['vip', 'Só de pessoas VIP', 'bool'], ['regex', 'Padrão avançado (expressão regular)', 'text']];
   const PLACEHOLDERS = ['{text}', '{title}', '{sender}', '{source}', '{app}', '{time}', '{text:100}'];
 
   const CSS = `
@@ -147,6 +161,8 @@
 .te-zoom{position:absolute;left:12px;bottom:12px;display:flex;gap:4px;background:var(--te-surface);border:1px solid var(--te-line);border-radius:999px;padding:4px;box-shadow:var(--te-sh1)}
 .te-zoom button{width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:var(--te-ink2);font:600 14px var(--te-sans);cursor:pointer}
 .te-zoom button:hover,.te-zoom button:focus-visible{background:var(--te-rose-soft);color:var(--te-rose-deep);outline:none}
+.te-svg-i{display:inline-grid;place-items:center;line-height:0}.te-svg-i svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.te-btn .te-svg-i,.te-e .te-svg-i,.te-ok .te-svg-i{vertical-align:-2px}
 .te-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (max-width:860px){.te-root{grid-template-columns:0 1fr;grid-template-rows:auto 1fr auto auto}.te-pal{display:none}.te-props{grid-column:1/-1;border-left:0;border-top:1px solid var(--te-line);max-height:40vh}}
 `;
@@ -172,7 +188,7 @@
 
   function labelOf(n) {
     const p = n.props || {};
-    if (n.kind === 'action') { const d = [p.title, p.file, p.url, p.folder, p.message, (p.argv || []).join(' ')].find((v) => typeof v === 'string' && v.trim()); return d || (ACTIONS[p.action] || {}).name || String(p.action); }
+    if (n.kind === 'action') { const d = [p.title, p.titulo, p.etiqueta, p.file, p.url, p.folder, p.message, (p.argv || []).join(' ')].find((v) => typeof v === 'string' && v.trim()); return d || (ACTIONS[p.action] || {}).name || String(p.action); }
     if (p.ask) return String(p.ask);
     if (['check', 'select', 'query'].includes(n.kind) && typeof p[n.kind] === 'string' && p[n.kind].trim()) return p[n.kind];
     return (KINDS[n.kind] || {}).name || n.kind;
@@ -270,6 +286,7 @@
         else if (a === 'command' && !(p.argv || []).length) add(n.id, 'o comando precisa do programa e dos argumentos');
         else if (a === 'write_file' && !String(p.file || '').trim()) add(n.id, 'diga em qual arquivo salvar');
         else if (a === 'email_move' && !String(p.folder || '').trim()) add(n.id, 'diga para qual pasta mover o e-mail');
+        else if (a === 'etiquetar' && !String(p.etiqueta || '').trim()) add(n.id, 'diga qual etiqueta pôr');
       } else add(n.id, `tipo de nó desconhecido “${n.kind}”`);
       if (p.min_probability != null && !(typeof p.min_probability === 'number' && p.min_probability >= 0 && p.min_probability <= 1)) add(n.id, 'a confiança mínima deve estar entre 0 e 1');
     }
@@ -341,7 +358,7 @@
       this.testIn = h('input', {class: 'te-in-text', type: 'text', placeholder: 'Cole um exemplo para ver o caminho…', 'aria-label': 'Texto para testar a árvore',
         onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.test(this.testIn.value); } }});
       const bar = h('div', {class: 'te-bar', role: 'toolbar', 'aria-label': 'Ferramentas'}, this.nameEl,
-        this.ro ? null : [B('undo', '↶ Desfazer', 'Desfazer (Ctrl+Z)', () => this.undo()), B('redo', '↷ Refazer', 'Refazer (Ctrl+Y)', () => this.redo()),
+        this.ro ? null : [B('undo', [ico('undo'), ' Desfazer'], 'Desfazer (Ctrl+Z)', () => this.undo()), B('redo', [ico('redo'), ' Refazer'], 'Refazer (Ctrl+Y)', () => this.redo()),
           B('dup', 'Duplicar', 'Duplicar nó (Ctrl+D)', () => this.duplicate()), B('del', 'Apagar', 'Apagar seleção (Del)', () => this.deleteSel()),
           B('layout', 'Organizar', 'Organizar os nós automaticamente', () => this.autoLayout())],
         B('fit', 'Ver tudo', 'Mostrar a árvore inteira', () => this.fit()), h('span', {class: 'te-sp'}),
@@ -356,7 +373,7 @@
         const b = h('button', {type: 'button', role: 'listitem', draggable: 'true', title: (action ? 'Ação: ' : '') + (info.hint || info.name) + ' — clique ou arraste',
           'data-key': key, onclick: () => this.addNode(kind, action),
           ondragstart: (e) => { e.dataTransfer.setData('text/x-te-node', key); e.dataTransfer.effectAllowed = 'copy'; }},
-        h('span', {class: 'te-ic', 'aria-hidden': 'true', text: info.icon}), info.name);
+        h('span', {class: 'te-ic', 'aria-hidden': 'true'}, ico(info.icon)), info.name);
         pal.append(b);
       });
       // palco
@@ -702,10 +719,10 @@
       const f = this.foot; f.innerHTML = '';
       if (trailEl) f.append(trailEl);
       const errs = this.allErrors();
-      if (!errs.length) f.append(h('span', {class: 'te-ok', text: '✓ Árvore válida'}), h('span', {text: `${this.g.nodes.length} nós · ${this.g.edges.length} ligações`}));
+      if (!errs.length) f.append(h('span', {class: 'te-ok'}, ico('check'), ' Árvore válida'), h('span', {text: `${this.g.nodes.length} nós · ${this.g.edges.length} ligações`}));
       else errs.forEach((e) => f.append(h('button', {class: 'te-e' + (e.level === 'erro' ? '' : ' te-w'), type: 'button',
-        onclick: () => e.node && this.node(e.node) && (this.select(e.node), this.centerOn(e.node)),
-        text: `${e.level === 'erro' ? '✕' : '⚠'} ${e.node ? e.node + ': ' : ''}${e.message}`})));
+        onclick: () => e.node && this.node(e.node) && (this.select(e.node), this.centerOn(e.node))},
+        ico(e.level === 'erro' ? 'x' : 'warn'), ` ${e.node ? e.node + ': ' : ''}${e.message}`)));
     }
     centerOn(id) {
       const n = this.node(id), r = this.stage.getBoundingClientRect(); if (!n) return;
@@ -847,7 +864,11 @@
         h('div', {class: 'te-range'}, r, out));
     }
     condFields(c) {
-      return COND.map(([k, label, type]) => type === 'chips'
+      return COND.map(([k, label, type]) => type === 'bool'
+        ? (() => { const cb = h('input', {type: 'checkbox', checked: !!c[k], disabled: this.ro, id: 'te-c' + this.uidc()});
+            cb.addEventListener('change', (e) => { e.stopPropagation(); this.commit(() => { if (cb.checked) c[k] = true; else delete c[k]; }); });
+            return h('div', {class: 'te-f te-row'}, cb, h('label', {for: cb.id, text: label})); })()
+        : type === 'chips'
         ? this.field(label, this.chips(c[k] || [], (arr) => this.commit(() => { if (arr.length) c[k] = arr; else delete c[k]; }), 'adicionar + Enter'))
         : this.field(label, this.text(c[k] || '', (v) => { if (v) c[k] = v; else delete c[k]; this.liveEdit(); }, '', false, true)));
     }
@@ -860,11 +881,21 @@
           if (a === 'stop') this.g.edges = this.g.edges.filter((x) => x.from !== n.id); });
       });
       out.push(this.field('Ação', sel));
-      const txt = (k, label, ph, multi, mono) => out.push(this.withPh(this.field(label, this.text(p[k] == null ? '' : String(p[k]), (v) => { p[k] = v; this.liveEdit(); }, ph, multi, mono)), multi !== 'noph'));
+      const txt = (k, label, ph, multi, mono) => out.push(this.withPh(this.field(label, this.text(p[k] == null ? '' : String(p[k]), (v) => { p[k] = v; this.liveEdit(); }, ph, multi === 'noph' ? false : multi, mono)), multi !== 'noph'));
       if (p.action === 'notify') { txt('title', 'Título', '{title}'); txt('message', 'Mensagem', '{sender}: {text:140}', true); }
       if (p.action === 'log') txt('message', 'Mensagem', '{source} · {title}', true);
       if (p.action === 'write_file') { txt('file', 'Arquivo (dentro da pasta de saída)', 'registro.txt', false, true); txt('content', 'Conteúdo', '{time} | {title}', true); }
       if (p.action === 'email_move') { txt('folder', 'Pasta de destino', 'Trabalho'); }
+      if ((ACTIONS[p.action] || {}).fields === 'card') {
+        txt('titulo', 'Título', '{title}');
+        out.push(this.field('Incluir (valor, prazo, remetente, empresa, data, hora, codigo, link)', this.chips(p.campos || [], (arr) => this.commit(() => (p.campos = arr)), 'campo + Enter')));
+        if (p.action !== 'notificar') { txt('coluna', 'Coluna (entrada, hoje, fazendo, aguardando, feito)', 'entrada', 'noph');
+          const pr = h('select', {disabled: this.ro, 'aria-label': 'Prioridade'}, [['', 'padrão'], ['0', 'sem prioridade'], ['1', 'baixa'], ['2', 'média'], ['3', 'alta']].map(([v, t]) => h('option', {value: v, selected: String(p.prioridade ?? '') === v, text: t})));
+          pr.addEventListener('change', (e) => { e.stopPropagation(); this.commit(() => { if (pr.value === '') delete p.prioridade; else p.prioridade = +pr.value; }); });
+          out.push(this.field('Prioridade', pr)); }
+      }
+      if (p.action === 'etiquetar') txt('etiqueta', 'Etiqueta', 'financeiro', 'noph');
+      if (p.action === 'abrir_app') { txt('app', 'App', 'whatsapp', 'noph'); txt('texto', 'Texto pronto', '{text}', true); }
       if (p.action === 'webhook') {
         txt('url', 'URL', 'https://…', false, true);
         const ta = h('textarea', {class: 'te-mono', disabled: this.ro}); ta.value = JSON.stringify(p.body || {}, null, 2);
@@ -876,7 +907,7 @@
         out.push(this.field('Programa e argumentos', this.chips(p.argv || [], (arr) => this.commit(() => (p.argv = arr)), 'programa, depois cada argumento')));
         out.push(this.field('Tempo limite (s)', this.text(p.timeout == null ? '' : String(p.timeout), (v) => { if (v && !isNaN(+v)) p.timeout = +v; else delete p.timeout; this.liveEdit(); }, '30')));
       }
-      if (p.action !== 'stop') {
+      if (p.action !== 'stop' && !NEW_ACTIONS.includes(p.action)) {
         const cb = h('input', {type: 'checkbox', checked: !!p.auto, disabled: this.ro, id: 'te-auto' + this.uidc()});
         cb.addEventListener('change', (e) => { e.stopPropagation(); this.commit(() => { if (cb.checked) p.auto = true; else delete p.auto; }); });
         out.push(h('div', {class: 'te-f te-row'}, cb, h('label', {for: cb.id, text: 'Executar sem pedir confirmação'})));
