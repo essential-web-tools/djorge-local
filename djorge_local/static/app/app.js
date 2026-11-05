@@ -91,8 +91,9 @@ async function ensureToken() { if (TOKEN) return; try { const t = await api("/ap
 const VIEWS = [
   {id: "inicio", label: "Início", icon: "home"}, {id: "quadro", label: "Quadro", icon: "board"},
   {id: "agenda", label: "Agenda", icon: "cal"}, {id: "tarefas", label: "Tarefas", icon: "list"},
-  {id: "mensagens", label: "Mensagens", icon: "msg"}, {id: "notificacoes", label: "Notificações", icon: "bell"}, {id: "automacoes", label: "Automações", icon: "tree"}];
-const VIEW_ALIAS = {notificações: "notificacoes", notificacao: "notificacoes", kanban: "quadro", lista: "tarefas", regras: "automacoes", "início": "inicio", home: "inicio", board: "quadro", list: "tarefas"};
+  {id: "mensagens", label: "Mensagens", icon: "msg"}, {id: "notificacoes", label: "Notificações", icon: "bell"}, {id: "automacoes", label: "Automações", icon: "tree"},
+  {id: "notas", label: "Notas", icon: "note"}, {id: "historico", label: "Histórico", icon: "clock"}];
+const VIEW_ALIAS = {notificações: "notificacoes", notificacao: "notificacoes", kanban: "quadro", lista: "tarefas", regras: "automacoes", nota: "notas", "histórico": "historico", "início": "inicio", home: "inicio", board: "quadro", list: "tarefas"};
 const COLS = [{id: "entrada", label: "Entrada", c: "var(--ink3)"}, {id: "hoje", label: "Hoje", c: "var(--rose)"},
   {id: "fazendo", label: "Fazendo", c: "var(--info)"}, {id: "aguardando", label: "Aguardando", c: "var(--warn)"}, {id: "feito", label: "Feito", c: "var(--ok)"}];
 const KINDS = {tarefa: "Tarefa", evento: "Evento", lembrete: "Lembrete", nota: "Nota", lista: "Lista", mensagem: "Mensagem"};
@@ -123,12 +124,15 @@ const S = {
   view: "inicio", cards: [], cardsLoaded: false, prefs: {}, model: {state: "ausente"}, voice: null,
   filters: store.get("filters", {}), sort: store.get("sort", "manual"), q: "",
   thread: [], mode: "auto", agMode: store.get("agMode", "semana"), stripMode: store.get("stripMode", "dia"),
-  anchor: new Date(), recents: store.get("recents", []), status: null, pendingSeen: new Set(), trees: null, ints: null, notifUnread: 0
+  anchor: new Date(), activity: [], status: null, pendingSeen: new Set(), trees: null, ints: null, notifUnread: 0
 };
 
 /* ---------------------------------------------------------------- datas */
 const pad = n => String(n).padStart(2, "0");
-const parseD = s => { if (!s) return null; const d = new Date(s); return isNaN(d) ? null : d; };
+/* B2: "2026-11-06" (data pura) é dia local, sem hora — new Date() leria como UTC (21:00 da véspera no Brasil) */
+const parseD = s => { if (!s) return null; if (s instanceof Date) return isNaN(s) ? null : s;
+  const m = typeof s === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim()); if (m) { const x = new Date(+m[1], +m[2] - 1, +m[3]); x._dateOnly = true; return x; }
+  const d = new Date(s); return isNaN(d) ? null : d; };
 const sameDay = (a, b) => a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const startDay = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
@@ -377,20 +381,22 @@ function renderNav() {
   $("#nav").innerHTML = vs.map(v => `<button class="navitem" data-v="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ""} data-tip="${v.label}" data-tip-pos="right">${ico(v.icon)}<span>${v.label}</span>${v.id === "mensagens" && pend ? `<span class="badge" aria-label="${pend} pendências">${pend}</span>` : ""}${v.id === "notificacoes" && S.notifUnread ? `<span class="badge soft" aria-label="${S.notifUnread} não lidas">${S.notifUnread > 99 ? "99+" : S.notifUnread}</span>` : ""}</button>`).join("");
   $$("#nav .navitem").forEach(b => b.onclick = () => go(b.dataset.v));
 }
-function renderRecents() {
-  const r = S.recents.slice(0, 12);
-  $("#recents").innerHTML = r.length ? r.map((x, i) => `<button class="recent" data-i="${i}" title="${esc(x)}">${esc(x)}</button>`).join("") :
-    `<p class="recent" style="cursor:default;opacity:.7">Seus pedidos aparecem aqui.</p>`;
-  $$("#recents button").forEach(b => { b.onclick = () => { setInput(r[+b.dataset.i]); };
-    b.oncontextmenu = e => { const t = r[+b.dataset.i]; ctxMenu(e, [{value: "use", label: "Colocar no campo", icon: "edit"}, {value: "run", label: "Enviar de novo", icon: "up"},
-      {value: "copy", label: "Copiar texto", icon: "list"}, {hr: 1}, {value: "del", label: "Remover dos recentes", icon: "trash", danger: true}, {value: "all", label: "Limpar todos os recentes", icon: "x", danger: true}], v => {
-        if (v === "use") setInput(t); if (v === "run") { setInput(t); submit(); } if (v === "copy") copyText(t);
-        if (v === "del") { S.recents = S.recents.filter(x => x !== t); store.set("recents", S.recents); renderRecents(); }
-        if (v === "all") { S.recents = []; store.set("recents", []); renderRecents(); toast("Recentes limpos"); } }); }; });
+/* Barra lateral: “Atividade” = ações recentes do histórico (a conversa não é salva) */
+async function renderRecents() {
+  const box = $("#recents"); if (!box) return;
+  try { S.activity = asList(await api("/api/history?n=8"), "items", "history"); } catch (e) { S.activity = S.activity || []; }
+  const r = S.activity.filter(x => x.pedido || x.resultado || x.acao).slice(0, 8);
+  box.innerHTML = r.length ? r.map((x, i) => `<button class="recent act" data-i="${i}" title="${esc((x.pedido || "") + (x.resultado ? " → " + x.resultado : ""))}"><span>${esc(x.pedido || actTitle(x))}</span>${x.resultado ? `<small>${esc(x.resultado)}</small>` : ""}</button>`).join("") :
+    `<p class="recent" style="cursor:default;opacity:.7">O que o ${esc(AG())} fizer aparece aqui.</p>`;
+  $$("#recents button", box.parentNode).forEach(b => { const x = r[+b.dataset.i];
+    b.onclick = () => go("historico");
+    b.oncontextmenu = e => ctxMenu(e, [{value: "use", label: "Colocar o pedido no campo", icon: "edit", disabled: !x.pedido}, {value: "hist", label: "Ver no histórico", icon: "clock"}, {hr: 1}, {value: "del", label: "Apagar do histórico", icon: "trash", danger: true}], async v => {
+      if (v === "use") setInput(x.pedido || ""); if (v === "hist") go("historico");
+      if (v === "del" && await tryApi(`/api/history/${encodeURIComponent(x.id)}/delete`, {})) { toast("Item apagado"); renderRecents(); if (S.view === "historico") render(); } }); });
 }
 async function copyText(t, msg = "Copiado") { try { await navigator.clipboard.writeText(t); toast(msg); } catch (e) {
   const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast(msg); } catch (x) { toast("Não consegui copiar.", "warn"); } ta.remove(); } }
-function pushRecent(t) { S.recents = [t, ...S.recents.filter(x => x !== t)].slice(0, 20); store.set("recents", S.recents); renderRecents(); }
+function pushRecent() { setTimeout(renderRecents, 1500); }
 function go(v, push = true) {
   v = VIEW_ALIAS[v] || v; if (!VIEWS.find(x => x.id === v)) v = "inicio";
   if (S.view !== v) clearSel(true); closeFull();
@@ -400,7 +406,7 @@ function go(v, push = true) {
 }
 function render() {
   clearInterval(clockTimer);
-  const fn = {inicio: viewHome, quadro: viewBoard, agenda: viewAgenda, tarefas: viewTasks, mensagens: viewMessages, notificacoes: viewNotifs, automacoes: viewAutos}[S.view];
+  const fn = {inicio: viewHome, quadro: viewBoard, agenda: viewAgenda, tarefas: viewTasks, mensagens: viewMessages, notificacoes: viewNotifs, automacoes: viewAutos, notas: viewNotes, historico: viewHist}[S.view];
   fn();
   renderSuggest();
 }
@@ -637,6 +643,8 @@ function openCard(id, draft) {
     ${draft ? "" : `<button class="iconbtn" id="dr-del" aria-label="Apagar" data-tip="Apagar">${ico("trash")}</button>`}
     <button class="iconbtn" id="dr-x" aria-label="Fechar painel">${ico("x")}</button></header>
   <div class="body">
+    ${draft ? "" : `<div class="seg drtabs" role="tablist" aria-label="Seções do card"><button role="tab" aria-selected="true" data-drt="det">Detalhes</button><button role="tab" aria-selected="false" data-drt="alt">Alterações</button></div>`}
+    <div id="dr-altp" class="altp" hidden></div><div id="dr-det">
     <label class="sr" for="dr-title">Título</label><input class="ttl" id="dr-title" value="${esc(x.title || "")}" placeholder="Título do card">
     <div class="field" style="margin-top:12px"><label for="dr-body">Descrição</label><textarea class="ta" id="dr-body" rows="3" placeholder="Detalhes, links, observações…">${esc(x.body || "")}</textarea></div>
     <div class="grid2"><div class="field"><span class="lbl">Tipo</span>${selHTML("kind", Object.entries(KINDS), x.kind || "tarefa", "Tipo")}</div>
@@ -650,10 +658,11 @@ function openCard(id, draft) {
     <div class="field"><label for="dr-ppli">Pessoas</label><div class="tagin" id="dr-ppl"></div></div>
     <div class="field"><span class="lbl">Checklist</span><div class="cklist" id="dr-ck"></div><button type="button" class="addc" id="dr-cka">${ico("plus", "sm")} Adicionar item</button></div>
     <div class="field"><label for="dr-rec">Repetição</label><input class="inp" id="dr-rec" value="${esc(x.recurrence || "")}" placeholder="ex.: toda segunda"></div>
+    <div class="field"><span class="lbl">Me avisar</span><div id="dr-al"></div></div>
     <div class="field"><span class="lbl">Cor</span><div class="colors" role="radiogroup" aria-label="Cor">${CARD_COLORS.map(([c, n]) => `<button type="button" role="radio" class="${c ? "" : "none"}" style="--c:${c || "transparent"}" aria-checked="${(x.color || "") === c}" aria-label="${n}" data-c="${c}" data-tip="${n}"></button>`).join("")}</div></div>
     ${x.source && x.source.integration ? `<p class="hint">Veio de ${esc(x.source.integration)}${x.source.url ? ` · <a href="${esc(x.source.url)}" target="_blank" rel="noopener">abrir original</a>` : ""}</p>` : ""}
     ${x.updated ? `<p class="meta">atualizado ${esc(String(x.updated).replace("T", " ").slice(0, 16))}</p>` : ""}
-  </div>
+  </div></div>
   <footer><button class="btn ghost" id="dr-cancel">Cancelar</button><span style="flex:1"></span><button class="btn primary" id="dr-save">${draft ? "Criar card" : "Salvar"}</button></footer>`;
   d.classList.add("on"); d.setAttribute("aria-hidden", "false");
   wireSel(d, "kind", Object.entries(KINDS)); wireSel(d, "col", COLS.map(c => [c.id, c.label])); wireSeg(d, "pri");
@@ -664,6 +673,9 @@ function openCard(id, draft) {
     $$("#dr-ck input", d).forEach(i => { i.oninput = () => x.checklist[+i.dataset.i].text = i.value; i.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); $("#dr-cka", d).click(); } }; });
     $$("#dr-ck [data-rm]", d).forEach(b => b.onclick = () => { x.checklist.splice(+b.dataset.rm, 1); ckr(); }); };
   ckr();
+  x.alertas = Array.isArray(x.alertas) ? x.alertas : []; alertEditor($("#dr-al", d), x);
+  $$("[data-drt]", d).forEach(b => b.onclick = () => { const alt = b.dataset.drt === "alt"; $$("[data-drt]", d).forEach(z => z.setAttribute("aria-selected", z === b));
+    $("#dr-det", d).hidden = alt; $("#dr-altp", d).hidden = !alt; if (alt) cardChanges($("#dr-altp", d), x.id); });
   $("#dr-cka", d).onclick = () => { (x.checklist = x.checklist || []).push({text: "", done: false}); ckr(); const all = $$("#dr-ck input", d); all[all.length - 1].focus(); };
   $$(".colors button", d).forEach(b => b.onclick = () => { x.color = b.dataset.c; $$(".colors button", d).forEach(z => z.setAttribute("aria-checked", z === b)); });
   $("#dr-pin", d).onclick = e => { x.pinned = !x.pinned; e.currentTarget.setAttribute("aria-pressed", x.pinned); };
@@ -677,7 +689,7 @@ function openCard(id, draft) {
     const sdv = $("#dr-sd", d).value, stv = $("#dr-st", d).value, ddv = $("#dr-dd", d).value, dtv = $("#dr-dt", d).value, allday = $("#dr-allday", d).checked;
     const patch = {title: $("#dr-title", d).value.trim() || "Sem título", body: $("#dr-body", d).value, kind: selVal(d, "kind"), column: selVal(d, "col"),
       priority: +segVal(d, "pri") || 0, tags: x.tags || [], people: x.people || [], checklist: (x.checklist || []).filter(i => i.text.trim()),
-      recurrence: $("#dr-rec", d).value.trim(), color: x.color || "", pinned: !!x.pinned, all_day: allday,
+      recurrence: $("#dr-rec", d).value.trim(), alertas: x.alertas || [], color: x.color || "", pinned: !!x.pinned, all_day: allday,
       start: sdv ? `${sdv}T${allday || !stv ? "00:00" : stv}:00` : null, due: ddv ? `${ddv}T${dtv || "00:00"}:00` : null};
     patch.done = patch.column === "feito";
     close();
@@ -808,6 +820,7 @@ function notifRowHTML(n, compact) {
     <span class="av app" aria-hidden="true">${esc((app[0] || "?").toUpperCase())}</span>
     <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${(n.prioridade || 0) >= 2 ? `<span class="pri p${Math.min(3, n.prioridade)}"><i></i>${esc(PRI[Math.min(3, n.prioridade)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
       <span class="msubj">${/^\s*[⚠✅❗❌]/.test(n.titulo || n.title || "") ? ico("warn", "xs") + " " : ""}${esc(stripEmo(n.titulo || n.title || ""))}</span>${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
+      ${pedidoHTML(n)}
       ${compact ? "" : `${(n.regra || asList(n.regras).length) ? `<span class="nrule">${ico("tree", "sm")} Regra: ${esc([].concat(n.regra || n.regras).map(x => typeof x === "object" ? (x.nome || x.name || "") : x).join(", "))}</span>` : ""}
       ${done.length ? `<span class="nacts">${done.map(a => `<span class="chip ok">${ico("check", "sm")}${esc(actLabel(a))}</span>`).join("")}</span>` : ""}
       ${sug.length ? `<span class="nacts">${sug.map((a, i) => `<button type="button" class="chip sug" data-nact="${esc(n.id)}" data-ai="${i}" data-tip="Aprovar e fazer agora">${ico("spark", "sm")}${esc(actLabel(a))}</button>`).join("")}</span>` : ""}`}</span></div>`;
@@ -1099,6 +1112,7 @@ async function viewNotifs(keepFocus) {
       ${unread ? `<button class="btn sm ghost" id="nall">${ico("check", "sm")} Marcar todas como lidas</button>` : ""}
       <button class="btn sm ghost" id="nclr" aria-haspopup="menu">${ico("trash", "sm")} Limpar…</button>
     </div>
+    ${connHint()}<div id="alertbox"></div>
     ${NTAGS.length ? `<div class="saved" role="group" aria-label="Etiquetas"><span class="lbl">Etiquetas</span><button type="button" class="chip ${!NF.etiqueta ? "on" : ""}" data-et="">Todas</button>${NTAGS.map(t => `<button type="button" class="chip ${NF.etiqueta === t.etiqueta ? "on" : ""}" data-et="${esc(t.etiqueta)}"><i class="mdot" style="background:${tagColor(t.etiqueta)}"></i>${esc(titleCase(t.etiqueta))}${t.n != null ? ` <small>${t.n}</small>` : ""}</button>`).join("")}</div>` : ""}
     ${NOTIFS.length ? groups.map(g => `<section class="group"><h3>${esc(dayLabel(g.d))}<span>${g.items.length}</span></h3><div class="mlist">${g.items.map(n => notifRowHTML(n)).join("")}</div></section>`).join("") :
       empty(Object.values(NF).some(Boolean) ? "Nada com esses filtros" : "Nenhuma notificação", Object.values(NF).some(Boolean) ? "Tente outra etiqueta ou limpe a busca." : "Quando chegarem notificações no computador, elas aparecem aqui, já etiquetadas.", Object.values(NF).some(Boolean) ? `<button class="btn" id="nfc">Limpar filtros</button>` : "")}
@@ -1113,6 +1127,7 @@ async function viewNotifs(keepFocus) {
   const na = $("#nall", v); if (na) na.onclick = () => markNotifs(NOTIFS.filter(n => !n.lida).map(n => n.id), true);
   $("#nclr", v).onclick = e => menu(e.currentTarget, [{value: "7", label: "Apagar as de mais de 7 dias"}, {value: "30", label: "Apagar as de mais de 30 dias"}, {value: "date", label: "Apagar antes de uma data…"}, {hr: 1}, {value: "all", label: "Apagar todas", danger: true, icon: "trash"}], clearNotifs);
   wireNotifRows(v);
+  drawAlerts($("#alertbox", v));
   paintNSel();
 }
 function wireNotifRows(v) {
@@ -1564,7 +1579,7 @@ function resultCard(r, text) {
   const ds = asList(r.dicas), qs = asList(r.perguntas);
   el.innerHTML = `<div class="rhead"><div class="rtool"><span class="ti">${ico(ti)}</span>${esc(tl)}</div>${tool === "web" || p.action === "web_search" ? `<span class="tag out">${ico("globe", "sm")} sai do computador</span>` : ""}${r.decidido_por ? `<span class="sp"></span><span class="decby" data-tip="Quem entendeu o pedido">decidido ${r.decidido_por === "modelo" ? "pelo modelo" : r.decidido_por === "regras" ? "pelas regras" : "por " + esc(r.decidido_por)}</span>` : ""}</div>
     ${r.reply ? `<p class="reply">${esc(r.reply)}</p>` : ""}
-    ${r.warning || r.aviso ? `<p class="hint">${ico("warn", "sm")} ${esc(r.warning || r.aviso)}</p>` : ""}
+    ${(r.warning || r.aviso) && !String(r.reply || "").includes(String(r.warning || r.aviso).replace(/[()]/g, "").slice(0, 24)) ? `<p class="hint">${ico("warn", "sm")} ${esc(r.warning || r.aviso)}</p>` : ""}
     ${(r.fields || []).length ? `<div class="fields" aria-label="O que eu entendi">${r.fields.map(fieldChip).join("")}</div>` : ""}
     <div class="propbox"></div>${dicasHTML(ds, qs)}
     <div class="ract"></div>
@@ -1944,7 +1959,7 @@ function setProfile(el) {
     ${setRow("Como quer ser chamado", "Aparece na saudação do Início.", `<input class="inp" id="pf-user" maxlength="40" value="${esc(p.nome_usuario || "")}" placeholder="você" style="width:220px" aria-label="Como quer ser chamado">`)}
     ${setRow("Nome do assistente", "Como o assistente se apresenta nas mensagens.", `<input class="inp" id="pf-ag" maxlength="40" value="${esc(p.nome_agente || "Djorge")}" placeholder="Djorge" style="width:220px" aria-label="Nome do assistente">`)}
     ${setRow("Quem decide primeiro", "Modelo: o DOFL entende o pedido e as regras ajudam. Regras: respostas mais rápidas, o modelo só quando as regras não bastam.", segHTML("pf-pri", [["modelo", "Modelo"], ["equilibrado", "Equilibrado"], ["regras", "Regras (respostas rápidas)"]], p.prioridade || "modelo", "Quem decide primeiro"))}`;
-  const saveName = (k, inp) => { const v = inp.value.trim(); if (v === (S.prefs[k] || "") ) return; savePrefs({[k]: v}, false).then(() => { if (k === "nome_agente") setMode(S.mode); if (S.view === "inicio") render(); }); };
+  const saveName = (k, inp) => { const v = inp.value.trim(); if (v === (S.prefs[k] || "") ) return; savePrefs({[k]: v}, false).then(() => { paintMe(); if (k === "nome_agente") setMode(S.mode); if (S.view === "inicio") render(); }); };
   [["nome_usuario", "#pf-user"], ["nome_agente", "#pf-ag"]].forEach(([k, id]) => { const i = $(id, el); i.onchange = () => saveName(k, i); i.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); i.blur(); } }; });
   wireSeg(el, "pf-pri", v => savePrefs({prioridade: v}));
 }
@@ -2065,18 +2080,7 @@ async function setAdvanced(el) {
   const show = async s => { $$("[data-s]", el).forEach(b => b.setAttribute("aria-selected", b.dataset.s === s)); box.innerHTML = `<div class="sk"></div>`;
     if (s === "cfg") { const c = await loadCfg(); box.innerHTML = `<textarea class="ta code" id="cfgj" spellcheck="false" aria-label="Configuração">${esc(JSON.stringify(c || {}, null, 2))}</textarea><p class="hint">Formato JSON das mesmas chaves do config.yaml. Campos desconhecidos são recusados.</p><div class="row" style="margin-top:10px;justify-content:flex-end"><button class="btn primary" id="cfgs">Salvar configuração</button></div>`;
       $("#cfgs", box).onclick = () => { try { saveCfg(JSON.parse($("#cfgj", box).value)); } catch (e) { toast("JSON inválido: " + e.message, "bad"); } }; }
-    if (s === "hist") { try { const h = await api("/api/history?n=100"); const list = asList(h, "items", "history");
-      box.innerHTML = `<div class="row hbar"><button class="btn sm" id="hb-before">${ico("clock", "sm")} Apagar antes de…</button><button class="btn sm danger" id="hb-all">${ico("trash", "sm")} Apagar tudo</button><span class="hint">Clique com o botão direito num item para mais opções.</span></div>` +
-        (list.length ? `<div class="hist">${list.map((x, i) => `<div class="card hitem" data-hi="${i}" data-ctx="hist"><div class="hrow"><small>${esc(fmtDT(x.t || x.time || ""))} · ${esc(titleCase((x.event && x.event.source) || x.source || ""))}</small>${x.id != null ? `<button class="iconbtn sm" data-hdel="${i}" aria-label="Apagar item" data-tip="Apagar">${ico("trash", "sm")}</button>` : ""}</div><div>${esc(((x.event && (x.event.title || x.event.text)) || x.text || "").slice(0, 160))}</div>${(x.path || x.steps || []).length ? `<small>${esc((x.path || x.steps).map(p => p.node || p.label || p).join(" → ").slice(0, 200))}</small>` : ""}</div>`).join("")}</div>` : empty("Histórico vazio", "Os eventos que chegarem aparecem aqui."));
-      const delOne = async i => { const x = list[i]; if (x.id == null) return toast("Este item não pode ser apagado sozinho.", "warn"); if (await tryApi(`/api/history/${encodeURIComponent(x.id)}/delete`, {})) { toast("Item apagado"); show("hist"); } };
-      $$("[data-hdel]", box).forEach(b => b.onclick = () => delOne(+b.dataset.hdel));
-      $$("[data-hi]", box).forEach(r => r.oncontextmenu = e => { const i = +r.dataset.hi, x = list[i]; ctxMenu(e, [{value: "copy", label: "Copiar texto", icon: "list"}, {value: "before", label: "Apagar este e os mais antigos", icon: "clock", danger: true}, {value: "del", label: "Apagar", icon: "trash", danger: true, disabled: x.id == null}], async v => {
-        if (v === "copy") copyText(((x.event && (x.event.title || x.event.text)) || x.text || ""));
-        if (v === "del") delOne(i);
-        if (v === "before" && (x.t || x.time)) { const d = new Date(new Date(x.t || x.time).getTime() + 1000); if (await tryApi("/api/history/clear", {antes_de: isoLocal(d)})) { toast("Itens apagados"); show("hist"); } } }); });
-      $("#hb-all", box).onclick = () => confirmBox("Apagar todo o histórico?", "Os eventos registrados somem. Cards e automações continuam.", "Apagar tudo", async () => { if (await tryApi("/api/history/clear", {tudo: true})) { toast("Histórico apagado"); show("hist"); } });
-      $("#hb-before", box).onclick = () => askText("Apagar antes de", "Apagar o histórico anterior a", "", async d => { if (d && await tryApi("/api/history/clear", {antes_de: d + "T00:00:00"})) { toast("Histórico antigo apagado"); show("hist"); } }, ymd(addDays(new Date(), -30)), "date"); }
-      catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; } }
+    if (s === "hist") histInto(box);
     if (s === "pend") { try { const p = await api("/api/pending"); const list = Array.isArray(p) ? p : [];
       box.innerHTML = list.length ? `<div class="tlist">${list.map(pendHTML).join("")}</div>` : empty("Nada pendente", "Ações que precisam da sua aprovação aparecem aqui."); wirePend(box, () => show("pend")); }
       catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; } }
@@ -2292,11 +2296,13 @@ async function init() {
   i.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } });
   $("#composer").addEventListener("submit", e => { e.preventDefault(); submit(); });
   window.addEventListener("hashchange", () => go(location.hash.slice(1), false));
-  renderRecents(); renderModelChip();
-  await ensureToken();
+  try { localStorage.removeItem("dj.recents"); } catch (e) {}   /* a conversa não é mais salva no disco */
+  $("#act-all").onclick = () => go("historico");
+  renderModelChip();
+  await ensureToken(); renderRecents();
   let prefs = {};
   try { prefs = await api("/api/ui"); } catch (e) {}
-  S.prefs = normPrefs(prefs); applyPrefs(S.prefs); setMode(S.mode);
+  S.prefs = normPrefs(prefs); applyPrefs(S.prefs); setMode(S.mode); paintMe();
   const h = location.hash.slice(1);
   S.view = VIEW_ALIAS[h] || (VIEWS.find(v => v.id === h) ? h : S.prefs.default_view);
   if (!VIEWS.find(v => v.id === S.view)) S.view = "inicio";
@@ -2304,7 +2310,7 @@ async function init() {
   await Promise.all([loadCards(true), pollModel(), pollStatus(), loadInts(), loadRec()]);
   render();
   if (!modelReady() && !store.get("welcomed", false) && S.model.state !== "baixando") { store.set("welcomed", true); setTimeout(openModel, 500); }
-  setInterval(pollStatus, 5000);
+  setInterval(pollStatus, 5000); pollAlerts(true); setInterval(pollAlerts, 15000);
   setInterval(() => { if (!document.hidden && !drawerCard && !dragId && !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) refreshCards(); }, 30000);
   recorderLoaded = await loadScript("/static/app/recorder.js");
   await loadVoice(); syncMic();

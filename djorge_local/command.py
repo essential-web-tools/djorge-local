@@ -111,6 +111,37 @@ SITES = {"youtube": "https://www.youtube.com", "google": "https://www.google.com
 SEGUIR = {"decisao": "seguir", "motivos": [], "p": None}
 
 
+def _alertas(text: str, agora) -> Optional[Dict]:
+    """alertas.de_texto (V2_SPEC_4), protegido: sem o módulo ou com erro, nada de alerta."""
+    try:
+        from .alertas import de_texto
+        return de_texto(text, agora)
+    except Exception:
+        return None
+
+
+HIST_LIMPAR = re.compile(r"(?i)^\s*(?:(?:por favor|pf|djorge)[,\s]+)?(?:me\s+)?(?:apag\w*|limp\w*|exclu\w*|delet\w*|"
+                         r"zer\w*|remov\w*)\s+(?:tudo\s+)?(?:(?:o|meu|todo\s+o)\s+)*hist[oó]rico\b(.*)$")
+
+
+def pedido_limpar_historico(text: str, hoje) -> Optional[Dict]:
+    """"apaga o histórico" -> {tudo: True}; "limpa o histórico de hoje" -> {hoje: data}; "... antes de 01/11" -> antes_de."""
+    m = HIST_LIMPAR.search(str(text or ""))
+    if not m:
+        return None
+    resto = _sem_acento(m.group(1).casefold())
+    if re.search(r"\bde hoje\b|\bhoje\b", resto):
+        return {"hoje": hoje.isoformat()}
+    if re.search(r"\bantes\b", resto):
+        try:
+            q = resolver_quando(m.group(1), [], None)
+            if q.get("data"):
+                return {"antes_de": q["data"]}
+        except Exception:
+            pass
+    return {"tudo": True}
+
+
 class ModeloAusente(Exception):
     pass
 
@@ -156,10 +187,10 @@ def keyword_tool(text: str) -> (str, float):
     return d["tool"], d["confianca"]
 
 
-PREFIXO = re.compile(r"^\s*(?:(?:por favor|pf|ei|djorge)[,\s]+)*(?:(?:me\s+)?(?:lembra|lembre|lembrar)(?:-me)?\s+(?:de\s+|que\s+)?|"
+PREFIXO = re.compile(r"^\s*(?:(?:por favor|pf|ei|djorge)[,\s]+)*(?:(?:me\s+)?(?:lembra|lembre|lembrar|avisa|avise)(?:-me)?\s*[:,\-]?\s+(?:de\s+|que\s+)?|"
                      r"(?:marca|marque|marcar|agenda|agende|agendar|anota|anote|anotar|cria|crie|criar|adiciona|"
-                     r"adicione|coloca|coloque|bota|poe|põe)\s+(?:um[a]?\s+|o\s+|a\s+)?(?:(?:card|tarefa|lembrete|"
-                     r"evento|nota|compromisso|alarme)\s+(?:de\s+|para\s+|pra\s+)?)?|(?:preciso|tenho que)\s+)", re.I)
+                     r"adicione|coloca|coloque|bota|poe|põe)(?:\s+a[ií])?\s*[:,\-]?\s+(?:um[a]?\s+|o\s+|a\s+)?(?:(?:card|tarefa|lembrete|"
+                     r"evento|nota|compromisso|alarme)\s*[:\-]?\s+(?:de\s+|para\s+|pra\s+)?)?|(?:preciso|tenho que)\s*[:,]?\s+)", re.I)
 BORDAS = {"às", "as", "a", "à", "de", "do", "da", "no", "na", "em", "para", "pra", "pro", "dia", "e", "o", "que",
           "com", "até", "ate", "hoje", "por", "volta", "lá", "la", "pelas", "das", "dos", "toda", "todo", "todos", "todas"}
 PREP_CAMPO = {"às", "as", "a", "à", "em", "no", "na", "de", "do", "da", "para", "pra", "pro", "até", "ate", "dia",
@@ -183,7 +214,7 @@ def _sem_campos(text: str, fields: List[Trecho], drop=("data", "hora", "período
                 for i in range(k + 1, j + 1):
                     keep[i] = " "
     t = PREFIXO.sub("", "".join(keep))
-    t = re.sub(r"(?i)^\s*(?:um[a]?\s+)?(?:lembrete|tarefa|evento|nota|card|compromisso|alarme)\s+(?:de\s+|para\s+|pra\s+)?(?=\w)", "", t)
+    t = re.sub(r"(?i)^\s*(?:um[a]?\s+)?(?:lembrete|tarefa|evento|nota|card|compromisso|alarme)\s*[:\-]?\s+(?:de\s+|para\s+|pra\s+)?(?=\w)", "", t)
     words = t.split()
     while words and words[-1].casefold().strip(",.;:!?") in BORDAS:
         words.pop()
@@ -389,12 +420,26 @@ class Command:
                "quando": quando, "corpo": corpo.valor if corpo else None, "atalho": atalho, "reply": "", "titulo": "",
                "dicas": [], "perguntas": [], "proposal": {"action": "none"}, "authorization": dict(SEGUIR),
                "needs_confirm": False, "results": [], "context": context}
-        if ui is not None:
+        hl = pedido_limpar_historico(text, hoje) if ui is None and not context.get("tool") else None
+        al = _alertas(text, agora) if hl is None and ui is None and not context.get("tool") and \
+            tool not in ("cards", "listas", "calcular", "regra") else None
+        if al:
+            if al.get("card") or (context.get("selected_card") and al["alertas"][0].get("antes") is not None):                       # "me avisa de 2 em 2 horas…": é alerta, sem perguntar
+                tool = out["tool"] = "cards"
+                dec = dict(dec, tool="cards", decidido=True, perguntar=[])
+        if hl is not None:
+            out["tool"] = "historico"
+            out["proposal"] = dict({"action": "history_clear"}, **hl)
+            out["needs_confirm"] = True
+            out["reply"] = ("Posso apagar o histórico de hoje?" if hl.get("hoje") else
+                            f"Posso apagar o histórico anterior a {_data_pt(hl['antes_de'])}?" if hl.get("antes_de")
+                            else "Posso apagar todo o histórico?")
+        elif ui is not None:
             self._etapa(cid, ETAPA["entendeu"].format(intencao=ui["descricao"]))
             self._ui(out, ui)
         elif not dec["decidido"] and dec["perguntar"]:
             out["perguntas"] = dec["perguntar"]
-            ops = [o["rotulo"].lower() for o in dec["perguntar"][0]["opcoes"]]
+            ops = [o.get("fala") or o["rotulo"].lower() for o in dec["perguntar"][0]["opcoes"]]
             out["reply"] = FRASE["perguntar"].format(opcoes=" ou ".join([", ".join(ops[:-1]), ops[-1]] if len(ops) > 1 else ops))
             out["tool"] = "perguntar"
         else:
@@ -436,8 +481,7 @@ class Command:
                 out["dicas"] = P.dicas(text, pis)
                 if dec["alternativas_uteis"] and len(dec["alternativas_uteis"]) >= 2:
                     out["perguntas"] = [P.pergunta(dec["alternativas_uteis"])]
-        if aviso and out["reply"]:
-            out["reply"] = out["reply"] + " " + aviso
+        # o aviso "(Sem o modelo…)" vai só no campo `aviso` (a UI mostra à parte); não entra no reply nem no histórico
         F.resposta(out, hoje)
         out["timing_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         with self.lock:
@@ -633,14 +677,41 @@ class Command:
             action = "update_card" if exist else "create_card"
         else:
             kind = self._tipo_card(s, quando.get("hora"), quando.get("recorrencia"), quando.get("prazo"))
-            titulo = F.titulo(_sem_campos(text, fields) or text[:80], [p["nome"] for p in people if p.get("nome")])
+            nomes = [p["nome"] for p in people if p.get("nome")] + [
+                f.valor for f in fields if f.valor and (f.campo in ("lugar", "empresa ou estabelecimento", "pessoa")
+                                                        or (f.campo == "entidade" and (f.extra or {}).get("tipo") != "pessoa"))]
+            base = _sem_campos(text, fields)
+            ev = [f for f in fields if f.campo == "evento ou compromisso" and f.fonte == "modelo" and f.valor]
+            if ev and (len(ev[0].valor.split()) >= 2 or not base):     # o texto central vem do resolve do modelo
+                base = _sem_campos(ev[0].valor, []) or ev[0].valor
+                for nm in nomes[:1]:
+                    if nm.casefold() not in base.casefold() and re.search(rf"(?i)\bcom\s+(?:o\s+|a\s+)?{re.escape(nm)}", text):
+                        base = f"{base} com {nm}"
+            titulo = F.titulo(base or text[:80], nomes)
             if not titulo:
                 titulo = {"evento": "Compromisso", "lembrete": "Lembrete", "nota": "Nota"}.get(kind, "Tarefa")
             card = {"kind": kind, "title": titulo, "people": people, "recurrence": quando.get("recorrencia_txt") or "",
                     "priority": 3 if re.search(r"\burgent", s) else 2 if "importante" in s else 0}
             self._datas_card(card, kind, quando, hoje)
             sel = (out.get("context") or {}).get("selected_card")
-            if sel and re.search(r"\b(muda|mude|altera|altere|passa|passe|move|mova|remarca|remarque|adia|adie)\b", s):
+            al = _alertas(text, _now(self.app.cfg))
+            if al:
+                spec = al["alertas"]
+                if al.get("card"):                                  # alerta com hora própria: lembrete
+                    card["kind"] = kind = "lembrete"
+                    card["alertas"] = spec
+                    if al["card"].get("start"):
+                        card["start"] = card.get("start") or al["card"]["start"]
+                    if card.get("title") in ("Tarefa", "Lembrete", "Compromisso", "Nota") and al.get("titulo"):
+                        card["title"] = titulo = al["titulo"]
+                elif sel:                                           # "avisa 30 min antes": no card em foco
+                    card = {"alertas": spec}
+                    out["proposal"] = {"action": "update_card", "card": card,
+                                       "id": sel if isinstance(sel, str) else sel.get("id")}
+            if card.get("alertas") is not None and "kind" not in card:
+                action, exist = "update_card", [{"id": out["proposal"]["id"]}]
+                kind = "lembrete"
+            elif sel and re.search(r"\b(muda|mude|altera|altere|passa|passe|move|mova|remarca|remarque|adia|adie)\b", s):
                 action = "update_card"
                 card = {k: v for k, v in card.items() if k in ("start", "end", "due", "all_day", "priority") and v}
                 exist = [{"id": sel if isinstance(sel, str) else sel.get("id")}]
@@ -1031,6 +1102,17 @@ class Command:
             card.pop("quando_fmt", None)
             c = self.app.cards.update(p["id"], card)
             return {"ok": True, "card": F.card(c)}
+        if a == "history_clear":
+            h = getattr(self.app, "hist", None) or getattr(self.app, "history", None)
+            if p.get("hoje"):
+                ids = [r.get("id") for r in list(h.items) if str(r.get("t", "")).startswith(p["hoje"])]
+                n = h.clear(ids=ids) if ids else 0
+            elif p.get("antes_de"):
+                n = h.clear(antes_de=p["antes_de"])
+            else:
+                n = h.clear(tudo=True)
+            return {"ok": True, "apagados": n,
+                    "reply": "Apaguei " + (f"{n} registro" if n == 1 else f"{n} registros") + " do histórico."}
         if a == "ui":
             return {"ok": True, "ui": self.app.ui.set(dict(p["patch"], **(edits or {})))}
         if a == "send_message":

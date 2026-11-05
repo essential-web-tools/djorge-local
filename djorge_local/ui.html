@@ -20,12 +20,12 @@
     <div class="side-scroll">
       <nav id="nav" aria-label="Visões"></nav>
       <div class="recents">
-        <div class="side-sec">Recentes</div>
+        <div class="side-sec">Atividade<button class="iconbtn sm" id="act-all" aria-label="Ver histórico" data-tip="Ver histórico" data-tip-pos="right"><svg class="i sm"><use href="#i-arrow"/></svg></button></div>
         <div id="recents"></div>
       </div>
     </div>
     <div class="side-foot">
-      <div class="me" id="me" role="status"><div class="avatar">D<i id="me-dot"></i></div><div class="me-t"><b>Você</b><small id="me-st">conectando…</small></div></div>
+      <div class="me" id="me" role="status"><div class="avatar"><span id="me-ini">?</span><i id="me-dot"></i></div><div class="me-t"><b id="me-name">Você</b><small id="me-st">conectando…</small></div></div>
       <button class="iconbtn extra" id="btn-int" aria-label="Integrações" data-tip="Integrações" data-tip-pos="top"><svg class="i"><use href="#i-plug"/></svg></button>
       <button class="iconbtn" id="btn-set" aria-label="Configurações" aria-keyshortcuts="Control+," data-tip="Configurações" data-tip-pos="top"><svg class="i"><use href="#i-gear"/></svg></button>
     </div>
@@ -130,6 +130,12 @@
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
   <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h3"/></symbol>
+  <symbol id="i-bold" viewBox="0 0 24 24"><path d="M7 4h6a4 4 0 0 1 0 8H7zM7 12h7a4 4 0 0 1 0 8H7z"/></symbol>
+  <symbol id="i-italic" viewBox="0 0 24 24"><path d="M10 4h8M6 20h8M14 4l-4 16"/></symbol>
+  <symbol id="i-heading" viewBox="0 0 24 24"><path d="M6 4v16M18 4v16M6 12h12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
   <symbol id="i-house" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></symbol>
 </svg>
 <script src="/static/app/app.js" defer></script>

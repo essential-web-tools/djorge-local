@@ -18,6 +18,13 @@ from typing import Dict, Iterable, Optional
 
 PARTICULAS = {"da", "de", "do", "das", "dos", "e", "d'", "di", "du", "van", "von", "del", "la"}
 SIGLAS = {"rh", "ti", "ong", "cpf", "cnpj", "sus", "inss", "ibge", "usp", "ufrj", "bb", "cef", "xp", "pj", "pf"}
+COMUNS = {"equipe", "turma", "familia", "família", "galera", "pessoal", "chefe", "time", "medica", "médica", "medico",
+          "médico", "dentista", "professor", "professora", "mae", "mãe", "pai", "vizinho", "vizinha", "cliente",
+          "diretoria", "gerente", "escola", "empresa", "reuniao", "reunião", "casa", "academia", "faculdade", "loja",
+          "mercado", "farmacia", "farmácia", "padaria", "banco", "consulta", "festa", "minha", "meu", "gente", "tia",
+          "tio", "avo", "avó", "avô", "irma", "irmã", "irmao", "irmão", "esposa", "marido", "namorada", "namorado",
+          "amiga", "amigo", "secretaria", "secretária", "contadora", "contador", "advogado", "advogada", "noite",
+          "tarde", "manha", "manhã", "semana", "proxima", "próxima", "lista", "nota", "tarefa", "agenda", "rua"}
 SEM_CURTO = ["seg.", "ter.", "qua.", "qui.", "sex.", "sáb.", "dom."]
 MES_CURTO = ["jan.", "fev.", "mar.", "abr.", "maio", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
 SOLTAS = {"às", "as", "a", "à", "de", "do", "da", "dos", "das", "no", "na", "nos", "nas", "em", "para", "pra", "pro",
@@ -143,6 +150,10 @@ def titulo(s, nomes: Iterable[str] = ()) -> str:
         ws.pop(0)
     s = " ".join(ws).strip(" ,.;:!?-–")
     s = re.sub(r"\b(\w+)( \1\b)+", r"\1", s, flags=re.I)            # "com com" -> "com"
+    # sem o modelo: "com a joana", "pro pedro", "pra ana" -> nome próprio (artigo antes de nome é o costume)
+    s = re.sub(r"(?i)\b(com\s+(?:o|a)|pro|pra|para\s+(?:o|a))\s+([a-zà-ÿ]{3,})\b",
+               lambda m: m.group(0) if m.group(2).casefold() in COMUNS or not m.group(2).islower()
+               else f"{m.group(1)} {nome(m.group(2))}", s)
     for n in sorted({x for x in nomes if x}, key=len, reverse=True):
         s = re.sub(rf"(?i)(?<!\w){re.escape(n)}(?!\w)", nome(n), s)
     return frase(s)[:200]

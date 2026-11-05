@@ -122,7 +122,7 @@ def test_command_without_model(app):
     K = app.command
     r = K.run("quanto é 18% de 2450?")
     assert r["tool"] == "calcular" and r["proposal"]["value"] == 441 and "441" in r["reply"] and r["model"] is False
-    assert "Sem o modelo" in r["reply"]
+    assert "Sem o modelo" in (r["aviso"] or "") and "Sem o modelo" not in r["reply"]
     r = K.run("que horas são?")
     assert r["tool"] == "datas_horas" and r["proposal"]["action"] == "time" and "Agora são" in r["reply"]
     r = K.run("quantos dias faltam para 25/12?")

@@ -617,3 +617,8 @@ def de_texto(texto: str, agora: _dt.datetime = None) -> Optional[Dict]:
         out["card"] = {"kind": "lembrete", "title": titulo, "start": spec.get("quando"), "column": "entrada",
                        "alertas": [spec]}
     return out
+
+
+def iniciar(app) -> Alertas:
+    """Chamado ao abrir o app: retoma o agendador se houver alertas ativos."""
+    return servico(app)

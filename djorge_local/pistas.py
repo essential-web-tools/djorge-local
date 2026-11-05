@@ -35,6 +35,12 @@ ROTULO = {"calcular": "Fazer a conta", "datas_horas": "Ver data ou hora", "proxi
           "buscar": "Buscar nos meus dados", "regra": "Criar uma regra", "web": "Buscar na internet",
           "abrir": "Abrir o app", "nenhuma": "Nada disso"}
 
+# o mesmo rótulo como continuação de "Quer que eu …?" (subjuntivo): "crie um card ou mande uma mensagem"
+FALA = {"calcular": "faça a conta", "datas_horas": "veja a data ou a hora", "proximas_tarefas": "mostre a agenda",
+        "cards": "crie um card", "listas": "ponha numa lista", "bilhete": "mande uma mensagem",
+        "buscar": "busque nos seus dados", "regra": "crie uma regra", "web": "busque na internet",
+        "abrir": "abra o app", "nenhuma": "não faça nada"}
+
 # ferramenta: [(nome do sinal, regex sem acento e minúsculo, peso)]
 SINAIS = {
     "calcular": [
@@ -236,7 +242,8 @@ def _probs(model_probs) -> Dict[str, float]:
 
 
 def pergunta(opcoes: List[str], texto: str = "O que você quer que eu faça?") -> Dict:
-    return {"texto": texto, "opcoes": [{"rotulo": ROTULO.get(t, NOME.get(t, t)), "patch": {"tool": t}} for t in opcoes]}
+    return {"texto": texto, "opcoes": [{"rotulo": ROTULO.get(t, NOME.get(t, t)),
+                                       "fala": FALA.get(t, ROTULO.get(t, NOME.get(t, t)).lower()), "patch": {"tool": t}} for t in opcoes]}
 
 
 def decidir(model_probs, p: Dict, limiar: float = 0.3, margem: float = 0.12, texto: str = "") -> Dict:

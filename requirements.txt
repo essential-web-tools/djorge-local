@@ -30,3 +30,6 @@ pyperclip
 # faster-whisper
 # opcional: OCR de imagens (exige o Tesseract instalado no Windows)
 # pytesseract
+
+winsdk; sys_platform == "win32"          # notificações do Windows (UserNotificationListener)
+winotify; sys_platform == "win32"        # avisos (toasts) do Windows

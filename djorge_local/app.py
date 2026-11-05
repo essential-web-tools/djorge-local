@@ -67,6 +67,7 @@ class App:
         self.cards = Cards(_home() / "cards.db")
         from .historico import instrumentar_cards
         instrumentar_cards(self.cards, self.hist)        # de/para de cada alteração (UI, comando, integrações)
+        self._ligar_alertas_aos_cards()
         self._notas = None
         self.ui = UIPrefs(_home() / "ui.json")
         self.search = Search(self)
@@ -289,6 +290,40 @@ class App:
         trees.append(t)
         self.reload_trees(yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
         return {"added": t["name"], "summary": summarize(t), "trees": len(self.trees)}
+
+    def _ligar_alertas_aos_cards(self):
+        """Todo card criado/alterado/apagado (UI, comando, integrações) atualiza os alertas do agendador."""
+        cards = self.cards
+
+        def svc():
+            try:
+                from . import alertas as _al
+                return _al.servico(self)
+            except Exception:
+                return None
+
+        def envolver(nome, depois):
+            orig = getattr(cards, nome, None)
+            if not callable(orig):
+                return
+
+            def f(*a, **k):
+                r = orig(*a, **k)
+                try:
+                    s = svc()
+                    if s is not None:
+                        depois(s, r, a)
+                except Exception as e:
+                    self._svc_err["alertas_card"] = f"{type(e).__name__}: {e}"
+                return r
+            setattr(cards, nome, f)
+
+        def sync(s, card, a):
+            if isinstance(card, dict):
+                s.sync_card(card)
+        for nome in ("create", "update", "move"):
+            envolver(nome, sync)
+        envolver("delete", lambda s, r, a: s.remover_card(a[0]) if a else None)
 
     def handle(self, ev: dict, only: str = None) -> dict:
         out = []

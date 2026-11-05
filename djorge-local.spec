@@ -14,7 +14,7 @@ _sem_torch = lambda n: not n.startswith(("djorge.training", "djorge.model.backbo
                                           "djorge.model.compress", "djorge.model.djorge_model"))
 hidden = (collect_submodules("djorge", filter=_sem_torch) + collect_submodules("djorge_local")
           + collect_submodules("webview")
-          + ["pystray._win32", "keyring.backends", "keyring.backends.Windows", "win32com.client", "comtypes.client",
+          + ["pystray._win32", "winotify", "winsdk", "winsdk.windows.ui.notifications", "winsdk.windows.ui.notifications.management", "winsdk.windows.foundation", "winsdk.windows.foundation.collections", "winsdk.windows.applicationmodel", "keyring.backends", "keyring.backends.Windows", "win32com.client", "comtypes.client",
              "onnxruntime", "gdown", "huggingface_hub", "tokenizers", "safetensors", "safetensors.numpy",
              "transformers.models.auto.tokenization_auto", "transformers.models.qwen2.tokenization_qwen2_fast",
              "transformers.tokenization_utils_fast"])
