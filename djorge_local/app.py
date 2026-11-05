@@ -35,59 +35,10 @@ class Unavailable(Exception):
     """Módulo opcional (integrações, voz, árvores visuais, download do modelo) ausente ou com falha -> 503."""
 
 
-class History:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self.items = collections.deque(maxlen=int(cfg["history"]["keep"]))
-        self.lock = threading.Lock()
-        self.file = _home() / "historico.jsonl"
-        _home().mkdir(parents=True, exist_ok=True)
-
-    def add(self, rec: dict):
-        import uuid as _uuid
-        rec = dict(rec, t=time.strftime("%Y-%m-%dT%H:%M:%S"), id=rec.get("id") or _uuid.uuid4().hex[:10])
-        ev = rec.get("event")
-        if ev:
-            ev = dict(ev)
-            if not self.cfg["history"]["store_text"]:
-                ev["text"] = f"[{len(ev.get('text', ''))} caracteres]"
-            elif self.cfg["history"]["mask_pii"]:
-                try:
-                    from djorge.runtime.tools import mask_pii
-                    ev["text"] = mask_pii(ev.get("text", ""))["masked"]
-                except Exception:
-                    pass
-            rec["event"] = ev
-        with self.lock:
-            self.items.append(rec)
-            with open(self.file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
-
-    def last(self, n=100):
-        with self.lock:
-            return list(self.items)[-n:][::-1]
-
-    def _rewrite(self):
-        with open(self.file, "w", encoding="utf-8") as f:
-            for rec in self.items:
-                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
-
-    def clear(self, tudo: bool = False, antes_de: str = None, ids=None) -> int:
-        """Apaga tudo, o que for anterior a uma data (ISO, ex. 2026-11-01) ou os itens com estes ids."""
-        with self.lock:
-            n = len(self.items)
-            if tudo:
-                keep = []
-            elif antes_de:
-                keep = [r for r in self.items if str(r.get("t", "")) >= str(antes_de)]
-            elif ids:
-                ids = {str(i) for i in ids}
-                keep = [r for r in self.items if str(r.get("id")) not in ids]
-            else:
-                raise ValueError("diga o que apagar: tudo, antes_de ou ids")
-            self.items = collections.deque(keep, maxlen=self.items.maxlen)
-            self._rewrite()
-            return n - len(self.items)
+def History(cfg):
+    """Histórico de ações (historico.py): cada pedido e o que foi feito, nunca a conversa."""
+    from .historico import Historico
+    return Historico(cfg, _home())
 
 
 class App:
@@ -114,6 +65,9 @@ class App:
         from .search import Search
         from .uiprefs import UIPrefs
         self.cards = Cards(_home() / "cards.db")
+        from .historico import instrumentar_cards
+        instrumentar_cards(self.cards, self.hist)        # de/para de cada alteração (UI, comando, integrações)
+        self._notas = None
         self.ui = UIPrefs(_home() / "ui.json")
         self.search = Search(self)
         self.command = Command(self)
@@ -128,6 +82,28 @@ class App:
         self._load_service("secretario", lambda: __import__("djorge_local.secretario", fromlist=["x"]).Secretario(self))
         self._streams: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
         self.pausado = False
+        self.alertas_agendador = None
+        try:                                              # alertas (agente S): opcional
+            from . import alertas as _al
+            ini = getattr(_al, "iniciar", None)
+            if callable(ini):
+                self.alertas_agendador = ini(self)
+            elif hasattr(_al, "Agendador"):
+                self.alertas_agendador = _al.Agendador(self)
+                st = getattr(self.alertas_agendador, "iniciar", None) or getattr(self.alertas_agendador, "start", None)
+                if callable(st):
+                    st()
+        except ImportError:
+            pass
+        except Exception as e:
+            self._svc_err["alertas"] = f"{type(e).__name__}: {e}"
+
+    @property
+    def notas(self):
+        if self._notas is None:
+            from .notas import Notas
+            self._notas = Notas(_home() / "notas.db")
+        return self._notas
 
     @property
     def secretario(self):
@@ -668,8 +644,33 @@ def _q1(q, k, default=None):
     return v[0] if v else default
 
 
+def _alertas_rotas(app: App, metodo: str, path: str, corpo):
+    try:
+        from . import alertas as _al
+    except ImportError:
+        return None
+    fn = getattr(_al, "rotas", None)
+    return fn(app, metodo, path, corpo) if callable(fn) else None
+
+
+def v4_rotas(app: App, metodo: str, path: str, corpo):
+    """Rodada 4: notas, alterações de cards, alertas (agente S). Devolve (código, objeto) ou None."""
+    if path.startswith("/api/notas"):
+        from .notas import rotas as _nr
+        return _nr(app, metodo, path, corpo)
+    if metodo == "GET" and path.startswith("/api/cards/") and path.endswith("/alteracoes"):
+        cid = path.split("/")[3]
+        return 200, {"id": cid, "alteracoes": app.hist.alteracoes(cid)}
+    if path.startswith("/api/alertas"):
+        return _alertas_rotas(app, metodo, path, corpo)
+    return None
+
+
 def v2_get(app: App, path: str, q: dict):
     """Rotas GET da v2. Devolve (código, objeto) ou None."""
+    r = v4_rotas(app, "GET", path, {k: _q1(q, k) for k in q})
+    if r is not None:
+        return r
     if path == "/api/cards":
         return 200, {"cards": app.cards.list(q=_q1(q, "q"), kind=_q1(q, "kind"), column=_q1(q, "column"),
                                              tag=_q1(q, "tag"), frm=_q1(q, "from"), to=_q1(q, "to"),
@@ -963,20 +964,37 @@ def de_texto_call(texto, marcar):
     return de_texto(texto, marcar=marcar)
 
 
+def _acao_ui(app: App, acao: str, alvo, fn):
+    """Mudança feita pela interface: registra a ação com as alterações (de/para) do card."""
+    from .historico import consumir_alteracoes
+    consumir_alteracoes()                                 # descarta sobras desta thread
+    r = fn()
+    try:
+        app.hist.add({"pedido": "Pela interface", "ferramenta": "ui", "acao": acao,
+                      "alvo": {"tipo": "card", "id": alvo(r)}, "resultado": "ok"})
+    except Exception:
+        pass
+    return r
+
+
 def v2_post(app: App, path: str, b: dict):
     """Rotas POST da v2. Devolve (código, objeto) ou None."""
+    r = v4_rotas(app, "POST", path, b)
+    if r is not None:
+        return r
     if path == "/api/cards":
-        return 200, app.cards.create(b)
+        return 200, _acao_ui(app, "criar_card", lambda c: c["id"], lambda: app.cards.create(b))
     if path == "/api/cards/move":
-        return 200, app.cards.move(b["id"], b.get("column"), b.get("order"), b.get("start"))
+        return 200, _acao_ui(app, "mover_card", lambda c: c["id"],
+                             lambda: app.cards.move(b["id"], b.get("column"), b.get("order"), b.get("start")))
     if path == "/api/cards/reorder":
         return 200, {"cards": app.cards.reorder(b["column"], list(b["ids"]))}
     if path.startswith("/api/cards/"):
         parts = path.split("/")
         if len(parts) == 5 and parts[4] == "delete":
-            return 200, {"ok": app.cards.delete(parts[3])}
+            return 200, {"ok": _acao_ui(app, "apagar_card", lambda _: parts[3], lambda: app.cards.delete(parts[3]))}
         if len(parts) == 4:
-            return 200, app.cards.update(parts[3], b)
+            return 200, _acao_ui(app, "editar_card", lambda _: parts[3], lambda: app.cards.update(parts[3], b))
         return None
     if path == "/api/command":
         if b.get("stream"):
@@ -985,7 +1003,17 @@ def v2_post(app: App, path: str, b: dict):
             return 200, app.command_stream(b.get("text", ""), b.get("context"))
         return 200, app.command.run(b.get("text", ""), b.get("context"))
     if path == "/api/command/confirm":
-        return 200, app.command.confirm(str(b.get("id", "")), bool(b.get("approve")), b.get("edits"))
+        from .historico import consumir_alteracoes
+        consumir_alteracoes()
+        cid = str(b.get("id", ""))
+        res = app.command.confirm(cid, bool(b.get("approve")), b.get("edits"))
+        try:
+            app.hist.atualizar(cid, resultado="cancelado" if res.get("cancelled") else
+                               ("erro" if res.get("ok") is False else "executado"),
+                               desfeito=True if res.get("undone") else None)
+        except Exception:
+            pass
+        return 200, res
     if path == "/api/triage":
         return 200, app.command.triage(b.get("text", ""), b.get("remetente"), b.get("assunto"))
     if path == "/api/ui":

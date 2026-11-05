@@ -445,8 +445,15 @@ class Command:
             while len(self.pending) > 200:
                 self.pending.popitem(last=False)
         try:
-            self.app.hist.add({"type": "command", "text": text[:500], "tool": out["tool"], "reply": out["reply"],
-                               "action": out["proposal"].get("action")})
+            prop = out.get("proposal") or {}
+            res0 = (out.get("results") or [None])[0]
+            alvo = {"tipo": "card", "id": res0["id"]} if isinstance(res0, dict) and res0.get("id") and \
+                prop.get("action") in ("create_card", "update_card") else (
+                {"tipo": "card", "id": prop["id"]} if prop.get("id") else None)
+            self.app.hist.add({"type": "command", "id": out["id"], "text": text[:200], "tool": out["tool"],
+                               "action": prop.get("action"), "alvo": alvo,
+                               "resultado": "executado" if out.get("executed") else
+                               ("aguardando confirmação" if out.get("needs_confirm") else "respondido")})
         except Exception:
             pass
         return out

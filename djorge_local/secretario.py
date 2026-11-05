@@ -56,6 +56,21 @@ def _hora_norm(h) -> Optional[str]:
     return f"{int(m.group(1)):02d}:{m.group(2) or '00'}"
 
 
+def pedido_no_card(card: Dict, ped: Dict) -> Dict:
+    """Card de um pedido: título = nome da tarefa (ou título curto), corpo = o texto central do pedido + quem/prazo/valor."""
+    c = dict(card)
+    c["title"] = (ped.get("tarefa") or ped.get("titulo") or c.get("title") or "")[:200]
+    linhas = [ped.get("texto_central") or ""]
+    extra = [f"Pedido por: {ped['quem']}" if ped.get("quem") else "",
+             f"Prazo: {data_fmt(ped['prazo'])}" if ped.get("prazo") else "",
+             f"Valor: {valor_fmt(ped['valor'])}" if ped.get("valor") else ""]
+    extra = [x for x in extra if x]
+    c["body"] = "\n".join([x for x in linhas if x] + ([""] + extra if extra else []))
+    if ped.get("prazo") and not c.get("due"):
+        c["due"] = ped["prazo"]
+    return c
+
+
 class Secretario:
     def __init__(self, app):
         from .automacoes import Automacoes
@@ -157,7 +172,7 @@ class Secretario:
 
     def triar(self, ev: Dict) -> Dict:
         from djorge.runtime.triagem import triar
-        eng = self._engine()
+        eng = self._engine() if self.conf.get("ativo") else None   # desligado: só lista e etiqueta por regras
         try:
             hoje = self.agora().date()
         except Exception:
@@ -211,11 +226,13 @@ class Secretario:
         e["código"] = e["codigo"]
         e["categoria"], e["prioridade"] = tri.get("categoria"), tri.get("prioridade")
         e["vip"] = self.eh_vip(e)
+        if tri.get("pedido"):
+            e["pedido"] = tri["pedido"]
         return e
 
     # ----------------------------------------------------------------------------------- processar --
     CAMPOS_EV = ("remetente", "remetente_email", "telefone", "empresa", "valor", "prazo", "prazo_iso", "hora",
-                 "data", "inicio_iso", "link", "codigo", "categoria", "prioridade", "vip")
+                 "data", "inicio_iso", "link", "codigo", "categoria", "prioridade", "vip", "pedido")
 
     def _sinais(self, tri: Dict, ev: Dict) -> List[Dict]:
         """Ações padrão quando nenhuma automação casou — só com sinais claros."""
@@ -233,6 +250,12 @@ class Secretario:
                         "campos": ["data", "hora", "link", "remetente"]})
         if "usar código" in acoes and ev.get("codigo"):
             out.append({"action": "notificar", "titulo": "Código {codigo}", "mensagem": "{app}: {title}"})
+        ped = tri.get("pedido")
+        if ped and "criar tarefa" in acoes and not out:
+            hoje = (ev.get("prazo_iso") or "")[:10] == self.agora().date().isoformat()
+            out.append({"action": "tarefa", "titulo": ped["tarefa"].replace("{", "(").replace("}", ")"),
+                        "pedido": True, "campos": ["remetente", "prazo", "valor"],
+                        "coluna": "hoje" if hoje or tri.get("prioridade") == "urgente" else "entrada"})
         if (ev.get("vip") or tri.get("prioridade") == "urgente") and not out:
             out.append({"action": "alerta", "titulo": "{remetente} — {title}", "campos": ["prazo", "valor", "link"],
                         "prioridade": 3 if ev.get("vip") else 2})
@@ -305,7 +328,11 @@ class Secretario:
 
     def _h_card(self, spec, ctx, prep):
         card = dict(prep["card"])
-        nid = (ctx.get("event") or {}).get("notif_id")
+        ev = ctx.get("event") or {}
+        ped = ev.get("pedido") if isinstance(ev.get("pedido"), dict) else None
+        if ped and spec.get("pedido"):
+            card = pedido_no_card(card, ped)
+        nid = ev.get("notif_id")
         if nid:
             card["source"] = {"integration": "secretario", "external_id": nid, "url": None}
         c = self.app.cards.create(card)

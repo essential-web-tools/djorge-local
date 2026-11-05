@@ -32,7 +32,7 @@ DEFAULTS = {
             "rate_rps": 50, "rate_burst": 200, "max_body_mb": 2},
     "connectors": {
         "http_inbox": {"enabled": True},                        # any program: POST /api/event
-        "notifications": {"enabled": False, "apps_allow": [], "apps_deny": [], "poll_s": 2},
+        "notifications": {"enabled": "auto", "apps_allow": [], "apps_deny": [], "poll_s": 2},
         "folder": {"enabled": False, "paths": [], "patterns": ["*.txt", "*.md", "*.eml", "*.pdf", "*.docx",
                                                                 "*.png", "*.jpg"], "poll_s": 3, "max_mb": 20},
         "clipboard": {"enabled": False, "poll_s": 1.5, "min_chars": 8},

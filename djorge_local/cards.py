@@ -18,8 +18,8 @@ from typing import Dict, List, Optional
 KINDS = ("tarefa", "evento", "lembrete", "nota", "lista", "mensagem")
 COLUMNS = ("entrada", "hoje", "fazendo", "aguardando", "feito")
 FIELDS = ("id", "kind", "title", "body", "column", "start", "end", "due", "all_day", "priority", "tags", "people",
-          "checklist", "recurrence", "color", "pinned", "done", "source", "order", "created", "updated")
-_JSON = ("tags", "people", "checklist", "source")
+          "checklist", "recurrence", "color", "pinned", "done", "source", "order", "created", "updated", "alertas")
+_JSON = ("tags", "people", "checklist", "source", "alertas")
 _SQLCOL = {"column": "col", "order": "ord", "end": "end_", "start": "start_"}   # nomes reservados no SQL
 
 
@@ -136,6 +136,9 @@ def normalize(data: Dict, base: Optional[Dict] = None) -> Dict:
                 raise ValueError("source: objeto {integration, external_id, url}")
             v = {kk: (str(v[kk])[:500] if v.get(kk) is not None else None)
                  for kk in ("integration", "external_id", "url")}
+        elif k == "alertas":                              # V2_SPEC_4: {quando|antes, repetir, ate, janela, canal}
+            from .alertas import normalizar_lista
+            v = normalizar_lista(v)
         c[k] = v
     c.setdefault("kind", "tarefa"); c.setdefault("title", ""); c.setdefault("body", "")
     c.setdefault("column", "feito" if c.get("done") else "entrada")
@@ -145,6 +148,7 @@ def normalize(data: Dict, base: Optional[Dict] = None) -> Dict:
     c.setdefault("people", []); c.setdefault("checklist", []); c.setdefault("recurrence", "")
     c.setdefault("color", ""); c.setdefault("pinned", False); c.setdefault("done", False)
     c.setdefault("source", {"integration": None, "external_id": None, "url": None})
+    c.setdefault("alertas", [])
     if "done" in data and "column" not in data:          # marcar feito leva para a coluna "feito"
         if c["done"]:
             c["column"] = "feito"
@@ -171,11 +175,13 @@ class Cards:
               id TEXT PRIMARY KEY, kind TEXT, title TEXT, body TEXT, col TEXT, start_ TEXT, end_ TEXT, due TEXT,
               all_day INTEGER, priority INTEGER, tags TEXT, people TEXT, checklist TEXT, recurrence TEXT, color TEXT,
               pinned INTEGER, done INTEGER, source TEXT, ord REAL, created TEXT, updated TEXT,
-              src_int TEXT, src_ext TEXT);
+              src_int TEXT, src_ext TEXT, alertas TEXT);
             CREATE INDEX IF NOT EXISTS cards_col ON cards(col, ord);
             CREATE INDEX IF NOT EXISTS cards_when ON cards(start_, due);
             CREATE INDEX IF NOT EXISTS cards_src ON cards(src_int, src_ext);
             """)
+            if "alertas" not in [r[1] for r in self.db.execute("PRAGMA table_info(cards)")]:
+                self.db.execute("ALTER TABLE cards ADD COLUMN alertas TEXT")     # bancos antigos
             self.db.commit()
 
     # ------------------------------------------------------------------ básico --

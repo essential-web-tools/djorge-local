@@ -1,4 +1,6 @@
-"""Connectors: where events come from. Each one is OFF until enabled in config.yaml.
+"""Connectors: where events come from. Each one is OFF until enabled in config.yaml, except
+notifications (enabled: "auto" = on in Windows; every system and app notification is listed, even with the
+secretary off).
 
   http_inbox     any program sends text: POST http://127.0.0.1:8765/api/event (token) - the universal connector
   notifications  system notifications: Windows (winsdk, asks your permission), Linux (D-Bus), macOS (read-only
@@ -81,32 +83,71 @@ class Notifications(Base):
         except Exception as e:
             self.status = f"erro: {type(e).__name__}: {e}"
 
-    def _windows(self):
-        import asyncio
+    @staticmethod
+    def _winrt():
+        """Os módulos do UserNotificationListener: winsdk (pacote único) ou winrt (pacotes por namespace:
+        winrt-Windows.UI.Notifications, winrt-Windows.UI.Notifications.Management, winrt-Windows.Foundation,
+        winrt-Windows.Foundation.Collections, winrt-Windows.ApplicationModel). Nada é importado no topo."""
         try:
             from winsdk.windows.ui.notifications import KnownNotificationBindings, NotificationKinds
             from winsdk.windows.ui.notifications.management import (UserNotificationListener,
                                                                     UserNotificationListenerAccessStatus)
+            return "winsdk", KnownNotificationBindings, NotificationKinds, UserNotificationListener, \
+                UserNotificationListenerAccessStatus
         except ImportError:
-            self.status = "instale: pip install winsdk"; return
-        lst = UserNotificationListener.current
+            pass
+        from winrt.windows.ui.notifications import KnownNotificationBindings, NotificationKinds   # type: ignore
+        from winrt.windows.ui.notifications.management import (UserNotificationListener,         # type: ignore
+                                                               UserNotificationListenerAccessStatus)
+        return "winrt", KnownNotificationBindings, NotificationKinds, UserNotificationListener, \
+            UserNotificationListenerAccessStatus
+
+    @staticmethod
+    def _ler_win(n, KB):
+        """UserNotification -> (app, [textos]) ou None."""
+        try:
+            app = n.app_info.display_info.display_name
+        except Exception:
+            app = ""
+        try:
+            b = n.notification.visual.get_binding(KB.toast_generic)
+            parts = [t.text for t in b.get_text_elements()] if b else []
+        except Exception:
+            return None
+        parts = [str(p) for p in parts if p and str(p).strip()]
+        return (app or "Windows"), parts
+
+    def _windows(self):
+        import asyncio
+        try:
+            lib, KB, NK, UNL, ST = self._winrt()
+        except ImportError:
+            self.status = "instale: pip install winsdk (ou winrt-Windows.UI.Notifications.Management)"; return
+        lst = UNL.current
         loop = asyncio.new_event_loop()
-        st = loop.run_until_complete(lst.request_access_async())
-        if st != UserNotificationListenerAccessStatus.ALLOWED:
+        try:
+            st = lst.get_access_status()
+            if st != ST.ALLOWED:
+                st = loop.run_until_complete(lst.request_access_async())       # pede o acesso (uma vez)
+        except Exception as e:
+            self.status = f"sem acesso às notificações: {type(e).__name__}: {e}"; return
+        if st != ST.ALLOWED:
             self.status = "acesso negado: Configurações > Privacidade > Notificações > permitir"; return
-        self.status = "ativo (Windows)"
+        self.status = f"ativo (Windows, {lib})"
         seen = set()
         while not self.stop_ev.is_set():
-            for n in loop.run_until_complete(lst.get_notifications_async(NotificationKinds.TOAST)):
+            try:
+                lista = loop.run_until_complete(lst.get_notifications_async(NK.TOAST))
+            except Exception as e:
+                self.status = f"erro ao ler: {type(e).__name__}"; self.sleep(10); continue
+            for n in lista:
                 if n.id in seen:
                     continue
                 seen.add(n.id)
-                try:
-                    app = n.app_info.display_info.display_name
-                    b = n.notification.visual.get_binding(KnownNotificationBindings.toast_generic)
-                    parts = [t.text for t in b.get_text_elements()] if b else []
-                except Exception:
+                r = self._ler_win(n, KB)
+                if not r:
                     continue
+                app, parts = r
                 if self._ok_app(app) and parts:
                     emit("notifications", "\n".join(parts[1:]) or parts[0], title=parts[0], app=app,
                          notif_win_id=n.id, sender=parts[0] if len(parts) > 1 else "")
@@ -321,11 +362,19 @@ REGISTRY = {"notifications": Notifications, "folder": Folder, "clipboard": Clipb
             "command": Command, "stdin": Stdin}
 
 
+def ligado(name: str, conf: dict) -> bool:
+    """enabled: true/false; as notificações vêm com "auto" (ligado no Windows, onde o Djorge roda)."""
+    v = (conf or {}).get("enabled", "auto" if name == "notifications" else False)
+    if v == "auto":
+        return name == "notifications" and platform.system() == "Windows"
+    return bool(v)
+
+
 def start_all(cfg) -> dict:
     running = {}
     for name, cls in REGISTRY.items():
         conf = cfg["connectors"].get(name) or {}
-        if conf.get("enabled"):
+        if ligado(name, conf):
             c = cls(cfg, conf)
             c.start()
             running[name] = c
