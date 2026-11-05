@@ -424,7 +424,9 @@ class Command:
         al = _alertas(text, agora) if hl is None and ui is None and not context.get("tool") and \
             tool not in ("cards", "listas", "calcular", "regra") else None
         if al:
-            if al.get("card") or (context.get("selected_card") and al["alertas"][0].get("antes") is not None):                       # "me avisa de 2 em 2 horas…": é alerta, sem perguntar
+            antes_foco = context.get("selected_card") and al["alertas"][0].get("antes") is not None
+            if antes_foco or (al.get("card") and (not dec["decidido"] or tool in ("nenhuma", "buscar", "datas_horas")
+                                                  or re.match(r"(?i)\s*me\s+(?:lembr|avis)", text))):                       # "me avisa de 2 em 2 horas…": é alerta, sem perguntar
                 tool = out["tool"] = "cards"
                 dec = dict(dec, tool="cards", decidido=True, perguntar=[])
         if hl is not None:
