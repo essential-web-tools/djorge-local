@@ -530,9 +530,11 @@ function initials(n) { return String(n || "?").split(/\s+/).map(x => x[0]).slice
 function kcardHTML(c) {
   const ck = c.checklist || [], dn = ck.filter(x => x.done).length;
   const src = c.source && c.source.integration;
-  return `<article class="kc ${c.done ? "done" : ""} ${SEL.has(c.id) ? "selc" : ""}" draggable="true" data-id="${esc(c.id)}" ${c.color ? `data-color style="--cc:${esc(c.color)}"` : ""} tabindex="0" aria-label="${esc(c.title)}" aria-roledescription="card arrastável">
+  const hl = hlCard(c);
+  return `<article class="kc ${c.done ? "done" : ""} ${SEL.has(c.id) ? "selc" : ""}" draggable="true" data-id="${esc(c.id)}" ${hl ? `data-hl style="--hl:${hlHex(hl.cor)}${c.color ? `;--cc:${esc(c.color)}` : ""}"` : c.color ? `data-color style="--cc:${esc(c.color)}"` : ""} tabindex="0" aria-label="${esc(c.title)}" aria-roledescription="card arrastável">
     ${c.pinned ? `<span class="pin" aria-label="Fixado">${ico("pin", "sm")}</span>` : ""}
-    <div class="kt" data-edit>${esc(cardTitle(c))}</div>
+    <div class="kt" data-edit>${hlSelo(hl)}${esc(cardTitle(c))}</div>
+    ${c.objetivo ? `<div class="kobj">${ico("target", "xs")} ${esc(c.objetivo)}</div>` : ""}
     ${c.body ? `<div class="kb">${esc(c.body)}</div>` : ""}
     <div class="km">
       <span class="tag">${ico(KIND_ICO[c.kind] || "check", "sm")} ${esc(KINDS[c.kind] || c.kind || "")}</span>
@@ -609,7 +611,7 @@ function cardCtx(e, id) {
   items.push({hr: 1}, {group: "Mover para"}, ...COLS.filter(x => many || x.id !== c.column).map(x => ({value: "mv:" + x.id, label: x.label, dot: x.c})),
     {hr: 1}, {value: "done", label: !many && c.done ? "Marcar como não feito" : "Marcar feito", icon: "check"},
     {group: "Prioridade"}, ...PRI.map((l, i) => ({value: "p:" + i, label: l, checked: many ? undefined : (+c.priority || 0) === i})).reverse());
-  if (!many) items.push({hr: 1}, {value: "pin", label: c.pinned ? "Desafixar" : "Fixar no topo", icon: "pin"}, {value: "today", label: "Para hoje", icon: "cal"}, {value: "tom", label: "Para amanhã", icon: "clock"}, {value: "copy", label: "Copiar título", icon: "list"});
+  if (!many) items.push({hr: 1}, {value: "hl", label: asList(UIX().destaques).some(d => d.tipo === "card" && d.alvo === c.id) ? "Tirar destaque" : "Destacar", icon: "star"}, {value: "pin", label: c.pinned ? "Desafixar" : "Fixar no topo", icon: "pin"}, {value: "today", label: "Para hoje", icon: "cal"}, {value: "tom", label: "Para amanhã", icon: "clock"}, {value: "copy", label: "Copiar título", icon: "list"});
   items.push({hr: 1}, {value: "del", label: many ? `Apagar ${ids.length}` : "Apagar", icon: "trash", danger: true, kbd: "Del"});
   ctxMenu(e, items, async v => {
     if (v === "open") openCard(id); else if (v === "sel") { SEL.add(id); paintSel(); }
@@ -618,6 +620,7 @@ function cardCtx(e, id) {
     else if (v === "done") many ? bulkPatch(ids, {done: true, column: "feito"}, "Marcados como feitos") : saveCard(id, {done: !c.done, column: c.done ? "hoje" : "feito"}, true).then(render);
     else if (v.startsWith("p:")) many ? bulkPatch(ids, {priority: +v.slice(2)}, "Prioridade ajustada") : saveCard(id, {priority: +v.slice(2)}, true).then(render);
     else if (v === "pin") saveCard(id, {pinned: !c.pinned}, true).then(render);
+    else if (v === "hl") hlCardToggle(c);
     else if (v === "today" || v === "tom") { const d = addDays(startDay(new Date()), v === "tom" ? 1 : 0); const old = cardDate(c); d.setHours(old ? old.getHours() : 9, old ? old.getMinutes() : 0);
       saveCard(id, {[c.due && !c.start ? "due" : "start"]: isoLocal(d), column: c.column === "entrada" ? "hoje" : c.column}, true).then(() => { render(); toast(`Marcado para ${fmtDT(d, {rel: true})}`); }); }
     else if (v === "copy") copyText(cardTitle(c));
@@ -647,7 +650,8 @@ function openCard(id, draft) {
     ${draft ? "" : `<div class="seg drtabs" role="tablist" aria-label="Seções do card"><button role="tab" aria-selected="true" data-drt="det">Detalhes</button><button role="tab" aria-selected="false" data-drt="alt">Alterações</button></div>`}
     <div id="dr-altp" class="altp" hidden></div><div id="dr-det">
     <label class="sr" for="dr-title">Título</label><input class="ttl" id="dr-title" value="${esc(x.title || "")}" placeholder="Título do card">
-    <div class="field" style="margin-top:12px"><label for="dr-body">Descrição</label><textarea class="ta" id="dr-body" rows="3" placeholder="Detalhes, links, observações…">${esc(x.body || "")}</textarea></div>
+    <div class="field dobj" style="margin-top:12px"><label for="dr-obj">${ico("target", "sm")} Objetivo</label><input class="inp" id="dr-obj" maxlength="300" value="${esc(x.objetivo || "")}" placeholder="Para que serve esta tarefa?"></div>
+    <div class="field"><label for="dr-body">${ico("note", "sm")} Descrição</label><textarea class="ta" id="dr-body" rows="4" placeholder="Detalhes, links, observações… (aceita **negrito**, listas com -)">${esc(x.body || "")}</textarea></div>
     <div class="grid2"><div class="field"><span class="lbl">Tipo</span>${selHTML("kind", Object.entries(KINDS), x.kind || "tarefa", "Tipo")}</div>
       <div class="field"><span class="lbl">Coluna</span>${selHTML("col", COLS.map(c => [c.id, c.label]), x.column || "entrada", "Coluna")}</div></div>
     <div class="field"><span class="lbl">Início</span><div class="dt"><input type="date" id="dr-sd" value="${sd ? ymd(sd) : ""}" aria-label="Data de início"><input type="time" id="dr-st" value="${sd && !x.all_day ? hm(sd) : ""}" aria-label="Hora de início">${swHTML("dr-allday", x.all_day, "Dia todo")}</div>
@@ -688,7 +692,7 @@ function openCard(id, draft) {
   if ($("#dr-del", d)) $("#dr-del", d).onclick = () => { close(); deleteCard(x.id); };
   $("#dr-save", d).onclick = async () => {
     const sdv = $("#dr-sd", d).value, stv = $("#dr-st", d).value, ddv = $("#dr-dd", d).value, dtv = $("#dr-dt", d).value, allday = $("#dr-allday", d).checked;
-    const patch = {title: $("#dr-title", d).value.trim() || "Sem título", body: $("#dr-body", d).value, kind: selVal(d, "kind"), column: selVal(d, "col"),
+    const patch = {title: $("#dr-title", d).value.trim() || "Sem título", objetivo: $("#dr-obj", d).value.trim(), body: $("#dr-body", d).value, kind: selVal(d, "kind"), column: selVal(d, "col"),
       priority: +segVal(d, "pri") || 0, tags: x.tags || [], people: x.people || [], checklist: (x.checklist || []).filter(i => i.text.trim()),
       recurrence: $("#dr-rec", d).value.trim(), alertas: x.alertas || [], color: x.color || "", pinned: !!x.pinned, all_day: allday,
       start: sdv ? `${sdv}T${allday || !stv ? "00:00" : stv}:00` : null, due: ddv ? `${ddv}T${dtv || "00:00"}:00` : null};
@@ -789,6 +793,39 @@ function weatherHTML(w) {
       <dl class="wxkv"><div><dt>Sensação</dt><dd>${Math.round(cu.apparent_temperature)}°</dd></div><div><dt>Umidade</dt><dd>${Math.round(cu.relative_humidity_2m)}%</dd></div><div><dt>Vento</dt><dd>${Math.round(cu.wind_speed_10m)} km/h</dd></div></dl></div>
     <div class="wdays">${days}</div></section>`;
 }
+/* ----- destaques (o agente edita a interface: lista fechada, validada no servidor) ----- */
+const HL_ICO = {estrela: "star", coracao: "heart", alerta: "warn", pino: "pin", sino: "bell", fogo: "flame"};
+const UIX = () => (S.prefs && S.prefs._server) || {};
+const hlHex = cor => (ACCENTS.find(a => a[0] === cor) || ACCENTS[0] || [0, "#b56576"])[1];
+const nrm = x => String(x || "").toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/\s+/g, " ").trim();
+function hlAtivos() { const now = isoLocal(new Date()).slice(0, 16);
+  return asList(UIX().destaques).filter(d => !d.ate || (d.ate.length > 10 ? d.ate : d.ate + "T23:59") >= now); }
+function hlOk(st) { if (!st) return null; const now = isoLocal(new Date()).slice(0, 16); return !st.ate || (st.ate.length > 10 ? st.ate : st.ate + "T23:59") >= now ? st : null; }
+function hlCard(c) { if (!c) return null;
+  for (const d of hlAtivos()) { if (d.tipo === "card") { const a = d.alvo;
+      if (a === c.id || (a === "@urgentes" && +c.priority >= 3 && !c.done) || (a === "@importantes" && +c.priority >= 2 && !c.done) || (a === "@atrasadas" && isLate(c)) || (a === "@hoje" && !c.done && cardDate(c) && sameDay(cardDate(c), new Date()))) return {...d.estilo, _d: d}; }
+    if (d.tipo === "etiqueta" && (c.tags || []).some(t => nrm(t) === nrm(d.alvo))) return {...d.estilo, _d: d};
+    if (d.tipo === "remetente" && c.kind === "mensagem" && nrm([msgPerson(c), c.title].join(" ")).includes(nrm(d.alvo))) return {...d.estilo, _d: d}; }
+  return null; }
+function hlNotif(n) { if (!n) return null; const own = hlOk(n.destaque); if (own) return own;
+  const quem = nrm([n.remetente, n.titulo || n.title].join(" "));
+  for (const d of hlAtivos()) { if (d.tipo === "remetente" && nrm(d.alvo) && quem.includes(nrm(d.alvo))) return {...d.estilo, _d: d};
+    if (d.tipo === "etiqueta" && n.etiqueta && nrm(n.etiqueta) === nrm(d.alvo)) return {...d.estilo, _d: d}; }
+  return null; }
+const hlAttr = h => h ? ` data-hl style="--hl:${hlHex(h.cor)}"` : "";
+const hlSelo = h => h ? `<span class="hlselo" aria-label="Em destaque" data-tip="Em destaque">${ico(HL_ICO[h.icone] || "star", "xs")}</span>` : "";
+async function setUIX(patch, msg) {
+  try { const r = await api("/api/ui", patch); S.prefs = normPrefs({prefs: r.prefs, choices: S.choices}); applyPrefs(S.prefs); render(); if (msg) toast(msg); } catch (e) { toast(human(e), "bad"); } }
+function hlCardToggle(c) { const ds = asList(UIX().destaques), id = "card-" + String(c.id).replace(/[^\w-]/g, "");
+  if (ds.some(d => d.tipo === "card" && d.alvo === c.id)) return setUIX({destaques: ds.filter(d => !(d.tipo === "card" && d.alvo === c.id))}, "Destaque tirado");
+  hlPick(cor => setUIX({destaques: [...ds, {id, tipo: "card", alvo: c.id, estilo: {cor, icone: "estrela", fixar: true}}]}, "Em destaque")); }
+function hlPick(cb, anchorEv) { const items = ACCENTS.map(([k, hex]) => ({value: k, label: titleCase(k), dot: hex}));
+  if (anchorEv) ctxMenu(anchorEv, [{group: "Cor do destaque"}, ...items], cb); else cb("rosa"); }
+async function hlNotifToggle(n, ev) {
+  const on = !!hlOk(n.destaque), go = async body => { const r = await tryApi("/api/notificacoes/" + encodeURIComponent(n.id), {destaque: body}); if (r) { n.destaque = r.destaque; toast(body ? "Em destaque" : "Destaque tirado"); S._inicioT = 0; render(); } };
+  if (on) return go(null);
+  hlPick(cor => go({cor, icone: "estrela", fixar: true}), ev); }
+
 /* ----- dados do Início ----- */
 async function loadInicio() {
   try { S.inicio = await api("/api/inicio"); S.inicioOk = true; } catch (e) { S.inicioOk = false; }
@@ -808,25 +845,29 @@ function evRowHTML(c) { c = byCardId(c); const d = cardDate(c) || parseD(c.start
 function msgPerson(m) { return titleCase(m.remetente || m.de || (m.people && m.people[0] && (m.people[0].nome || m.people[0].email)) || (m.source && m.source.integration) || "Alguém"); }
 function msgRowHTML(m) {
   m = byCardId(m); const who = msgPerson(m), d = parseD(m.t || m.data || m.updated || m.created), src = (m.source && m.source.integration) || m.canal || m.app || "";
-  return `<div class="mrow ${m.done ? "done" : ""} ${m.lida === false || (!m.done && (m.priority || 0) >= 3) ? "unread" : ""}" ${m.id ? `data-id="${esc(m.id)}" data-ctx="msg"` : ""} tabindex="0" role="button" aria-label="${esc(who)}: ${esc(m.titulo || m.title || "")}">
+  const hl = hlCard(m);
+  return `<div class="mrow ${m.done ? "done" : ""} ${m.lida === false || (!m.done && (m.priority || 0) >= 3) ? "unread" : ""}" ${m.id ? `data-id="${esc(m.id)}" data-ctx="msg"` : ""}${hlAttr(hl)} tabindex="0" role="button" aria-label="${esc(who)}: ${esc(m.titulo || m.title || "")}">
     <span class="av" aria-hidden="true">${esc(initials(who))}</span>
-    <span class="mbody"><span class="mtop"><b>${esc(who)}</b>${src ? `<span class="tag">${esc(SRC_NAME[src] || titleCase(src))}</span>` : ""}${m.priority >= 2 ? `<span class="pri p${m.priority}"><i></i>${esc(PRI[m.priority])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
+    <span class="mbody"><span class="mtop"><b>${esc(who)}</b>${hlSelo(hl)}${src ? `<span class="tag">${esc(SRC_NAME[src] || titleCase(src))}</span>` : ""}${m.priority >= 2 ? `<span class="pri p${m.priority}"><i></i>${esc(PRI[m.priority])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
       <span class="msubj">${esc(m.titulo || cardTitle(m))}</span>${m.body || m.texto || m.trecho ? `<span class="mtext">${esc(String(m.body || m.texto || m.trecho).slice(0, 180))}</span>` : ""}</span></div>`;
 }
 const SRC_NAME = {google: "Gmail", microsoft: "Outlook", whatsapp: "WhatsApp", gemini: "Gemini", local: "Djorge", notifications: "Notificação"};
 function notifRowHTML(n, compact) {
   const app = titleCase(n.app || n.fonte || "Windows"), d = parseD(n.t || n.data || n.recebida || n.created), sug = asList(n.acoes_sugeridas || n.sugestoes), done = asList(n.acoes_tomadas || n.acoes);
-  return `<div class="nrow ${n.lida ? "" : "unread"} ${NSEL.has(String(n.id)) ? "selc" : ""}" data-nid="${esc(n.id)}" data-ctx="notif" tabindex="0">
+  const hl = hlNotif(n), it = n.intencao || {};
+  return `<div class="nrow ${n.lida ? "" : "unread"} ${NSEL.has(String(n.id)) ? "selc" : ""}" data-nid="${esc(n.id)}" data-ctx="notif"${hlAttr(hl)} tabindex="0">
     ${compact ? "" : `<button type="button" class="cbx" role="checkbox" aria-checked="${NSEL.has(String(n.id))}" data-nsel="${esc(n.id)}" aria-label="Selecionar">${ico("check")}</button>`}
     <span class="av app" aria-hidden="true">${esc((app[0] || "?").toUpperCase())}</span>
-    <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${(n.prioridade || 0) >= 2 ? `<span class="pri p${Math.min(3, n.prioridade)}"><i></i>${esc(PRI[Math.min(3, n.prioridade)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
+    <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${hlSelo(hl)}${(n.contagem || 1) > 1 ? `<span class="tag rep" data-tip="Chegou ${n.contagem} vezes">×${n.contagem}</span>` : ""}${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${(n.prioridade || 0) >= 2 ? `<span class="pri p${Math.min(3, n.prioridade)}"><i></i>${esc(PRI[Math.min(3, n.prioridade)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
       <span class="msubj">${/^\s*[⚠✅❗❌]/.test(n.titulo || n.title || "") ? ico("warn", "xs") + " " : ""}${esc(stripEmo(n.titulo || n.title || ""))}</span>${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
       ${pedidoHTML(n)}
       ${compact ? "" : `${(n.regra || asList(n.regras).length) ? `<span class="nrule">${ico("tree", "sm")} Regra: ${esc([].concat(n.regra || n.regras).map(x => typeof x === "object" ? (x.nome || x.name || "") : x).join(", "))}</span>` : ""}
-      ${done.length ? `<span class="nacts">${done.map(a => `<span class="chip ok">${ico("check", "sm")}${esc(actLabel(a))}</span>`).join("")}</span>` : ""}
-      ${sug.length ? `<span class="nacts">${sug.map((a, i) => `<button type="button" class="chip sug" data-nact="${esc(n.id)}" data-ai="${i}" data-tip="Aprovar e fazer agora">${ico("spark", "sm")}${esc(actLabel(a))}</button>`).join("")}</span>` : ""}`}</span></div>`;
+      ${done.length && !it.fez ? `<span class="nacts">${done.map(a => `<span class="chip ok">${ico("check", "sm")}${esc(actLabel(a))}</span>`).join("")}</span>` : ""}
+      ${it.fez ? `<span class="nint fez">${ico("check", "sm")}<span>${esc(it.fez)}</span>${it.pode_desfazer ? `<button type="button" class="btn xs ghost" data-nundo="${esc(n.id)}">${ico("undo", "xs")} Desfazer</button>` : ""}</span>` : ""}
+      ${sug.length ? `<span class="nint quer">${ico("spark", "sm")}<span>${esc(it.quer || ("O " + AG() + " quer: " + sug.map(actLabel).join(" · ")))}${it.por_que ? ` <small>· ${esc(it.por_que)}</small>` : ""}</span></span>
+        <span class="nacts">${sug.map((a, i) => `<span class="chip sug two"><button type="button" data-nact="${esc(n.id)}" data-ai="${i}" data-tip="Aprovar e fazer agora">${ico("check", "sm")}${esc((asList(it.itens)[i] || {}).texto || actLabel(a))}</button><button type="button" class="nx" data-nrec="${esc(n.id)}" data-ai="${a && a.i != null ? a.i : i}" aria-label="Recusar" data-tip="Recusar">${ico("x", "xs")}</button></span>`).join("")}${sug.length > 1 ? `<button type="button" class="btn xs" data-nall="${esc(n.id)}">${ico("check", "xs")} Aprovar tudo</button>` : ""}</span>` : ""}`}</span></div>`;
 }
-const ACT_PT = {criar_card: "Criar card", alerta: "Criar alerta", tarefa: "Criar tarefa", notificar: "Avisar", etiquetar: "Etiquetar", arquivar: "Arquivar", abrir_app: "Abrir app", responder_sugestao: "Sugerir resposta", ignorar: "Ignorar"};
+const ACT_PT = {destacar: "Pôr em destaque", criar_card: "Criar card", alerta: "Criar alerta", tarefa: "Criar tarefa", notificar: "Avisar", etiquetar: "Etiquetar", arquivar: "Arquivar", abrir_app: "Abrir app", responder_sugestao: "Sugerir resposta", ignorar: "Ignorar"};
 const actLabel = a => typeof a === "string" ? (ACT_PT[a] || titleCase(a.replace(/_/g, " "))) : (a.rotulo || a.label || a.texto || (a.titulo && (ACT_PT[a.action || a.acao] || "Fazer") + ": " + a.titulo) || ACT_PT[a.acao || a.action] || titleCase(String(a.acao || a.action || "ação").replace(/_/g, " ")));
 const actKey = a => typeof a === "string" ? a : (a.acao || a.action || a.id);
 const TAG_COLORS = ["var(--rose)", "var(--info)", "var(--ok)", "var(--warn)", "#7d5a86", "#c0714f", "#4f7d96"];
@@ -854,23 +895,36 @@ function viewHome() {
   const evs = asList(I.proximos_eventos).length ? asList(I.proximos_eventos) : L.proximos_eventos;
   const msgs = asList(I.mensagens_importantes).concat(asList(I.mensagens_cards)), notes = asList(I.notificacoes_recentes);
   const late = S.cards.filter(isLate).length, today = S.cards.filter(c => !c.done && ((cardDate(c) && sameDay(cardDate(c), now)) || c.column === "hoje")).length;
+  const U = UIX(), ocultas = asList(U.inicio_ocultas), ordem = asList(U.inicio_secoes).length ? asList(U.inicio_secoes) : ["destaques", "tarefas", "eventos", "mensagens", "notificacoes"];
+  const hlSec = U.secao_destaque || "", hlSecSt = (hlAtivos().find(d => d.tipo === "secao" && d.alvo === hlSec) || {}).estilo || {cor: "rosa"};
+  const wrapHl = (k, html) => k === hlSec ? html.replace('<section class="dcard dl">', `<section class="dcard dl hlsec" data-hl style="--hl:${hlHex(hlSecSt.cor)}">`) : html;
+  const secHTML = {
+    tarefas: () => wrapHl("tarefas", dlist("Tarefas mais relevantes", "check", tasks.slice(0, 5), c => trowHTML(byCardId(c)), "Nada urgente. Peça “pagar a luz dia 10” no campo abaixo.", "tarefas", tasks.length)),
+    eventos: () => wrapHl("eventos", dlist("Próximos eventos", "cal", evs.slice(0, 5), evRowHTML, "Agenda livre nos próximos dias.", "agenda")),
+    mensagens: () => wrapHl("mensagens", dlist("Mensagens importantes", "msg", msgs.slice(0, 4), msgRowHTML, "Nenhuma mensagem importante agora.", "mensagens")),
+    notificacoes: () => wrapHl("notificacoes", dlist("Notificações recentes", "bell", notes.slice(0, 5), n => notifRowHTML(n, true), S.inicioOk ? "Sem notificações novas." : "As notificações do Windows aparecem aqui quando o secretário estiver ligado.", "notificacoes"))};
+  // "Em destaque": o que o agente (ou você) pôs em destaque — notificações, mensagens e cards
+  const hlItems = []; const seen = new Set();
+  asList(I.destaques).forEach(n => { if (!seen.has("n" + n.id)) { seen.add("n" + n.id); hlItems.push({t: "n", x: n, h: hlNotif(n) || n.destaque}); } });
+  S.cards.forEach(c => { const h = hlCard(c); if (h && !c.done && !seen.has("c" + c.id)) { seen.add("c" + c.id); hlItems.push({t: "c", x: c, h}); } });
+  hlItems.sort((a, b) => (!!(b.h && b.h.fixar) - !!(a.h && a.h.fixar)));
+  const secs = ordem.filter(k => k !== "destaques" && !ocultas.includes(k)).sort((a, b) => (b === hlSec) - (a === hlSec));
+  const hlBlock = ocultas.includes("destaques") || !hlItems.length ? "" : `<section class="dcard dl hlbox"><header>${ico("star", "sm")}<h3>Em destaque</h3><span class="cnt">${hlItems.length}</span><span class="sp"></span><button class="btn sm ghost" id="hlclr" data-tip="Tirar todos os destaques da interface">Tirar destaques</button></header>
+      <div class="dlist">${hlItems.slice(0, 8).map(i => i.t === "n" ? notifRowHTML(i.x, true) : i.x.kind === "mensagem" ? msgRowHTML(i.x) : trowHTML(i.x)).join("")}</div></section>`;
   const frase = I.resumo_frase || (S.cardsLoaded ? `${today ? `${today} coisa${today > 1 ? "s" : ""} para hoje` : "Nada marcado para hoje"}${late ? ` · ${late} atrasada${late > 1 ? "s" : ""}` : ""}${evs.length ? ` · próximo: ${cardTitle(byCardId(evs[0]))}` : ""}.` : "");
   v.innerHTML = `<div class="view-inner dash">
     ${S.thread.length ? `<div class="backconv"><span>${ico("msg", "sm")} Você tem uma conversa em andamento.</span><button class="btn sm" id="bconv">Voltar à conversa</button></div>` : ""}
     <div class="dhero"><img src="/static/icon.svg" alt=""><div><h1>${greet()}${USER() ? `, ${esc(USER())}` : ""}, <em>o que vamos organizar?</em></h1><p>${esc(frase)}</p></div></div>
     ${noModel ? inviteHTML() : ""}
     <div class="dtop">${clockHTML()}${weatherHTML(S.wx)}</div>
-    <div class="dgrid">
-      ${dlist("Tarefas mais relevantes", "check", tasks.slice(0, 5), c => trowHTML(byCardId(c)), "Nada urgente. Peça “pagar a luz dia 10” no campo abaixo.", "tarefas", tasks.length)}
-      ${dlist("Próximos eventos", "cal", evs.slice(0, 5), evRowHTML, "Agenda livre nos próximos dias.", "agenda")}
-      ${dlist("Mensagens importantes", "msg", msgs.slice(0, 4), msgRowHTML, "Nenhuma mensagem importante agora.", "mensagens")}
-      ${dlist("Notificações recentes", "bell", notes.slice(0, 5), n => notifRowHTML(n, true), S.inicioOk ? "Sem notificações novas." : "As notificações do Windows aparecem aqui quando o secretário estiver ligado.", "notificacoes")}
-    </div>
+    ${hlBlock}
+    <div class="dgrid">${secs.map(k => secHTML[k] ? secHTML[k]() : "").join("")}</div>
     ${I.automacoes ? `<p class="hint dfoot">${ico("tree", "sm")} ${I.automacoes} automaç${I.automacoes > 1 ? "ões" : "ão"} cuidando das coisas para você.</p>` : ""}
   </div>`;
   const bc = $("#bconv", v); if (bc) bc.onclick = () => { S.showPanel = false; render(); };
   $$("[data-go]", v).forEach(b => b.onclick = () => go(b.dataset.go));
-  $$(".nrow", v).forEach(r => r.onclick = () => go("notificacoes"));
+  $$(".nrow", v).forEach(r => { r.onclick = () => go("notificacoes"); r.oncontextmenu = e => { const n = asList(I.destaques).concat(notes).find(x => String(x.id) === r.dataset.nid); if (n) ctxMenu(e, [{value: "hl", label: hlOk(n.destaque) ? "Tirar destaque" : "Destacar", icon: "star"}, {value: "go", label: "Ver nas notificações", icon: "bell"}], x => x === "hl" ? hlNotifToggle(n, e) : go("notificacoes")); }; });
+  const hc = $("#hlclr", v); if (hc) hc.onclick = async () => { await setUIX({destaques: [], secao_destaque: ""}); await Promise.all(asList(I.destaques).filter(n => n.destaque).map(n => api("/api/notificacoes/" + encodeURIComponent(n.id), {destaque: null}).catch(() => null))); S._inicioT = 0; loadInicio().then(render); toast("Destaques tirados"); };
   $$(".mrow[data-id],.erow[data-id]", v).forEach(r => { r.onclick = () => openCard(r.dataset.id); r.onkeydown = e => { if (e.key === "Enter") openCard(r.dataset.id); };
     r.oncontextmenu = e => cardCtx(e, r.dataset.id); });
   wireInvite(v); wireCards(v); wireClock(v);
@@ -879,9 +933,10 @@ function viewHome() {
   if (S.wx === undefined && !S._wxLoading) { S._wxLoading = true; getWeather().then(w => { S.wx = w; S._wxLoading = false; if (S.view === "inicio" && (!S.thread.length || S.showPanel)) render(); }); }
 }
 function trowHTML(c) {
-  return `<div class="trow ${c.done ? "done" : ""} ${SEL.has(c.id) ? "selc" : ""}" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="${esc(c.title)}">
+  const hl = hlCard(c);
+  return `<div class="trow ${c.done ? "done" : ""} ${SEL.has(c.id) ? "selc" : ""}" data-id="${esc(c.id)}"${hlAttr(hl)} tabindex="0" role="button" aria-label="${esc(c.title)}">
     <button type="button" class="cbx" role="checkbox" aria-checked="${!!c.done}" data-id="${esc(c.id)}" aria-label="Concluir">${ico("check")}</button>
-    <div class="tt"><b>${esc(cardTitle(c))}</b><small>${esc(KINDS[c.kind] || "")}${cardDate(c) ? " · " + esc(whenTxt(c)) : ""}${(c.tags || []).length ? " · " + c.tags.map(t => "#" + esc(t)).join(" ") : ""}</small></div>
+    <div class="tt"><b>${hlSelo(hl)}${esc(cardTitle(c))}</b>${c.objetivo ? `<small class="tobj">${ico("target", "xs")} ${esc(c.objetivo)}</small>` : ""}<small>${esc(KINDS[c.kind] || "")}${cardDate(c) ? " · " + esc(whenTxt(c)) : ""}${(c.tags || []).length ? " · " + c.tags.map(t => "#" + esc(t)).join(" ") : ""}</small></div>
     ${c.priority ? `<span class="pri p${c.priority}"><i></i>${esc(PRI[c.priority])}</span>` : ""}
     ${isLate(c) ? `<span class="tag" style="background:var(--bad-soft);color:var(--bad)">atrasado</span>` : ""}</div>`;
 }
@@ -1061,8 +1116,11 @@ function msgCtx(e, id) {
   const who = msgPerson(c);
   ctxMenu(e, [{value: "open", label: "Abrir", icon: "edit"}, {value: "reply", label: `Responder a ${who}`, icon: "send"}, {value: "wa", label: "Abrir no WhatsApp", icon: "msg"},
     {value: "task", label: "Virar tarefa", icon: "check"}, {value: "done", label: c.done ? "Marcar como aberta" : "Marcar como respondida", icon: "check"},
+    {value: "hl", label: hlCard(c) ? "Tirar destaque" : "Destacar", icon: "star"}, {value: "hlp", label: `Destacar tudo de ${who}`, icon: "heart"},
     {group: "Prioridade"}, ...PRI.map((l, i) => ({value: "p:" + i, label: l, checked: (+c.priority || 0) === i})).reverse(), {hr: 1}, {value: "copy", label: "Copiar texto", icon: "list"}, {value: "del", label: "Apagar", icon: "trash", danger: true}], v => {
     if (v === "open") openCard(id);
+    if (v === "hl") { const h = hlCard(c); if (h && h._d && h._d.tipo !== "card") setUIX({destaques: asList(UIX().destaques).filter(d => d.id !== h._d.id)}, "Destaque tirado"); else hlCardToggle(c); }
+    if (v === "hlp") { const ds = asList(UIX().destaques).filter(d => !(d.tipo === "remetente" && nrm(d.alvo) === nrm(who))); hlPick(cor => setUIX({destaques: [...ds, {tipo: "remetente", alvo: who, estilo: {cor, icone: "coracao", fixar: true}}]}, `Mensagens de ${who} em destaque`), e); }
     if (v === "reply") { setMode("auto"); setInput(`#${who.split(" ")[0].toLowerCase()} &&`); const i = inp(); i.setSelectionRange(i.value.length - 1, i.value.length - 1); }
     if (v === "wa") openWhatsApp(phoneOf(c), "");
     if (v === "task") saveCard(id, {kind: "tarefa", column: "hoje"}, true).then(() => { render(); toast("Virou tarefa para hoje"); });
@@ -1138,6 +1196,10 @@ function wireNotifRows(v) {
     r.onkeydown = e => { if (e.key === "Enter" && e.target === r) r.click(); };
     r.oncontextmenu = e => notifCtx(e, id); });
   $$("[data-nsel]", v).forEach(b => b.onclick = e => { e.stopPropagation(); toggleNSel(b.dataset.nsel); });
+  const nAct = async (b, id, body, msg) => { b.setAttribute("aria-busy", "true"); const r = await tryApi(`/api/notificacoes/${encodeURIComponent(id)}/acao`, body); if (r) { toast(msg); loadCards(true); viewNotifs(); } else b.removeAttribute("aria-busy"); };
+  $$("[data-nrec]", v).forEach(b => b.onclick = e => { e.stopPropagation(); nAct(b, b.dataset.nrec, {acao: "recusar", i: +b.dataset.ai}, "Sugestão recusada"); });
+  $$("[data-nall]", v).forEach(b => b.onclick = e => { e.stopPropagation(); nAct(b, b.dataset.nall, {acao: "aprovar"}, "Tudo feito"); });
+  $$("[data-nundo]", v).forEach(b => b.onclick = e => { e.stopPropagation(); nAct(b, b.dataset.nundo, {acao: "desfazer"}, "Desfeito"); });
   $$("[data-nact]", v).forEach(b => b.onclick = async e => { e.stopPropagation(); const n = NOTIFS.find(x => String(x.id) === b.dataset.nact); if (!n) return;
     const a = asList(n.acoes_sugeridas || n.sugestoes)[+b.dataset.ai]; b.setAttribute("aria-busy", "true");
     const r = await tryApi(`/api/notificacoes/${encodeURIComponent(n.id)}/acao`, {acao: "aprovar", i: a && a.i != null ? a.i : +b.dataset.ai});
@@ -1169,11 +1231,12 @@ function notifCtx(e, id) {
   const n = NOTIFS.find(x => String(x.id) === String(id)); if (!n) return;
   const sug = asList(n.acoes_sugeridas || n.sugestoes);
   ctxMenu(e, [...(sug.length ? [{group: "Sugerido"}, ...sug.map((a, i) => ({value: "a:" + i, label: actLabel(a), icon: "spark"})), {hr: 1}] : []),
-    {value: "read", label: n.lida ? "Marcar como não lida" : "Marcar como lida", icon: "check"}, {value: "tag", label: "Etiquetar…", icon: "hash"}, {value: "card", label: "Criar card a partir disso", icon: "board"},
+    {value: "read", label: n.lida ? "Marcar como não lida" : "Marcar como lida", icon: "check"}, {value: "hl", label: hlOk(n.destaque) ? "Tirar destaque" : "Destacar", icon: "star"}, {value: "tag", label: "Etiquetar…", icon: "hash"}, {value: "card", label: "Criar card a partir disso", icon: "board"},
     {value: "sel", label: NSEL.has(String(id)) ? "Tirar da seleção" : "Selecionar", icon: "check"}, {group: "Ignorar notificações como esta"}, ...(n.app ? [{value: "ig:app", label: `Deste app (${titleCase(n.app)})`, icon: "x"}] : []), ...(n.remetente ? [{value: "ig:remetente", label: `Deste remetente (${titleCase(n.remetente)})`, icon: "x"}] : []), ...(n.etiqueta ? [{value: "ig:tipo", label: `Deste tipo (${titleCase(n.etiqueta)})`, icon: "x"}] : []), {hr: 1},
     {value: "rule", label: "Criar automação parecida…", icon: "tree"}, {hr: 1}, {value: "copy", label: "Copiar texto", icon: "list"}], async v => {
     if (v.startsWith("a:")) { const a = sug[+v.slice(2)]; const r = await tryApi(`/api/notificacoes/${encodeURIComponent(n.id)}/acao`, {acao: "aprovar", i: a && a.i != null ? a.i : +v.slice(2)}); if (r) { toast(`${actLabel(a)}: feito`); loadCards(true); viewNotifs(); } }
     if (v === "read") markNotifs([n.id], !n.lida);
+    if (v === "hl") hlNotifToggle(n, e);
     if (v === "tag") tagMenu(null, e, t => tryApi("/api/notificacoes/" + encodeURIComponent(n.id), {etiqueta: t}).then(r => { if (r) { toast(`Etiqueta “${titleCase(t)}”`); viewNotifs(); } }));
     if (v === "card") { const c = await createCard({kind: "tarefa", title: n.titulo || n.title || titleCase(n.app || "Notificação"), body: n.texto || n.text || "", column: "entrada", tags: n.etiqueta ? [n.etiqueta] : []}); if (c) openCard(c.id); }
     if (v === "sel") toggleNSel(id);
@@ -1601,7 +1664,7 @@ function resultCard(r, text) {
   const editable = ["create_card", "update_card", "send_message", "abrir_app", "open_app"].includes(p.action);
   const confirmable = p.action && !["none", "search", "calc", "time", "show_agenda", "web", "web_search"].includes(p.action);
   if (p.action === "ui" && p.patch) { state.prevServer = {...(S.prefs._server || {})};
-    api("/api/ui").then(u => { S.prefs = normPrefs(u); applyPrefs(S.prefs); if (S.view !== "inicio") render(); }).catch(() => {}); }
+    api("/api/ui").then(u => { S.prefs = normPrefs(u); applyPrefs(S.prefs); if (S.view !== "inicio" || S.showPanel || !S.thread.length) render(); else if ("destaques" in (p.patch || {}) || "inicio_secoes" in (p.patch || {}) || "inicio_ocultas" in (p.patch || {}) || "secao_destaque" in (p.patch || {})) toast("Interface ajustada: veja no painel", "", {action: "Ver painel", onAction: () => { S.showPanel = true; render(); }}); }).catch(() => {}); }
   if (p.action === "web_search" && !r.executed) webAsk(el, r, p, pb, ract);
   else if (r.executed) {
     ract.innerHTML = `<div class="rdone">${ico("check", "sm")} ${p.action === "ui" ? "Interface ajustada" : p.action === "update_card" ? "Card atualizado" : "Feito"}</div>
@@ -1615,7 +1678,7 @@ function resultCard(r, text) {
       else { const o = await tryApi("/api/command/confirm", {id: r.id, approve: false, edits: {undo: true}}); if (!o) return; await loadCards(true); }
       ract.innerHTML = `<div class="rdone no">${ico("x", "sm")} Desfeito</div>`; toast("Desfeito"); };
   } else if (confirmable) {
-    const okLabel = () => { const W = state.W; if (!W) return p.action === "history_clear" ? "Apagar" : p.action === "ui" ? "Manter" : p.action === "create_tree" ? "Salvar automação" : "Confirmar";
+    const okLabel = () => { const W = state.W; if (!W) return p.action === "history_clear" ? "Apagar" : p.action === "ui" ? "Manter" : p.action === "create_tree" || p.action === "create_automacao" ? "Salvar automação" : "Confirmar";
       if (W.kind === "mensagem") return W.channel === "app_whatsapp" ? "Abrir no WhatsApp" : "Enviar"; return p.action === "update_card" ? "Salvar" : `Criar ${(KINDS[W.kind] || "card").toLowerCase()}`; };
     ract.innerHTML = `<button class="btn ${p.action === "history_clear" ? "danger" : "primary"}" data-ok>${ico(p.action === "history_clear" ? "trash" : "check", "sm")} <span>${esc(okLabel())}</span></button>
       ${p.action === "create_tree" ? `<button class="btn" data-ed>${ico("tree", "sm")} Abrir no editor</button>` : ""}<button class="btn ghost" data-no>Cancelar</button>
@@ -1673,9 +1736,9 @@ function inputRow(label, key, val, type = "text", ph = "") { return `<div class=
 function chanOpts() { const c = connected().map(i => i.id); const o = []; if (c.includes("whatsapp")) o.push(["whatsapp", "WhatsApp (enviar daqui)"]);
   if (c.includes("google")) o.push(["google", "Gmail"]); if (c.includes("microsoft")) o.push(["microsoft", "Outlook"]); o.push(["app_whatsapp", "Abrir no WhatsApp (você envia)"]); return o; }
 function initW(p, r) {
-  const W = {kind: "tarefa", title: "", body: "", column: "entrada", priority: 0, date: "", time: "", dateKey: "start", people: [], tags: [], checklist: [], recurrence: "", to: "", channel: "", subject: "", msg: "", phone: "", url: ""};
+  const W = {kind: "tarefa", title: "", objetivo: "", body: "", column: "entrada", priority: 0, date: "", time: "", dateKey: "start", people: [], tags: [], checklist: [], recurrence: "", to: "", channel: "", subject: "", msg: "", phone: "", url: ""};
   if (p.action === "create_card" || p.action === "update_card") { const c = p.card || p.data || p; const sd = parseD(c.start || c.due);
-    Object.assign(W, {kind: c.kind || "tarefa", title: r.titulo || c.titulo || c.title || "", body: c.body || "", column: c.column || "entrada", priority: c.priority || 0, date: sd ? ymd(sd) : "", time: sd && (sd.getHours() || sd.getMinutes()) ? hm(sd) : "",
+    Object.assign(W, {kind: c.kind || "tarefa", title: r.titulo || c.titulo || c.title || "", objetivo: c.objetivo || "", body: c.body || "", column: c.column || "entrada", priority: c.priority || 0, date: sd ? ymd(sd) : "", time: sd && (sd.getHours() || sd.getMinutes()) ? hm(sd) : "",
       dateKey: c.due && !c.start ? "due" : "start", people: (c.people || []).map(x => ({...x, nome: titleCase(x.nome || x.email)})), tags: c.tags || [], checklist: c.checklist || [], recurrence: c.recurrence || ""});
     W.to = W.people[0] ? W.people[0].nome : ""; W.phone = W.people[0] && (W.people[0].telefone || W.people[0].phone) || ""; W.msg = W.body; }
   else { const to = p.to || p.destino || p.contato && p.contato.nome || "";
@@ -1688,7 +1751,7 @@ function initW(p, r) {
 function syncW(pb, W) {
   const g = k => { const i = $(`[data-k="${k}"]`, pb); return i ? i.value : undefined; };
   if (W.kind === "mensagem") { ["to", "subject"].forEach(k => { const v = g(k); if (v !== undefined) W[k] = v; }); const m = g("msg"); if (m !== undefined) { W.msg = m; W.body = m; } const ch = selVal(pb, "pch"); if (ch) W.channel = ch; }
-  else { ["title", "body", "date", "time", "recurrence"].forEach(k => { const v = g(k); if (v !== undefined) W[k] = v; }); const c = selVal(pb, "pc"), pr = selVal(pb, "pp"); if (c) W.column = c; if (pr !== undefined) W.priority = +pr || 0;
+  else { ["title", "objetivo", "body", "date", "time", "recurrence"].forEach(k => { const v = g(k); if (v !== undefined) W[k] = v; }); const c = selVal(pb, "pc"), pr = selVal(pb, "pp"); if (c) W.column = c; if (pr !== undefined) W.priority = +pr || 0;
     if (W.body && !W.msg) W.msg = W.body; }
 }
 function renderProposal(pb, p, r, state) {
@@ -1714,7 +1777,8 @@ function renderProposal(pb, p, r, state) {
         const cols = COLS.map(x => [x.id, x.label]), pris = PRI.map((l, i) => [String(i), l]);
         pb.innerHTML = `<div class="prop">${head}
           ${inputRow("Título", "title", W.title)}
-          ${W.kind === "nota" || W.kind === "mensagem" || W.body ? inputRow(W.kind === "nota" ? "Texto" : "Detalhes", "body", W.body, "area") : ""}
+          ${W.kind === "nota" ? "" : inputRow("Objetivo", "objetivo", W.objetivo, "text", "Para que serve? (opcional)")}
+          ${W.kind === "nota" || W.kind === "mensagem" || W.body || W.kind === "tarefa" ? inputRow(W.kind === "nota" ? "Texto" : "Descrição", "body", W.body, "area") : ""}
           <div class="grid3"><div class="field"><span class="lbl">Coluna</span>${selHTML("pc", cols, W.column, "Coluna")}</div>
           <div class="field"><span class="lbl">Prioridade</span>${selHTML("pp", pris, String(W.priority || 0), "Prioridade")}</div>
           ${W.kind === "nota" ? "" : `<div class="field"><span class="lbl">${W.kind === "tarefa" ? "Prazo" : "Quando"}</span><div class="dt"><input type="date" data-k="date" value="${esc(W.date)}" aria-label="Data"><input type="time" data-k="time" value="${esc(W.time)}" aria-label="Hora"></div></div>`}</div>
@@ -1738,12 +1802,17 @@ function renderProposal(pb, p, r, state) {
     const items = r.results || p.results || [];
     pb.innerHTML = `<div class="prop"><h4>${ico(a === "show_agenda" ? "cal" : "search", "sm")} ${a === "show_agenda" ? "Na agenda" : a === "web" ? "Na internet" : "Encontrado"} · ${items.length}</h4>${items.length ? `<div class="rlist">${items.slice(0, 8).map(resultItemHTML).join("")}</div>` : `<p class="hint">Nada encontrado.</p>`}</div>`;
     wireResultItems(pb);
+  } else if (a === "create_automacao") {
+    const au = p.automacao || {}, ac = asList(au.entao).map(e => e.acao);
+    pb.innerHTML = `<div class="prop"><h4>${ico("tree", "sm")} Automação proposta</h4><p class="autres">${esc(p.summary || p.resumo || au.nome || "")}</p>
+      <div class="row" style="gap:6px">${ac.map(x => `<span class="chip">${ico(x === "destacar" ? "star" : x === "notificar" ? "bell" : x === "etiquetar" ? "hash" : "board", "sm")}${esc(ACT_PT[x] || x)}</span>`).join("")}</div>
+      ${asList(p.notes).length ? `<p class="hint">${esc(p.notes.join(" "))}</p>` : ""}</div>`;
   } else if (a === "create_tree") {
     const t = p.tree || {}, s2 = p.summary || p.resumo || (t.name ? `Árvore “${t.name}”` : "Nova automação");
     pb.innerHTML = `<div class="prop"><h4>${ico("tree", "sm")} Automação proposta</h4><p>${esc(s2)}</p>${(p.questions || []).length ? `<div class="grid2" style="margin-top:8px">${p.questions.map(q => inputRow(q.label || q.key, "q:" + (q.key || q.label), q.default || "")).join("")}</div>` : ""}</div>`;
   } else if (a === "ui") {
     const patch = p.patch || {};
-    pb.innerHTML = `<div class="prop"><h4>${ico("gear", "sm")} Ajuste da interface (já aplicado para você ver)</h4><div class="row">${Object.entries(patch).map(([k, v]) => `<span class="chip on">${esc(k)}: ${esc(Array.isArray(v) ? (v.map(x => x.name || x).join(", ")) : typeof v === "object" ? (v.name || JSON.stringify(v)) : v)}</span>`).join("")}</div></div>`;
+    pb.innerHTML = `<div class="prop"><h4>${ico("gear", "sm")} Ajuste da interface (já aplicado para você ver)</h4><div class="row">${["destaques", "inicio_secoes", "inicio_ocultas", "secao_destaque"].some(k => k in patch) ? `<span class="chip on">${ico("star", "sm")}${esc(p.descricao || "Destaques")}</span>` : Object.entries(patch).map(([k, v]) => `<span class="chip on">${esc(k)}: ${esc(Array.isArray(v) ? (v.map(x => x.name || x).join(", ")) : typeof v === "object" ? (v.name || JSON.stringify(v)) : v)}</span>`).join("")}</div></div>`;
   } else if ((r.results || []).length) {
     pb.innerHTML = `<div class="prop"><div class="rlist">${r.results.slice(0, 8).map(resultItemHTML).join("")}</div></div>`; wireResultItems(pb);
   }
@@ -1764,7 +1833,7 @@ function collectEdits(pb, p, state) {
     if (W.channel === "app_whatsapp") return {action: "abrir_app", app: "whatsapp", to: W.to, telefone: W.phone, body: W.msg, url: W.url && !W.msg ? W.url : "", contato: W.contato};
     return {action: "send_message", channel: W.channel, to: W.to, subject: W.subject, body: W.msg, contato: W.contato || (people[0] || null)};
   }
-  const card = {title: W.title.trim() || "Sem título", kind: W.kind, column: W.column, priority: W.priority || 0, body: W.body || "", people: W.people, tags: W.tags, checklist: W.checklist, recurrence: W.recurrence};
+  const card = {title: W.title.trim() || "Sem título", kind: W.kind, column: W.column, priority: W.priority || 0, objetivo: (W.objetivo || "").trim(), body: W.body || "", people: W.people, tags: W.tags, checklist: W.checklist, recurrence: W.recurrence};
   if (W.date) card[W.kind === "tarefa" && W.dateKey === "due" ? "due" : (W.kind === "tarefa" ? W.dateKey : "start")] = `${W.date}T${W.time || "00:00"}:00`;
   if (W.date && !W.time) card.all_day = true;
   const action = p.action === "update_card" ? "update_card" : "create_card";
@@ -2686,6 +2755,8 @@ async function init() {
   render();
   if (!modelReady() && !store.get("welcomed", false) && S.model.state !== "baixando") { store.set("welcomed", true); setTimeout(openModel, 500); }
   setInterval(pollStatus, 5000); pollAlerts(true); setInterval(pollAlerts, 15000);
+  if (!store.get("dedupAsked", false)) tryApi("/api/cards/deduplicar", {simular: true}, {silent: true}).then(d => { if (!d || !d.repetidos) return; store.set("dedupAsked", true);
+    toast(`Encontrei ${d.repetidos} card${d.repetidos > 1 ? "s" : ""} repetido${d.repetidos > 1 ? "s" : ""} — juntar?`, "warn", {action: "Juntar", onAction: async () => { const r = await tryApi("/api/cards/deduplicar", {}); if (r) { toast(`${r.juntados} repetido${r.juntados > 1 ? "s" : ""} removido${r.juntados > 1 ? "s" : ""}`); refreshCards(); } }}); });
   setInterval(() => { if (!document.hidden && !drawerCard && !dragId && !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) refreshCards(); }, 30000);
   recorderLoaded = await loadScript("/static/app/recorder.js");
   await loadVoice(); syncMic();

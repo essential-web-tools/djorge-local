@@ -151,6 +151,7 @@ def normalize(data: Dict, base: Optional[Dict] = None) -> Dict:
     c.setdefault("color", ""); c.setdefault("pinned", False); c.setdefault("done", False)
     c.setdefault("source", {"integration": None, "external_id": None, "url": None})
     c.setdefault("alertas", [])
+    c.setdefault("objetivo", "")
     if "done" in data and "column" not in data:          # marcar feito leva para a coluna "feito"
         if c["done"]:
             c["column"] = "feito"

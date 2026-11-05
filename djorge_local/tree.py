@@ -100,7 +100,9 @@ def _cond(c: dict, ev: dict) -> bool:
             raise TreeError("regex longa demais")
         ok &= re.search(c["regex"], t, re.I) is not None
     if c.get("sender_has"):
-        ok &= any(x.casefold() in (ev.get("sender") or "").casefold() for x in c["sender_has"])
+        quem = fold(" ".join(str(ev.get(k) or "") for k in ("sender", "remetente")) + (
+            " " + str(ev.get("title") or "") if ev.get("source") == "notifications" else ""))
+        ok &= any(fold(x) in quem for x in c["sender_has"] if fold(x))
     if c.get("source_in"):
         ok &= ev.get("source") in c["source_in"]
     if c.get("seguranca_in"):                       # verdict of the automatic security check

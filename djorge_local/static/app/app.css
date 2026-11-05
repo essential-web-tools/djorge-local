@@ -917,3 +917,30 @@ svg.i.xs{width:13px;height:13px;vertical-align:-2px}
 .notes .vh{display:flex;align-items:flex-end;gap:12px}.notes .vh .sp{flex:1}
 .nemeta .tagin{min-height:0;padding:4px 8px}
 .netool #ne-ana{margin-left:6px}
+
+/* ---- destaques (o agente edita a interface) ---- */
+[data-hl]{position:relative;box-shadow:inset 3px 0 0 var(--hl);background:color-mix(in srgb,var(--hl) 7%,var(--surface))}
+.kc[data-hl]{border-color:color-mix(in srgb,var(--hl) 55%,var(--line));box-shadow:inset 3px 0 0 var(--hl),var(--sh0)}
+.hlselo{display:inline-flex;margin-left:2px;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;margin-right:6px;vertical-align:-3px;
+  background:color-mix(in srgb,var(--hl,var(--rose)) 18%,var(--surface));color:var(--hl,var(--rose));flex:none}
+.hlselo .i{width:11px;height:11px}
+.dcard.hlbox{margin-bottom:16px;border-color:color-mix(in srgb,var(--rose) 35%,var(--line))}
+.dcard.hlbox>header .i{color:var(--rose)}
+.dcard.hlsec{box-shadow:inset 0 3px 0 var(--hl),var(--sh0);background:color-mix(in srgb,var(--hl) 5%,var(--surface))}
+.dcard.hlsec>header h3{color:var(--hl)}
+.tag.rep{font-variant-numeric:tabular-nums;background:var(--surface2);color:var(--ink2)}
+.nint{display:flex;align-items:flex-start;gap:6px;margin-top:6px;font-size:.86em;color:var(--ink2);line-height:1.4}
+.nint>.i{flex:none;margin-top:2px;color:var(--rose)}
+.nint.fez>.i{color:var(--ok)}
+.nint small{color:var(--ink3)}
+.nint .btn{margin-left:auto}
+.chip.sug.two{padding:0;overflow:hidden;gap:0}
+.chip.sug.two>button{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+.chip.sug.two>button:hover{background:var(--rose-soft)}
+.chip.sug.two>.nx{padding:4px 7px;border-left:1px solid var(--line2);color:var(--ink3)}
+.chip.sug.two>.nx:hover{color:var(--bad);background:var(--bad-soft)}
+.kobj,.trow .tt small.tobj{display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:.82em;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kobj .i,.tobj .i{flex:none;color:var(--rose)}
+.field.dobj label,.field label .i{display:inline-flex;align-items:center;gap:5px}
+.field.dobj .inp{font-weight:500}
+.autres{font-size:1.02em;line-height:1.5;margin:4px 0 8px}

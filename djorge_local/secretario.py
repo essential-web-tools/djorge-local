@@ -492,7 +492,7 @@ class Secretario:
             if _norm(c.get("title")) != t or str(c.get("created") or c.get("updated") or "9")[:19] < desde:
                 continue
             src = c.get("source") or {}
-            if src.get("integration") == "secretario" or not src or rem and rem in _norm(c.get("body")):
+            if src.get("integration") in ("secretario", None) or rem and rem in _norm(c.get("body")):
                 return c
         return None
 
