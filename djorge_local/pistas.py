@@ -115,15 +115,34 @@ ABRIR_EXPLICITO = re.compile(r"^\s*(?:por favor\s+)?(?:me\s+)?(abre|abra|abrir|a
 _EVENTO = (r"(receb\w*|cheg\w*|mand\w*|envi\w*|escrev\w*|aparec\w*|vier|vem|ligar|chamar|responder|"
            r"falar comigo|postar|notific\w*|entrar|surgir)")
 CONDICIONAL = re.compile(r"\b(sempre que|toda vez que|todas as vezes que|cada vez que|assim que)\b|"
-                         r"(?:^|[,.;]\s*|\b(?:e|que)\s+)(?:quando|se|caso)\s+(?:\w+\s+){0,5}?" + _EVENTO + r"\b")
+                         r"(?:\b(?:quando|caso)|(?:^|[,.;:]\s*|\b(?:e|que)\s+)se)\s+(?:\w+\s+){0,5}?" + _EVENTO + r"\b")
 GATILHO_MSG = re.compile(r"\b(?:quando|se|caso|sempre que|toda vez que|cada vez que|assim que)\s+(?:\w+\s+){0,5}?"
                          + _EVENTO + r"\b")
 
 
+_MSG_NOME = re.compile(r"\b(mensage\w*|e-?mails?|notificac\w*|whats\w*|zap|sms|recado|boleto|fatura|cobranca|"
+                       r"pix|alerta|aviso|ligac\w*)\b")
+_VERBO_MSG = re.compile(r"\b(mand\w*|envi\w*|escrev\w*|receb\w*|ligar|responder)\b")
+_ENVIO_INICIO = re.compile(r"^\s*(?:por favor\s+)?(manda|mande|envia|envie|escreve|escreva|avisa|avise|diz|diga|fala|"
+                           r"responde|responda)\b")
+
+
 def condicional(texto: str) -> bool:
-    """O pedido descreve uma regra que deve acontecer sempre que algo ocorrer?"""
-    s = _sem_acento(str(texto or "").casefold())
-    return bool(CONDICIONAL.search(s))
+    """O pedido descreve uma regra que deve acontecer sempre que algo ocorrer? (o gatilho dentro do corpo de um
+    bilhete — "manda pra Ana: se chegar atrasado me liga" — não conta)."""
+    t = str(texto or "")
+    s = _sem_acento(t.casefold())
+    m = CONDICIONAL.search(s)
+    if not m:
+        return False
+    if _ENVIO_INICIO.search(s):
+        c = corpo_mensagem(t)
+        if c is not None and c.ini <= m.start() + 2:
+            return False
+    if m.group(1):                                          # "sempre que", "toda vez que": sempre regra
+        return True
+    trecho = s[m.start():m.end()]
+    return bool(_VERBO_MSG.search(trecho) or _MSG_NOME.search(s))
 
 
 def _une(ps: Iterable[float]) -> float:
@@ -202,6 +221,8 @@ def pistas(texto: str, regras: Optional[List[Trecho]] = None, contexto: Optional
     if cond:                                             # pista forte de regra + veto do bilhete (a mensagem é o gatilho)
         por["regra"].append(0.95)
         sinais.append({"tool": "regra", "sinal": "pedido condicional", "peso": 0.95})
+    if not cond and por["regra"] and corpo and _ENVIO_INICIO.search(s):
+        por["regra"] = [w * 0.3 for w in por["regra"]]    # o "se/quando" está no texto a enviar
     ferr = {t: _une(ws) for t, ws in por.items() if ws}
     if cond:
         for t in ("bilhete", "cards", "abrir", "buscar", "web"):
