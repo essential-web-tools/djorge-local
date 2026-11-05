@@ -56,6 +56,32 @@ def _hora_norm(h) -> Optional[str]:
     return f"{int(m.group(1)):02d}:{m.group(2) or '00'}"
 
 
+APPS_CONVERSA = ("whatsapp", "telegram", "signal", "messenger", "instagram", "teams", "slack", "discord",
+                 "mensagens", "messages", "sms", "skype", "zap")
+
+
+def remetente_de(ev: Dict) -> str:
+    """Quem mandou: from/sender/remetente/autor; notificação de app de conversa = o título (nome da pessoa);
+    de outros apps (banco, loja, sistema) = o nome do app, nunca o título ("Fatura")."""
+    for k in ("from", "sender", "remetente", "autor"):
+        v = ev.get(k)
+        if isinstance(v, dict):
+            v = v.get("name") or v.get("nome") or v.get("email") or v.get("address")
+        if v and str(v).strip():
+            v = str(v).strip()
+            if ev.get("source") == "notifications" and not _de_conversa(ev) and v == (ev.get("title") or "").strip():
+                break                                     # o conector pôs o título no sender: não é pessoa
+            return v
+    if ev.get("source") == "notifications":
+        return (ev.get("title") or "").strip() if _de_conversa(ev) else (ev.get("app") or "").strip()
+    return ""
+
+
+def _de_conversa(ev: Dict) -> bool:
+    a = fold(ev.get("app"))
+    return any(x in a for x in APPS_CONVERSA)
+
+
 def pedido_no_card(card: Dict, ped: Dict) -> Dict:
     """Card de um pedido: título = nome da tarefa (ou título curto), corpo = o texto central do pedido + quem/prazo/valor."""
     c = dict(card)
@@ -177,7 +203,7 @@ class Secretario:
             hoje = self.agora().date()
         except Exception:
             hoje = None
-        tri = triar(str(ev.get("text") or "")[:8000], remetente=ev.get("sender") or None,
+        tri = triar(str(ev.get("text") or "")[:8000], remetente=remetente_de(ev) or None,
                     assunto=ev.get("title") or None, engine=eng, vips=self.conf.get("vips") or (), hoje=hoje)
         tri["model"] = eng is not None
         try:                                             # pistas de R (opcional)
@@ -190,17 +216,14 @@ class Secretario:
         return tri
 
     def eh_vip(self, ev: Dict) -> bool:
-        quem = fold(" ".join(str(ev.get(k) or "") for k in ("sender", "remetente", "title" if ev.get("source") ==
-                                                             "notifications" else "_")))
+        quem = fold(" ".join([remetente_de(ev), str(ev.get("remetente") or "")]))
         return any(fold(v) and fold(v) in quem for v in self.conf.get("vips") or [])
 
     def enriquecer(self, ev: Dict, tri: Dict) -> Dict:
         from .contatos import _do_remetente, nome_fmt, fone_fmt
         e = dict(ev)
         d = tri.get("dados") or {}
-        sender = e.get("sender") or ""
-        if not sender and e.get("source") == "notifications":
-            sender = e.get("title") or ""                # WhatsApp/Telegram: o título é quem mandou
+        sender = remetente_de(e)
         r = _do_remetente(sender) if sender else {"nome": "", "email": None, "telefone": None}
         empresa = next((x["nome"] for x in tri.get("entidades") or [] if x.get("tipo") == "empresa"), "")
         if r["email"]:
@@ -227,7 +250,9 @@ class Secretario:
         e["categoria"], e["prioridade"] = tri.get("categoria"), tri.get("prioridade")
         e["vip"] = self.eh_vip(e)
         if tri.get("pedido"):
-            e["pedido"] = tri["pedido"]
+            e["pedido"] = dict(tri["pedido"])
+            if not e["pedido"].get("quem_do_texto") and e.get("remetente"):
+                e["pedido"]["quem"] = e["remetente"]       # quem pediu = o remetente já formatado
         return e
 
     # ----------------------------------------------------------------------------------- processar --
@@ -244,7 +269,7 @@ class Secretario:
             return [{"action": "arquivar"}]
         if "pagar" in acoes and (ev.get("valor") or ev.get("prazo")):
             out.append({"action": "tarefa", "titulo": "Pagar {empresa}", "campos": ["valor", "prazo", "codigo"],
-                        "coluna": "hoje", "etiqueta": "contas"})
+                        "coluna": "hoje", "etiqueta": "contas", "pedido": False})
         if "agendar" in acoes and ev.get("data") and ev.get("hora"):
             out.append({"action": "criar_card", "tipo": "evento", "titulo": "{title}",
                         "campos": ["data", "hora", "link", "remetente"]})
@@ -330,7 +355,7 @@ class Secretario:
         card = dict(prep["card"])
         ev = ctx.get("event") or {}
         ped = ev.get("pedido") if isinstance(ev.get("pedido"), dict) else None
-        if ped and spec.get("pedido"):
+        if ped and spec.get("pedido") is not False:     # pedido: título = tarefa, corpo = texto central
             card = pedido_no_card(card, ped)
         nid = ev.get("notif_id")
         if nid:

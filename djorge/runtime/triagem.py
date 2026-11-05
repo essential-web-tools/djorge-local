@@ -177,7 +177,8 @@ def extrair_pedido(texto: str, assunto: Optional[str] = None, remetente: Optiona
     tc = _ABERTURA.sub("", central).strip()
     return {"titulo": _titulo(tarefa), "tarefa": tarefa, "texto_central": tc[:1].upper() + tc[1:],
             "quem": quem, "prazo": prazo, "valor": (list(valores) or [None])[0],
-            "p": round(p, 3) if p is not None else None, "fonte": fonte}
+            "p": round(p, 3) if p is not None else None, "fonte": fonte,
+            "quem_do_texto": bool((mod or {}).get("pessoa"))}
 
 
 def triar(texto: str, remetente: Optional[str] = None, assunto: Optional[str] = None, engine=None,

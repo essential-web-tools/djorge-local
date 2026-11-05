@@ -644,6 +644,17 @@ def _q1(q, k, default=None):
     return v[0] if v else default
 
 
+def _erro(e: Exception):
+    """Erro amigável: sem o nome da exceção; 'não encontrado' vira 404; campo faltando vira 400 claro."""
+    msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
+    msg = str(msg).strip()
+    if "não encontrad" in msg or "nao encontrad" in msg:
+        return 404, {"error": msg}
+    if isinstance(e, KeyError):
+        return 400, {"error": f"falta o campo '{msg}' no pedido"}
+    return 400, {"error": msg or "pedido inválido"}
+
+
 def _alertas_rotas(app: App, metodo: str, path: str, corpo):
     try:
         from . import alertas as _al
@@ -982,6 +993,9 @@ def v2_post(app: App, path: str, b: dict):
     r = v4_rotas(app, "POST", path, b)
     if r is not None:
         return r
+    if path == "/api/cards" and b.get("id") and app.cards.get(str(b["id"])):
+        cid = str(b["id"])                                # card que já existe: atualiza, não duplica
+        return 200, _acao_ui(app, "editar_card", lambda _: cid, lambda: app.cards.update(cid, b))
     if path == "/api/cards":
         return 200, _acao_ui(app, "criar_card", lambda c: c["id"], lambda: app.cards.create(b))
     if path == "/api/cards/move":
@@ -997,6 +1011,8 @@ def v2_post(app: App, path: str, b: dict):
             return 200, _acao_ui(app, "editar_card", lambda _: parts[3], lambda: app.cards.update(parts[3], b))
         return None
     if path == "/api/command":
+        if len(str(b.get("text", ""))) > 2000:
+            raise ValueError("pedido longo demais: escreva até 2000 caracteres")
         if b.get("stream"):
             if not str(b.get("text", "")).strip():
                 raise ValueError("escreva um pedido")
@@ -1181,7 +1197,7 @@ def make_handler(app: App):
             except Unavailable as e:
                 return self._send(503, {"error": str(e)})
             except (KeyError, ValueError) as e:
-                return self._send(400, {"error": f"{type(e).__name__}: {e}"})
+                return self._send(*_erro(e))
             except Exception as e:
                 return self._send(500, {"error": f"{type(e).__name__}: {e}"})
             if r is not None:
@@ -1198,6 +1214,8 @@ def make_handler(app: App):
             try:
                 b = self._body()
                 if u.path == "/api/event":
+                    if not str(b.get("text", "")).strip() and not isinstance(b.get("graph"), dict):
+                        return self._send(400, {"error": "o evento precisa de um texto"})
                     ev = C.emit(b.get("source", "http"), str(b.get("text", "")), title=b.get("title", ""),
                                 app=b.get("app", ""), sender=b.get("sender", "")) if not b.get("sync") else None
                     if b.get("sync") and isinstance(b.get("graph"), dict):    # testar árvore ainda não salva
@@ -1265,7 +1283,7 @@ def make_handler(app: App):
             except ModeloAusente as e:
                 return self._send(409, {"error": "modelo_ausente", "tool": str(e)})
             except (TreeError, yaml.YAMLError, KeyError, ValueError, PermissionError, FileNotFoundError) as e:
-                return self._send(400, {"error": f"{type(e).__name__}: {e}"})
+                return self._send(*_erro(e))
             except Exception as e:
                 return self._send(500, {"error": f"{type(e).__name__}: {e}"})
             self._send(404, {"error": "não encontrado"})

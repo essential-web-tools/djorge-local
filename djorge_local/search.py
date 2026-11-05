@@ -79,7 +79,10 @@ class Search:
         if scope in ("all", "history"):
             for i, h in enumerate(self.app.hist.last(1000)):
                 ev = h.get("event") or {}
-                if h.get("type") == "command":
+                if h.get("pedido") is not None or "ferramenta" in h:      # histórico de ações (rodada 4)
+                    text = " ".join(str(h.get(k) or "") for k in ("pedido", "acao", "resultado"))
+                    title = str(h.get("pedido") or h.get("acao") or "ação")[:80]
+                elif h.get("type") == "command":
                     text, title = h.get("text", ""), h.get("reply", "")[:80]
                 else:
                     text = " ".join(str(ev.get(k) or "") for k in ("title", "text", "sender", "app"))

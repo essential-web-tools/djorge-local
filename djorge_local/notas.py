@@ -464,7 +464,7 @@ def criar_tarefas(app, nid: str, b: Dict) -> Dict:
         idx = list(por_indice) if idx is None else [int(i) for i in idx]
         falta = [i for i in idx if i not in por_indice]
         if falta:
-            raise ValueError(f"tarefa não encontrada: {falta}")
+            raise ValueError(f"índice de tarefa inválido: {falta}")
         escolhidas = [por_indice[i]["card"] for i in idx]
     from .historico import consumir_alteracoes
     consumir_alteracoes()
