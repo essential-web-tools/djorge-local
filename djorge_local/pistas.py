@@ -88,6 +88,7 @@ SINAIS = {
         ("meus dados", r"\b(nos meus|nas minhas|meus e-?mails|minhas mensagens|no historico)\b", 0.35),
     ],
     "regra": [
+        ("condicional", r"\b(sempre que|toda vez que|cada vez que|todas as vezes que)\b", 0.85),
         ("gatilho", r"\b(sempre que|toda vez que|quando (chegar|receber|vier|aparecer)|se (eu )?receber|se chegar|"
                     r"automaticamente|regra|automacao|automatiza\w*)\b", 0.8),
     ],
@@ -107,6 +108,22 @@ CONTA_PURA = re.compile(r"^[\d\s.,()+\-*/x×÷^%=?]+$")
 WEB_EXPLICITO = re.compile(r"\b(pesquis\w*|busc\w*|procur\w*|ve|veja|olha|olhe)\b.{0,30}\b(na internet|na web|no google|na net|online)\b"
                            r"|\b(na internet|na web|no google)\b")
 ABRIR_EXPLICITO = re.compile(r"^\s*(?:por favor\s+)?(?:me\s+)?(abre|abra|abrir|abri)\b")
+
+
+# pedido condicional: "sempre que / toda vez que / quando / se / caso" + um evento que CHEGA (mensagem, e-mail,
+# notificação) = regra (automação), nunca bilhete: a mensagem é o gatilho, não a ação.
+_EVENTO = (r"(receb\w*|cheg\w*|mand\w*|envi\w*|escrev\w*|aparec\w*|vier|vem|ligar|chamar|responder|"
+           r"falar comigo|postar|notific\w*|entrar|surgir)")
+CONDICIONAL = re.compile(r"\b(sempre que|toda vez que|todas as vezes que|cada vez que|assim que)\b|"
+                         r"(?:^|[,.;]\s*|\b(?:e|que)\s+)(?:quando|se|caso)\s+(?:\w+\s+){0,5}?" + _EVENTO + r"\b")
+GATILHO_MSG = re.compile(r"\b(?:quando|se|caso|sempre que|toda vez que|cada vez que|assim que)\s+(?:\w+\s+){0,5}?"
+                         + _EVENTO + r"\b")
+
+
+def condicional(texto: str) -> bool:
+    """O pedido descreve uma regra que deve acontecer sempre que algo ocorrer?"""
+    s = _sem_acento(str(texto or "").casefold())
+    return bool(CONDICIONAL.search(s))
 
 
 def _une(ps: Iterable[float]) -> float:
@@ -181,7 +198,17 @@ def pistas(texto: str, regras: Optional[List[Trecho]] = None, contexto: Optional
         explicito = "web"
     elif por["regra"]:
         explicito = None
+    cond = condicional(texto)
+    if cond:                                             # pista forte de regra + veto do bilhete (a mensagem é o gatilho)
+        por["regra"].append(0.95)
+        sinais.append({"tool": "regra", "sinal": "pedido condicional", "peso": 0.95})
     ferr = {t: _une(ws) for t, ws in por.items() if ws}
+    if cond:
+        for t in ("bilhete", "cards", "abrir", "buscar", "web"):
+            if t in ferr:
+                ferr[t] = round(ferr[t] * 0.15, 4)
+        if not (contexto or {}).get("tool"):
+            explicito = "regra"
     # quem tem pista de busca + internet é web; consulta de agenda não é card novo
     if "web" in ferr and "buscar" in ferr and ferr["web"] >= 0.8:
         ferr["buscar"] = round(ferr["buscar"] * 0.4, 4)
@@ -211,7 +238,7 @@ def pistas(texto: str, regras: Optional[List[Trecho]] = None, contexto: Optional
     if ctx_tool in FERRAMENTAS:
         explicito = ctx_tool
     return {"ferramentas": dict(sorted(ferr.items(), key=lambda x: -x[1])), "sinais": sinais, "faltando": faltando,
-            "perguntar": [], "explicito": explicito, "campos": campos}
+            "perguntar": [], "explicito": explicito, "campos": campos, "condicional": cond}
 
 
 def compativel(tool: str, p: Dict, texto: str = "") -> float:
@@ -220,6 +247,8 @@ def compativel(tool: str, p: Dict, texto: str = "") -> float:
     sin = {x["sinal"] for x in p.get("sinais") or [] if x["tool"] == tool}
     if tool == "calcular":
         return 0.15 if "números" in falt or not re.search(r"\d", texto or "1") else 1.0
+    if tool == "bilhete" and p.get("condicional"):
+        return 0.1                                       # bilhete exige corpo a ENVIAR e nenhum gatilho condicional
     if tool == "bilhete":
         return 0.4 if not sin & {"verbo de envio", "canal"} else 0.8 if "destino" in falt else 1.0
     if tool == "listas":

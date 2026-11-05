@@ -36,6 +36,10 @@ DEFAULTS = {
     "prioridade": "modelo",          # modelo (o DOFL decide) | equilibrado | regras (respostas rápidas)
     "nome_usuario": "",              # vazio -> "você"
     "nome_agente": "Djorge",
+    "destaques": [],                 # [{id, tipo, alvo, estilo:{cor, icone, fixar}, ate}] (lista fechada, sem código)
+    "inicio_secoes": list(("destaques",) + ("tarefas", "eventos", "mensagens", "notificacoes")),
+    "inicio_ocultas": [],            # seções do Início escondidas
+    "secao_destaque": "",            # seção do Início em destaque ("" = nenhuma)
 }
 CHOICES = {"theme": ("claro", "escuro", "auto"), "density": ("compacta", "normal", "confortavel"),
            "accent": tuple(ACCENTS), "default_view": VIEWS,
@@ -52,6 +56,57 @@ ALIAS_VALOR = {"theme": {"light": "claro", "dark": "escuro"},
 EXTRA_VIEWS = ("mensagens", "notificacoes", "automacoes")
 FONT_STEPS = CHOICES["font_size"]
 DENS_STEPS = CHOICES["density"]
+
+
+# ------------------------------------------------------------------ destaques (o agente edita a interface) --
+TIPOS_DESTAQUE = ("card", "notificacao", "remetente", "etiqueta", "secao")
+ICONES = ("estrela", "coracao", "alerta", "pino", "sino", "fogo")
+SECOES_INICIO = ("destaques", "tarefas", "eventos", "mensagens", "notificacoes")
+SECAO_PT = {"destaques": "Em destaque", "tarefas": "Tarefas mais relevantes", "eventos": "Próximos eventos",
+            "mensagens": "Mensagens importantes", "notificacoes": "Notificações recentes"}
+ALVOS_CARD = ("@urgentes", "@importantes", "@hoje", "@atrasadas")
+_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$")
+
+
+def estilo_destaque(e) -> Dict:
+    """Estilo seguro: cor da paleta, ícone da lista, fixar no topo. Levanta ValueError."""
+    e = e if isinstance(e, dict) else {}
+    cor = str(e.get("cor") or "rosa")
+    if cor not in ACCENTS:
+        raise ValueError(f"cor do destaque: use {', '.join(ACCENTS)}")
+    ic = str(e.get("icone") or "estrela")
+    if ic not in ICONES:
+        raise ValueError(f"ícone do destaque: use {', '.join(ICONES)}")
+    return {"cor": cor, "icone": ic, "fixar": bool(e.get("fixar", True))}
+
+
+def ate_valido(v) -> str:
+    v = str(v or "").strip()
+    if v and not _ISO.match(v):
+        raise ValueError("ate: data ISO (AAAA-MM-DD ou AAAA-MM-DDTHH:MM)")
+    return v
+
+
+def destaque_valido(d) -> Dict:
+    if not isinstance(d, dict):
+        raise ValueError("destaque: objeto esperado")
+    tipo = d.get("tipo")
+    if tipo not in TIPOS_DESTAQUE:
+        raise ValueError(f"destaque.tipo: use {', '.join(TIPOS_DESTAQUE)}")
+    alvo = " ".join(str(d.get("alvo") or "").split())[:80]
+    if not alvo or re.search(r"[<>{}\\;]", alvo):
+        raise ValueError("destaque.alvo: escreva só o nome, id ou etiqueta")
+    if tipo == "secao" and alvo not in SECOES_INICIO:
+        raise ValueError(f"destaque de seção: use {', '.join(SECOES_INICIO)}")
+    if tipo == "card" and alvo.startswith("@") and alvo not in ALVOS_CARD:
+        raise ValueError(f"destaque de cards: use um id ou {', '.join(ALVOS_CARD)}")
+    did = re.sub(r"[^\w-]", "", str(d.get("id") or "")) [:24] or f"{tipo}-{_fold(alvo).replace(' ', '-')[:30]}"
+    return {"id": did, "tipo": tipo, "alvo": alvo, "estilo": estilo_destaque(d.get("estilo")), "ate": ate_valido(d.get("ate"))}
+
+
+def destaques_ativos(lista, agora: Optional[_dt.datetime] = None):
+    agora = (agora or _dt.datetime.now()).strftime("%Y-%m-%dT%H:%M")
+    return [d for d in lista or [] if not d.get("ate") or (d["ate"] if len(d["ate"]) > 10 else d["ate"] + "T23:59") >= agora]
 
 
 def _fold(s) -> str:
@@ -86,6 +141,22 @@ def validate(patch: Dict) -> Dict:
             if not isinstance(v, list) or not v or len(set(v)) != len(v) or \
                     any(not isinstance(x, str) or x not in SIDEBAR + EXTRA_VIEWS + ("quadro", "tarefas") for x in v):
                 raise ValueError(f"sidebar_order: itens sem repetição entre {', '.join(SIDEBAR + EXTRA_VIEWS)}")
+        elif k == "destaques":
+            if not isinstance(v, list) or len(v) > 40:
+                raise ValueError("destaques: lista com até 40 itens")
+            vistos, clean = set(), []
+            for d in v:
+                d = destaque_valido(d)
+                if d["id"] not in vistos:
+                    vistos.add(d["id"]); clean.append(d)
+            v = clean
+        elif k in ("inicio_secoes", "inicio_ocultas"):
+            if not isinstance(v, list) or len(set(v)) != len(v) or any(x not in SECOES_INICIO for x in v) or \
+                    (k == "inicio_secoes" and not v):
+                raise ValueError(f"{k}: itens sem repetição entre {', '.join(SECOES_INICIO)}")
+        elif k == "secao_destaque":
+            if v not in ("",) + SECOES_INICIO:
+                raise ValueError(f"secao_destaque: use {', '.join(SECOES_INICIO)} ou vazio")
         elif k == "saved_filters":
             if not isinstance(v, list) or len(v) > 30:
                 raise ValueError("saved_filters: lista com até 30 filtros")
