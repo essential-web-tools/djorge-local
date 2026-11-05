@@ -914,3 +914,6 @@ svg.i.xs{width:13px;height:13px;vertical-align:-2px}
 .vitem .vx{margin:4px 0 0;color:var(--ink2);font-size:.9em}
 .vprev{white-space:pre-wrap;font:inherit;font-size:.9em;margin:8px 0 0;padding:8px;border-radius:8px;background:var(--surface2);max-height:260px;overflow:auto}
 @media (max-width:900px){.nwrap{grid-template-columns:1fr}.nside{position:static}.nitems{max-height:240px}}
+.notes .vh{display:flex;align-items:flex-end;gap:12px}.notes .vh .sp{flex:1}
+.nemeta .tagin{min-height:0;padding:4px 8px}
+.netool #ne-ana{margin-left:6px}

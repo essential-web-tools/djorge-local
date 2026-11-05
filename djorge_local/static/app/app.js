@@ -104,7 +104,7 @@ const CARD_COLORS = [["", "Nenhuma"], ["#b56576", "Rosa"], ["#c0714f", "Terracot
 let ACCENTS = [["rosa", "#b56576"], ["vinho", "#6d2e46"], ["terracota", "#c06c4a"], ["mostarda", "#c9a227"], ["verde", "#5a7d5a"], ["azul", "#4a6c8c"], ["lavanda", "#8a7bb0"], ["grafite", "#4a4a4a"]];
 const TOOL_PT = {calcular: ["Calcular", "calc"], datas_horas: ["Datas e horas", "clock"], proximas_tarefas: ["Próximas tarefas", "list"],
   cards: ["Card", "board"], listas: ["Lista", "list"], bilhete: ["Mensagem", "send"], buscar: ["Buscar", "search"],
-  regra: ["Automação", "tree"], web: ["Busca na web", "search"], abrir: ["Abrir app", "send"], perguntar: ["Só para confirmar", "spark"], interface: ["Interface", "gear"], nenhuma: ["Vamos ajustar o pedido", "spark"], triagem: ["Triagem", "shield"]};
+  regra: ["Automação", "tree"], web: ["Busca na web", "search"], abrir: ["Abrir app", "send"], perguntar: ["Só para confirmar", "spark"], interface: ["Interface", "gear"], ui: ["Edição manual", "edit"], notas: ["Notas", "note"], alertas: ["Alerta", "bell"], nenhuma: ["Vamos ajustar o pedido", "spark"], triagem: ["Triagem", "shield"]};
 const FIELD_CLS = {data: "c-data", hora: "c-hora", "período do dia": "c-periodo", pessoa: "c-pessoa", "endereço de e-mail": "c-email",
   lugar: "c-lugar", "empresa ou estabelecimento": "c-empresa", endereco: "c-endereco"};
 const FIELD_ICO = {data: "cal", hora: "clock", "período do dia": "partsun", pessoa: "user", "evento ou compromisso": "pin", lugar: "mappin", lista: "note",
@@ -1606,9 +1606,9 @@ function resultCard(r, text) {
       else { const o = await tryApi("/api/command/confirm", {id: r.id, approve: false, edits: {undo: true}}); if (!o) return; await loadCards(true); }
       ract.innerHTML = `<div class="rdone no">${ico("x", "sm")} Desfeito</div>`; toast("Desfeito"); };
   } else if (confirmable) {
-    const okLabel = () => { const W = state.W; if (!W) return p.action === "ui" ? "Manter" : p.action === "create_tree" ? "Salvar automação" : "Confirmar";
+    const okLabel = () => { const W = state.W; if (!W) return p.action === "history_clear" ? "Apagar" : p.action === "ui" ? "Manter" : p.action === "create_tree" ? "Salvar automação" : "Confirmar";
       if (W.kind === "mensagem") return W.channel === "app_whatsapp" ? "Abrir no WhatsApp" : "Enviar"; return p.action === "update_card" ? "Salvar" : `Criar ${(KINDS[W.kind] || "card").toLowerCase()}`; };
-    ract.innerHTML = `<button class="btn primary" data-ok>${ico("check", "sm")} <span>${esc(okLabel())}</span></button>
+    ract.innerHTML = `<button class="btn ${p.action === "history_clear" ? "danger" : "primary"}" data-ok>${ico(p.action === "history_clear" ? "trash" : "check", "sm")} <span>${esc(okLabel())}</span></button>
       ${p.action === "create_tree" ? `<button class="btn" data-ed>${ico("tree", "sm")} Abrir no editor</button>` : ""}<button class="btn ghost" data-no>Cancelar</button>
       ${r.needs_confirm || editable ? `<span class="note">${editable ? "Você pode mudar o tipo e qualquer campo antes de confirmar." : "Nada acontece sem sua confirmação."}</span>` : ""}`;
     state.onChange = () => { const s2 = $("[data-ok] span", ract); if (s2) s2.textContent = okLabel(); };
@@ -1652,11 +1652,13 @@ function webAsk(el, r, p, pb, ract) {
 }
 function openUrl(url) { api("/api/abrir", {app: "navegador", url}).then(o => { if (!o || o.status !== "aberto") window.open(url, "_blank", "noopener"); }).catch(() => window.open(url, "_blank", "noopener")); }
 function confirmMsg(p, out, W) { if (W && W.kind && W.kind !== "mensagem" && (p.action === "create_card")) return `${KINDS[W.kind] || "Card"} criad${W.kind === "lista" || W.kind === "nota" || W.kind === "tarefa" || W.kind === "mensagem" ? "a" : "o"}`;
-  return {create_card: "Card criado", update_card: "Card atualizado", send_message: out && out.status === "aguardando confirmação" ? "Na fila de confirmação" : "Mensagem enviada", create_tree: "Automação salva", ui: "Interface ajustada"}[p.action] || "Feito"; }
+  return {create_card: "Card criado", update_card: "Card atualizado", send_message: out && out.status === "aguardando confirmação" ? "Na fila de confirmação" : "Mensagem enviada", create_tree: "Automação salva", ui: "Interface ajustada", history_clear: "Histórico apagado"}[p.action] || "Feito"; }
 async function afterConfirm(p, out, el) {
   if (p.action === "create_card" || p.action === "update_card") { await loadCards(true); const c = (out && (out.card || (out.id && out))); if (c && c.id) toast("Pronto", "", {action: "Abrir card", onAction: () => openCard(c.id)}); }
   if (p.action === "ui") { try { const u = await api("/api/ui"); S.prefs = normPrefs(u); applyPrefs(S.prefs); } catch (e) {} }
   if (p.action === "create_tree") pollStatus();
+  if (p.action === "history_clear") { renderRecents(); if (S.view === "historico") render(); }
+  if (p.action === "update_card" && S.view === "notificacoes") drawAlerts($("#alertbox"));
 }
 function inputRow(label, key, val, type = "text", ph = "") { return `<div class="field"><label>${esc(label)}</label>${type === "area" ? `<textarea class="ta" data-k="${key}" rows="3" placeholder="${esc(ph)}">${esc(val || "")}</textarea>` : `<input class="inp" data-k="${key}" type="${type}" value="${esc(val ?? "")}" placeholder="${esc(ph)}">`}</div>`; }
 function chanOpts() { const c = connected().map(i => i.id); const o = []; if (c.includes("whatsapp")) o.push(["whatsapp", "WhatsApp (enviar daqui)"]);
@@ -1682,6 +1684,8 @@ function syncW(pb, W) {
 }
 function renderProposal(pb, p, r, state) {
   const a = p.action;
+  if (a === "history_clear") { const o = p.args || p.params || p;
+    pb.innerHTML = `<div class="prop"><p class="hint">${ico("trash", "sm")} ${o.tudo ? "Apagar todo o histórico de ações." : o.hoje ? "Apagar o histórico de hoje." : o.antes_de ? `Apagar o histórico anterior a ${esc(fmtDT(String(o.antes_de).length === 10 ? parseD(o.antes_de) : o.antes_de))}.` : "Apagar itens do histórico."} Cards, notas e automações continuam.</p></div>`; return; }
   if (["create_card", "update_card", "send_message", "abrir_app", "open_app"].includes(a)) {
     const W = state.W = state.W || initW(p, r);
     const draw = () => {
@@ -2055,7 +2059,7 @@ function drawEditor() {
       <button class="iconbtn sm" data-md="h" aria-label="Título" data-tip="Título">${ico("heading", "sm")}</button><button class="iconbtn sm" data-md="b" aria-label="Negrito" data-tip="Negrito (Ctrl B)">${ico("bold", "sm")}</button><button class="iconbtn sm" data-md="i" aria-label="Itálico" data-tip="Itálico (Ctrl I)">${ico("italic", "sm")}</button>
       <button class="iconbtn sm" data-md="ul" aria-label="Lista" data-tip="Lista">${ico("list", "sm")}</button><button class="iconbtn sm" data-md="ck" aria-label="Checklist" data-tip="Checklist">${ico("boxok", "sm")}</button><button class="iconbtn sm" data-md="link" aria-label="Link" data-tip="Link">${ico("link", "sm")}</button>
       <span class="vsep"></span>${segHTML("ne-mode", [["edit", "Editar"], ["ver", "Ver"]], NOTAS.mode === "ver" ? "ver" : "edit", "Modo")}
-      <span class="sp"></span><button class="btn sm ghost" id="ne-ver">${ico("clock", "sm")} Versões</button><button class="btn sm ghost" id="ne-sv">${ico("archive", "sm")} Salvar versão</button>
+      <span class="sp"></span><button class="iconbtn sm" id="ne-sv" aria-label="Salvar versão" data-tip="Salvar versão">${ico("archive", "sm")}</button><button class="iconbtn sm" id="ne-ver" aria-label="Versões" data-tip="Versões">${ico("clock", "sm")}</button>
       <button class="btn sm primary" id="ne-ana">${ico("spark", "sm")} Analisar com o ${esc(AG())}</button></div>
     <div class="nebody"><textarea class="nearea" id="ne-c" placeholder="Escreva aqui. Use - [ ] para checklist, **negrito**, *itálico*…" ${NOTAS.mode === "ver" ? "hidden" : ""}>${esc(n.corpo || "")}</textarea><div class="neprev md" id="ne-p" ${NOTAS.mode === "ver" ? "" : "hidden"}></div></div>
     <form class="neask" id="ne-askf"><label class="fsearch">${ico("search", "sm")}<input id="ne-q" placeholder="Perguntar à nota… (ex.: quando é a entrega?)" aria-label="Perguntar à nota"></label><button class="btn sm" type="submit">Perguntar</button></form>
@@ -2144,14 +2148,14 @@ async function analyzeNota(n, btn) {
 function drawAnalysis(n) {
   const a = NOTAS.ana, box = $("#ne-anar"); if (!a || !box) return;
   const tf = asList(a.tarefas), et = asList(a.etiquetas).filter(t => !(n.etiquetas || []).includes(t)), sel = a._sel;
-  const qTxt = q => !q ? "" : typeof q === "string" && /^\d{4}-\d{2}-\d{2}/.test(q) ? fmtDT(q.length === 10 ? parseD(q) : q, {rel: true}) : typeof q === "object" ? (q.texto || q.data || "") : String(q);
+  const qTxt = q => !q ? "" : typeof q === "string" && /^\d{4}-\d{2}-\d{2}/.test(q) ? fmtDT(q.length === 10 ? parseD(q) : q, {rel: true}) : typeof q === "object" ? (q.inicio || q.data || q.quando || q.valor ? qTxt(String(q.inicio || q.data || q.quando || q.valor).replace(/T(\d\d:\d\d)$/, "T$1:00")) + (q.recorrencia_txt ? " · " + q.recorrencia_txt : "") : q.texto || "") : String(q);
   box.innerHTML = `<div class="card nana"><div class="rhead"><div class="rtool"><span class="ti">${ico("spark")}</span>O que o ${esc(AG())} achou</div><span class="sp"></span>${a.fonte ? `<span class="decby">${a.fonte === "modelo" ? "pelo modelo" : a.fonte === "regras" ? "pelas regras" : esc(a.fonte)}</span>` : ""}<button class="iconbtn sm" id="anx" aria-label="Fechar análise">${ico("x", "sm")}</button></div>
     ${a.titulo_sugerido && a.titulo_sugerido !== n.titulo ? `<div class="narow"><span class="lbl">Título sugerido</span><b>${esc(a.titulo_sugerido)}</b><button class="btn sm" id="an-t">Usar este título</button></div>` : ""}
     ${et.length ? `<div class="narow"><span class="lbl">Etiquetas</span>${et.map(t => `<span class="chip"><i class="mdot" style="background:${tagColor(t)}"></i>${esc(t)}</span>`).join("")}<button class="btn sm" id="an-e">Aplicar</button></div>` : ""}
     ${tf.length ? `<div class="natf"><h4>Achei ${tf.length} tarefa${tf.length > 1 ? "s" : ""}</h4>${tf.map(t => `<label class="tfrow"><button type="button" class="cbx" role="checkbox" aria-checked="${sel.has(t.indice)}" data-ti="${t.indice}" aria-label="Escolher tarefa">${ico("check")}</button><span>${esc(t.frase || (t.card && t.card.title) || "")}</span>${t.quando ? `<small>${ico("cal", "xs")} ${esc(qTxt(t.quando))}</small>` : ""}</label>`).join("")}
       <div class="row" style="justify-content:flex-end"><button class="btn sm primary" id="an-c" ${sel.size ? "" : "disabled"}>${ico("plus", "sm")} Criar ${sel.size} card${sel.size === 1 ? "" : "s"}</button></div></div>` : `<p class="hint">Não achei tarefas nesta nota.</p>`}
     ${asList(a.resumo).length ? `<div class="narow col"><span class="lbl">Resumo</span><ul class="nres">${a.resumo.map(x => `<li>${esc(typeof x === "string" ? x : x.texto || x.frase || "")}</li>`).join("")}</ul></div>` : ""}
-    ${asList(a.datas).length ? `<div class="narow"><span class="lbl">Datas</span>${a.datas.map(d => `<span class="chip">${ico("cal", "sm")}${esc(typeof d === "string" ? qTxt(d) : (d.texto || qTxt(d.data || d.quando)))}</span>`).join("")}</div>` : ""}
+    ${asList(a.datas).length ? `<div class="narow"><span class="lbl">Datas</span>${a.datas.map(d => `<span class="chip">${ico("cal", "sm")}${esc(typeof d === "string" ? qTxt(d) : (d.texto || qTxt(d)))}</span>`).join("")}</div>` : ""}
     ${asList(a.pessoas).length ? `<div class="narow"><span class="lbl">Pessoas</span>${a.pessoas.map(p => `<span class="chip">${ico("user", "sm")}${esc(titleCase(typeof p === "string" ? p : p.nome || p.texto || ""))}</span>`).join("")}</div>` : ""}</div>`;
   $("#anx", box).onclick = () => { NOTAS.ana = null; box.innerHTML = ""; };
   const bt = $("#an-t", box); if (bt) bt.onclick = () => { n.titulo = a.titulo_sugerido; $("#ne-t").value = n.titulo; saveNota({titulo: n.titulo}); drawAnalysis(n); toast("Título aplicado"); };

@@ -322,10 +322,15 @@ def _proposta(s: Dict, nota: Dict, agora: _dt.datetime, p: float, fonte: str) ->
     txt = s["limpa"]
     ts = reconhecer(txt, agora.date(), agora)
     q = resolver_quando(txt, ts, agora)
-    titulo = txt
-    for t in sorted([t for t in ts if t.campo in ("data", "hora", "período do dia", "frequência ou repetição")],
-                    key=lambda t: -t.ini):                 # o título fica sem a data (ela vai para o card)
-        titulo = titulo[:t.ini] + titulo[t.fim:]
+    try:                                                   # o título fica sem a data (ela vai para o card),
+        from .command import _sem_campos                   # e sem a preposição que ficaria solta ("às", "até")
+        titulo = _sem_campos(txt, ts)
+    except Exception:
+        titulo = txt
+        for t in sorted([t for t in ts if t.campo in ("data", "hora", "período do dia", "frequência ou repetição")],
+                        key=lambda t: -t.ini):
+            titulo = titulo[:t.ini] + titulo[t.fim:]
+    titulo = re.sub(r"(?i)\s+(?:às|as|até|ate|em|no|na|dia|para|pra|de)\s*$", "", " ".join(titulo.split()))
     titulo = re.sub(r"(?i)^(?:todo:?|a fazer:?|preciso|tenho que|tenho de|não esquecer de|nao esquecer de|"
                     r"lembrar de)\s+", "", " ".join(titulo.split())).strip(" ,.-–:;") or txt
     titulo = titulo[:1].upper() + titulo[1:]
