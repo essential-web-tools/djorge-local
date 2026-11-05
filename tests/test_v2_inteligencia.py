@@ -409,7 +409,7 @@ def test_etapas_stream(app):
     assert e["resultado"]["tool"] == "cards" and e["resultado"]["executed"]
     s = K.run("2+2")                                                     # sem stream também registra
     assert K.etapas(s["id"])["pronto"] and "Djorge está usando a ferramenta Calcular…" in [x["texto"] for x in K.etapas(s["id"])["etapas"]]
-    r = K.run("sempre que chegar boleto, me avisa", stream=True)          # sem modelo: erro amigável na etapa
+    r = K.run("mova e-mails da Ana para Trabalho automaticamente", stream=True)   # regra de árvore sem modelo: erro amigável
     for _ in range(200):
         e = K.etapas(r["id"])
         if e["pronto"]:

@@ -240,7 +240,7 @@ def test_secretario_config_ignorados_e_silencio(app, srv):
     assert alerta["toast"] == "silenciado" and alerta["card_id"]
     sec.agora = lambda: dt.datetime(2026, 11, 2, 12, 0)
     n0 = len(toasts.ULTIMOS)
-    out = app.handle(_ev("Preciso falar com você", title="Marta"))["secretario"]
+    out = app.handle(_ev("Preciso falar com você hoje", title="Marta Souza"))["secretario"]   # outra (a igual é repetida)
     assert next(x for x in out["acoes"] if x["action"] == "alerta")["toast"] in ("ok", "sem toast")
     assert len(toasts.ULTIMOS) == n0 + 1
     srv("/api/secretario", {"ativo": False})

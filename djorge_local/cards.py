@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 KINDS = ("tarefa", "evento", "lembrete", "nota", "lista", "mensagem")
 COLUMNS = ("entrada", "hoje", "fazendo", "aguardando", "feito")
 FIELDS = ("id", "kind", "title", "body", "column", "start", "end", "due", "all_day", "priority", "tags", "people",
-          "checklist", "recurrence", "color", "pinned", "done", "source", "order", "created", "updated", "alertas")
+          "checklist", "recurrence", "color", "pinned", "done", "source", "order", "created", "updated", "alertas", "objetivo")
 _JSON = ("tags", "people", "checklist", "source", "alertas")
 _SQLCOL = {"column": "col", "order": "ord", "end": "end_", "start": "start_"}   # nomes reservados no SQL
 
@@ -89,6 +89,8 @@ def normalize(data: Dict, base: Optional[Dict] = None) -> Dict:
         elif k == "column":
             if v not in COLUMNS:
                 raise ValueError(f"column: use {', '.join(COLUMNS)}")
+        elif k == "objetivo":
+            v = " ".join(("" if v is None else str(v)).split())[:300]
         elif k in ("title", "body", "recurrence", "color"):
             v = "" if v is None else str(v)
             v = v[:200] if k == "title" else v[:20000] if k == "body" else v[:120]
@@ -175,13 +177,15 @@ class Cards:
               id TEXT PRIMARY KEY, kind TEXT, title TEXT, body TEXT, col TEXT, start_ TEXT, end_ TEXT, due TEXT,
               all_day INTEGER, priority INTEGER, tags TEXT, people TEXT, checklist TEXT, recurrence TEXT, color TEXT,
               pinned INTEGER, done INTEGER, source TEXT, ord REAL, created TEXT, updated TEXT,
-              src_int TEXT, src_ext TEXT, alertas TEXT);
+              src_int TEXT, src_ext TEXT, alertas TEXT, objetivo TEXT DEFAULT '');
             CREATE INDEX IF NOT EXISTS cards_col ON cards(col, ord);
             CREATE INDEX IF NOT EXISTS cards_when ON cards(start_, due);
             CREATE INDEX IF NOT EXISTS cards_src ON cards(src_int, src_ext);
             """)
             if "alertas" not in [r[1] for r in self.db.execute("PRAGMA table_info(cards)")]:
                 self.db.execute("ALTER TABLE cards ADD COLUMN alertas TEXT")     # bancos antigos
+            if "objetivo" not in [r[1] for r in self.db.execute("PRAGMA table_info(cards)")]:
+                self.db.execute("ALTER TABLE cards ADD COLUMN objetivo TEXT DEFAULT ''")
             self.db.commit()
 
     # ------------------------------------------------------------------ básico --

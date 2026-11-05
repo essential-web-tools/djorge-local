@@ -149,6 +149,28 @@ class ModeloAusente(Exception):
     pass
 
 
+_OBJ = re.compile(r"(?i)(?:\bcom\s+(?:o\s+)?objetivo\s+de\s+|\bobjetivo\s*:\s*|\bpara que\s+)(.+?)"
+                  r"(?=\s*[,;.]?\s*\bdescri[cç][aã]o\s*:|[;]|$)")
+_DESC = re.compile(r"(?i)\bdescri[cç][aã]o\s*:\s*(.+?)(?=\s*[,;.]?\s*\bobjetivo\s*:|$)")
+
+
+def objetivo_descricao(text: str) -> Dict:
+    """"… com objetivo de X" / "objetivo: X" / "para que …" -> objetivo; "descrição: Y" -> descrição (body)."""
+    out, tr = {}, []
+    m = _OBJ.search(text or "")
+    if m:
+        v = m.group(1).strip(" .,;")
+        out["objetivo"] = (("Para que " + v) if m.group(0).casefold().lstrip().startswith("para que") else v[:1].upper() + v[1:])[:300]
+        tr.append(m.group(0))
+    m = _DESC.search(text or "")
+    if m:
+        v = m.group(1).strip(" ,;")
+        out["descricao"] = v[:1].upper() + v[1:]
+        tr.append(m.group(0))
+    out["_trechos"] = tr
+    return out
+
+
 def _fmt_num(v) -> str:
     if isinstance(v, float) and v.is_integer():
         v = int(v)
@@ -395,7 +417,8 @@ class Command:
             pr = md.get("p_regra")
             if pr is not None and model_tools:            # "descreve uma regra que acontece sempre que…?"
                 model_tools = dict(model_tools)
-                if pr >= 0.6 and P.condicional(text) or pr >= 0.85:
+                sreg = any(rx.search(_sem_acento(text.casefold())) for _, rx, _ in P._RX["regra"])
+                if pr >= 0.6 and P.condicional(text) or pr >= 0.85 and sreg:
                     model_tools["regra"] = max(model_tools.get("regra", 0), pr)
                     if P.condicional(text):
                         model_tools["bilhete"] = model_tools.get("bilhete", 0) * 0.2
@@ -706,11 +729,19 @@ class Command:
                 for nm in nomes[:1]:
                     if nm.casefold() not in base.casefold() and re.search(rf"(?i)\bcom\s+(?:o\s+|a\s+)?{re.escape(nm)}", text):
                         base = f"{base} com {nm}"
+            extra = objetivo_descricao(text)
+            for sub in extra.pop("_trechos", []):
+                base = re.sub(r"\s*[,;]?\s*" + re.escape(sub.strip()), "", base, flags=re.I) if sub.strip() else base
+            base = re.sub(r"(?i)\s*[,;]?\s*\b(com\s+(o\s+)?objetivo\s+de|objetivo\s*:|descri[cç][aã]o\s*:|para que)\s*$", "", base).strip()
             titulo = F.titulo(base or text[:80], nomes)
             if not titulo:
                 titulo = {"evento": "Compromisso", "lembrete": "Lembrete", "nota": "Nota"}.get(kind, "Tarefa")
             card = {"kind": kind, "title": titulo, "people": people, "recurrence": quando.get("recorrencia_txt") or "",
                     "priority": 3 if re.search(r"\burgent", s) else 2 if "importante" in s else 0}
+            if extra.get("objetivo"):
+                card["objetivo"] = extra["objetivo"]
+            if extra.get("descricao"):
+                card["body"] = extra["descricao"]
             self._datas_card(card, kind, quando, hoje)
             sel = (out.get("context") or {}).get("selected_card")
             al = _alertas(text, _now(self.app.cfg))

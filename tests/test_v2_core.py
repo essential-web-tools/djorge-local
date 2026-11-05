@@ -160,9 +160,8 @@ def test_command_without_model(app):
     r = K.run("me conta uma piada")
     assert r["tool"] == "nenhuma" and r["proposal"]["action"] == "none"
 
-    from djorge_local.command import ModeloAusente
-    with pytest.raises(ModeloAusente):
-        K.run("sempre que chegar e-mail da Ana, me avisa")
+    r = K.run("sempre que chegar e-mail da Ana, me avisa")       # automação: sai pelas regras, confirma antes
+    assert r["tool"] == "regra" and r["proposal"]["action"] == "create_automacao" and r["needs_confirm"]
 
     r = K.run("o que tenho amanhã?")
     assert r["tool"] == "proximas_tarefas" and any(x["id"] == card["id"] for x in r["results"])
@@ -205,7 +204,7 @@ def test_routes(srv, app):
     assert r["proposal"]["action"] == "ui" and srv("/api/ui")[1]["prefs"]["theme"] == "claro"
     code, r = srv("/api/command", {"text": "#ana@x.com &chego às 10h&"})
     assert r["needs_confirm"] and srv("/api/command/confirm", {"id": r["id"], "approve": False})[1]["cancelled"]
-    assert srv("/api/command", {"text": "sempre que chegar e-mail do banco, me avisa"}) == (409, {"error": "modelo_ausente", "tool": "regra"})
+    assert srv("/api/command", {"text": "sempre que chegar e-mail do banco, me avisa"})[1]["proposal"]["action"] == "create_automacao"
     assert srv("/api/rules/preview", {"text": "mova e-mails da Ana para Trabalho"})[0] == 409
     assert srv("/api/ui", {"density": "compacta"})[1]["prefs"]["density"] == "compacta"
     assert srv("/api/ui", {"density": "gigante"})[0] == 400
