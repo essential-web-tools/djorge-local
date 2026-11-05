@@ -85,6 +85,70 @@ def _de_conversa(ev: Dict) -> bool:
     return any(x in a for x in APPS_CONVERSA)
 
 
+_DIAS = ("seg.", "ter.", "qua.", "qui.", "sex.", "sáb.", "dom.")
+MOTIVO_PT = {"espera resposta": "espera sua resposta", "prazo amanhã": "tem prazo para amanhã",
+             "prazo hoje": "tem prazo para hoje", "vip": "é de alguém importante"}
+
+
+def dia_curto(iso, hoje: _dt.date = None) -> str:
+    try:
+        d = _dt.date.fromisoformat(str(iso)[:10])
+    except (TypeError, ValueError):
+        return ""
+    hoje = hoje or _dt.date.today()
+    if d == hoje:
+        return "hoje"
+    if d == hoje + _dt.timedelta(1):
+        return "amanhã"
+    return _DIAS[d.weekday()] if 0 < (d - hoje).days < 7 else d.strftime("%d/%m")
+
+
+def _item_pt(a: Dict) -> str:
+    ac = a.get("action") or a.get("acao") or ""
+    card = a.get("card") or {}
+    tit = card.get("title") or a.get("titulo") or ""
+    prazo = dia_curto(card.get("due") or card.get("start")) if card else ""
+    if ac in ("criar_card", "tarefa", "alerta"):
+        nome = {"tarefa": "a tarefa", "alerta": "o alerta", "criar_card": "o card"}[ac]
+        return f"criar {nome} “{tit}”" + (f" até {prazo}" if prazo else "") if tit else f"criar {nome}"
+    if ac == "notificar":
+        return "avisar você"
+    if ac == "etiquetar":
+        et = a.get("etiqueta") or ""
+        return f"etiquetar {et[:1].upper() + et[1:]}" if et else "etiquetar"
+    return {"arquivar": "arquivar", "destacar": "pôr em destaque", "abrir_app": "abrir o app",
+            "responder_sugestao": "sugerir uma resposta"}.get(ac, ac.replace("_", " "))
+
+
+def intencao(n: Dict, agente: str = "Djorge", tri: Dict = None, hoje: _dt.date = None) -> Dict:
+    """O que o Djorge quer fazer (sugestões) e o que já fez (ações), em frase curta, sem probabilidades:
+    "O Djorge quer: criar a tarefa “Enviar relatório” até sex. · avisar você · etiquetar Trabalho"."""
+    n = n or {}
+    sug = [s for s in n.get("sugestoes") or [] if isinstance(s, dict)]
+    fez = [a for a in n.get("acoes") or [] if isinstance(a, dict) and not a.get("desfeita")
+           and a.get("status") not in ("erro", "indisponível", "sem notificação", "simulado")]
+    itens = [{"texto": _item_pt(s), "i": s.get("i", k), "tipo": "sugestao"} for k, s in enumerate(sug)]
+    if not itens and not fez and tri:                  # só a triagem (comando /api/triage, ou secretário desligado)
+        ped = tri.get("pedido") or {}
+        for ac in tri.get("acoes") or []:
+            if ac in ("criar tarefa", "tarefa") and (ped.get("tarefa") or ped.get("titulo")):
+                pz = dia_curto(ped.get("prazo") or tri.get("prazo"), hoje)
+                itens.append({"texto": f"criar a tarefa “{ped.get('tarefa') or ped['titulo']}”" + (f" até {pz}" if pz else ""),
+                              "tipo": "triagem"})
+            elif ac == "responder":
+                itens.append({"texto": "responder" + (f" {ped['quem']}" if ped.get("quem") else ""), "tipo": "triagem"})
+            elif ac:
+                itens.append({"texto": str(ac), "tipo": "triagem"})
+        if tri.get("categoria"):
+            itens.append({"texto": f"etiquetar {str(tri['categoria'])[:1].upper() + str(tri['categoria'])[1:]}",
+                          "tipo": "triagem"})
+    mot = [MOTIVO_PT.get(m, m) for m in ((tri or {}).get("motivos") or n.get("motivos") or []) if isinstance(m, str)][:3]
+    out = {"quer": (f"O {agente} quer: " + " · ".join(i["texto"] for i in itens)) if itens else "",
+           "fez": (f"O {agente} fez: " + " · ".join(dict.fromkeys(_item_pt(a) for a in fez))) if fez else "",
+           "por_que": " · ".join(mot), "itens": itens, "pode_desfazer": any(a.get("desfazer") for a in fez)}
+    return out
+
+
 def pedido_no_card(card: Dict, ped: Dict) -> Dict:
     """Card de um pedido: título = nome da tarefa (ou título curto), corpo = o texto central do pedido + quem/prazo/valor."""
     c = dict(card)
@@ -128,6 +192,7 @@ class Secretario:
         a.hooks["etiquetar"] = self._h_etiquetar
         a.hooks["arquivar"] = self._h_arquivar
         a.hooks["notificar"] = self._h_notificar
+        a.hooks["destacar"] = self._h_destacar
 
     # ------------------------------------------------------------------------------------ configuração --
     def config(self) -> Dict:
@@ -328,6 +393,17 @@ class Secretario:
     def processar(self, ev: Dict) -> Optional[Dict]:
         if ev.get("skipped") or ev.get("source") not in FONTES or ev.get("id") == "teste":
             return None
+        try:
+            from .connectors import proprio_app
+            if proprio_app(ev.get("app")):               # toast do próprio Djorge: nunca volta como notificação
+                return {"ignorado": True, "motivo": "notificação do próprio Djorge"}
+        except Exception:
+            pass
+        rep = self.store.repetida(ev)
+        if rep is not None:                               # repetida: só conta (×N), sem triagem, ações nem toasts
+            n = self.store.add(ev)
+            return {"notificacao": n["id"], "duplicada": True, "contagem": n.get("contagem", 1), "acoes": [],
+                    "sugestoes": [], "regras": []}
         motivo = self.ignorada(ev)
         if motivo and self.conf.get("ignorar_como") == "descartar":
             return {"ignorado": True, "motivo": motivo}
@@ -406,9 +482,26 @@ class Secretario:
         from . import toasts
         return "ok" if toasts.mostrar(titulo, msg) else "sem toast"
 
+    def _card_igual(self, card: Dict, ev: Dict) -> Optional[Dict]:
+        """Card com o mesmo título (normalizado) e a mesma origem (notificação ou remetente) nas últimas 24 h."""
+        from .notificacoes import _norm
+        t = _norm(card.get("title"))
+        desde = (_dt.datetime.now() - _dt.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
+        rem = _norm(ev.get("remetente") or ev.get("sender") or "")
+        for c in self.app.cards.all():
+            if _norm(c.get("title")) != t or str(c.get("created") or c.get("updated") or "9")[:19] < desde:
+                continue
+            src = c.get("source") or {}
+            if src.get("integration") == "secretario" or not src or rem and rem in _norm(c.get("body")):
+                return c
+        return None
+
     def _h_card(self, spec, ctx, prep):
         card = dict(prep["card"])
         ev = ctx.get("event") or {}
+        igual = self._card_igual(card, ev)
+        if igual is not None:                            # já existe: não cria outro (nem toast de novo)
+            return {"status": "já existia", "card_id": igual["id"]}
         ped = ev.get("pedido") if isinstance(ev.get("pedido"), dict) else None
         if ped and spec.get("pedido") is not False:     # pedido: título = tarefa, corpo = texto central
             card = pedido_no_card(card, ped)
@@ -440,6 +533,14 @@ class Secretario:
             return {"status": "sem notificação"}
         self.store.update(nid, arquivada=True, lida=True)
         return {"status": "ok", "desfazer": {"tipo": "arquivar", "id": nid}}
+
+    def _h_destacar(self, spec, ctx, prep):
+        nid = (ctx.get("event") or {}).get("notif_id")
+        if not nid:
+            return {"status": "sem notificação"}
+        antes = (self.store.get(nid) or {}).get("destaque")
+        self.store.update(nid, destaque=dict(prep.get("destaque") or {}, origem="automação"))
+        return {"status": "ok", "desfazer": {"tipo": "destaque", "id": nid, "antes": antes}}
 
     def _h_notificar(self, spec, ctx, prep):
         return {"status": self._toast(prep["titulo"], prep["mensagem"])}
@@ -518,6 +619,8 @@ class Secretario:
                     self.app.cards.delete(u["id"])
                 elif u["tipo"] == "etiqueta":
                     self.store.update(nid, etiqueta=u.get("antes") or "")
+                elif u["tipo"] == "destaque":
+                    self.store.update(nid, destaque=u.get("antes"))
                 elif u["tipo"] == "arquivar":
                     self.store.update(nid, arquivada=False)
                 desfeitas.append(a.get("action"))

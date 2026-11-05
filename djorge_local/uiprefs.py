@@ -100,7 +100,7 @@ def destaque_valido(d) -> Dict:
         raise ValueError(f"destaque de seção: use {', '.join(SECOES_INICIO)}")
     if tipo == "card" and alvo.startswith("@") and alvo not in ALVOS_CARD:
         raise ValueError(f"destaque de cards: use um id ou {', '.join(ALVOS_CARD)}")
-    did = re.sub(r"[^\w-]", "", str(d.get("id") or "")) [:24] or f"{tipo}-{_fold(alvo).replace(' ', '-')[:30]}"
+    did = re.sub(r"[^\w-]", "", str(d.get("id") or "") or f"{tipo}-{_fold(alvo).replace(' ', '-')}")[:40]
     return {"id": did, "tipo": tipo, "alvo": alvo, "estilo": estilo_destaque(d.get("estilo")), "ate": ate_valido(d.get("ate"))}
 
 
@@ -231,12 +231,106 @@ class UIPrefs:
             tmp.replace(self.path)
             return cur
 
+    # ------------------------------------------------------------------ destaques --
+    _SEC_RX = {"tarefas": r"tarefas?", "eventos": r"eventos?|agenda|compromissos?", "mensagens": r"mensagens?",
+               "notificacoes": r"notificac\w*", "destaques": r"destaques?|em destaque"}
+
+    def _parse_destaque(self, text: str, s: str, cur: Dict, hoje) -> Optional[Dict]:
+        if re.search(r"\bcor (de )?destaque\b", s):
+            return None
+        ds = list(cur.get("destaques") or [])
+        no_inicio = re.search(r"\b(no |do |o )?(inicio|painel|tela inicial)\b", s)
+        secs = [k for k, rx in self._SEC_RX.items() if re.search(rf"\b(?:{rx})\b", s)]
+        # ordem e visibilidade das seções do Início
+        if no_inicio and secs and not re.search(r"\bdestac|\bdestaque", s):
+            sec = secs[0]
+            if re.search(r"\b(esconde|esconda|oculta|oculte|tira|tire|remove|remova)\b", s):
+                oc = [x for x in cur.get("inicio_ocultas") or [] if x != sec] + [sec]
+                return {"patch": {"inicio_ocultas": oc}, "descricao": f"esconder “{SECAO_PT[sec]}” do Início"}
+            if re.search(r"\b(mostra|mostre|exibe|exiba|volta|traz|traga)\b", s):
+                oc = [x for x in cur.get("inicio_ocultas") or [] if x != sec]
+                return {"patch": {"inicio_ocultas": oc}, "descricao": f"mostrar “{SECAO_PT[sec]}” no Início"}
+            if re.search(r"\b(primeiro|no topo|em cima|antes|no comeco)\b", s):
+                ordem = [sec] + [x for x in cur.get("inicio_secoes") or SECOES_INICIO if x != sec]
+                return {"patch": {"inicio_secoes": ordem}, "descricao": f"“{SECAO_PT[sec]}” primeiro no Início"}
+            if re.search(r"\b(por ultimo|no fim|embaixo|depois)\b", s):
+                ordem = [x for x in cur.get("inicio_secoes") or SECOES_INICIO if x != sec] + [sec]
+                return {"patch": {"inicio_secoes": ordem}, "descricao": f"“{SECAO_PT[sec]}” por último no Início"}
+            return None
+        if not re.search(r"\b(destac\w*|destaques?|realc\w*|ressalt\w*)\b", s):
+            return None
+        # tirar destaque
+        if re.search(r"\b(tira|tire|tirar|remove|remova|apaga|apague|limpa|limpe|desfaz|desfaca|sem)\b", s):
+            alvo = re.search(r"\bdestaques?\s+(?:d[aoe]s?\s+)(?:mensagens?\s+|notificac\w+\s+|e-?mails?\s+)?(?:d[aoe]s?\s+)?(.+)$", s)
+            if alvo:
+                a = alvo.group(1).strip()
+                resto = [d for d in ds if a not in _fold(d["alvo"]) and _fold(d["alvo"]) not in a]
+                sec = cur.get("secao_destaque") if not any(re.search(rf"\b(?:{rx})\b", a) for rx in self._SEC_RX.values()) else ""
+                if len(resto) != len(ds) or sec != cur.get("secao_destaque"):
+                    return {"patch": {"destaques": resto, "secao_destaque": sec or ""}, "descricao": f"tirar o destaque de {a}"}
+            return {"patch": {"destaques": [], "secao_destaque": ""}, "descricao": "tirar todos os destaques"}
+        cor = next((c for c in ACCENTS if re.search(rf"\b{c}\b", s)), "rosa")
+        icone = "coracao" if re.search(r"\b(amor|coracao)\b", s) else "alerta" if re.search(r"\burgent", s) else \
+            "pino" if re.search(r"\b(fixa|fixe|topo)\b", s) else "estrela"
+        ate = ""
+        if re.search(r"\b(so )?hoje\b", s):
+            ate = hoje.isoformat()
+        elif re.search(r"\bate amanha\b", s):
+            ate = (hoje + _dt.timedelta(1)).isoformat()
+        else:
+            m = re.search(r"\bate (?:o dia |dia )?(\d{1,2})/(\d{1,2})\b", s)
+            if m:
+                try:
+                    dt = _dt.date(hoje.year, int(m.group(2)), int(m.group(1)))
+                    ate = (dt if dt >= hoje else dt.replace(year=hoje.year + 1)).isoformat()
+                except ValueError:
+                    pass
+        estilo = {"cor": cor, "icone": icone, "fixar": True}
+        novo = None
+        m = re.search(r"\b(?:mensagens?|notificac\w+|e-?mails?|coisas|tudo|recados?|whats\w*)\s+(?:que\s+chegam?\s+)?"
+                      r"(?:d[aoe]s?|vind[ao]s? d[aoe]s?)\s+([A-Za-zÀ-ÿ][\wÀ-ÿ.@-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]*){0,2})", text)
+        if m and _fold(m.group(1)) not in ("hoje", "semana", "inicio", "painel"):
+            nome = " ".join(w[:1].upper() + w[1:] for w in m.group(1).split())
+            novo = {"tipo": "remetente", "alvo": nome, "estilo": estilo, "ate": ate}
+            desc = f"mensagens de {nome} em destaque"
+        elif re.search(r"\btarefas?\b|\bcards?\b", s) and re.search(r"\b(urgentes?|importantes?|de hoje|atrasad\w*)\b", s):
+            alvo = "@urgentes" if "urgent" in s else "@atrasadas" if "atrasad" in s else "@hoje" if "de hoje" in s else "@importantes"
+            novo = {"tipo": "card", "alvo": alvo, "estilo": estilo, "ate": ate}
+            desc = {"@urgentes": "tarefas urgentes", "@atrasadas": "tarefas atrasadas", "@hoje": "tarefas de hoje",
+                    "@importantes": "tarefas importantes"}[alvo] + " em destaque" + (" no Início" if no_inicio else "")
+        elif re.search(r"#([\w-]+)|\betiqueta\s+([\wÀ-ÿ-]+)", text):
+            m2 = re.search(r"#([\w-]+)|\betiqueta\s+([\wÀ-ÿ-]+)", text)
+            et = (m2.group(1) or m2.group(2)).casefold()
+            novo = {"tipo": "etiqueta", "alvo": et, "estilo": estilo, "ate": ate}
+            desc = f"etiqueta “{et}” em destaque"
+        elif secs:
+            sec = secs[0]
+            novo = {"tipo": "secao", "alvo": sec, "estilo": estilo, "ate": ate}
+            d = destaque_valido(novo)
+            resto = [x for x in ds if x["tipo"] != "secao"] + [d]
+            return {"patch": {"destaques": resto[-40:], "secao_destaque": sec}, "descricao": f"“{SECAO_PT[sec]}” em destaque"}
+        if novo is None:
+            return None
+        d = destaque_valido(novo)
+        resto = [x for x in ds if x["id"] != d["id"]] + [d]
+        return {"patch": {"destaques": resto[-40:]}, "descricao": desc + (f" até {ate}" if ate else "") +
+                (f" ({cor})" if cor != "rosa" else "")}
+
     # ------------------------------------------------------------------ comandos em português --
     def parse(self, text: str, hoje: Optional[_dt.date] = None) -> Optional[Dict]:
         """Texto -> {"patch": {...}, "descricao": "..."} ou None se não for um comando de interface."""
         s = _fold(text).strip(" .!?")
         cur = self.get()
         hoje = hoje or _dt.date.today()
+        try:
+            from .pistas import condicional
+            if condicional(text):                          # "sempre que… destaca": é automação, não interface
+                return None
+        except Exception:
+            pass
+        d = self._parse_destaque(text, s, cur, hoje)
+        if d is not None:
+            return d
         # nomes: "me chama de Arthur", "seu nome agora é Jorge"
         m = re.search(r"(?i)^(?:(?:por favor|pode)\s+)?(?:me\s+cham[ae]r?|cham[ae]-me|meu nome (?:e|é))\s+(?:de\s+)?"
                       r"([A-Za-zÀ-ÿ][\wÀ-ÿ'-]*(?:\s+[A-Za-zÀ-ÿ][\wÀ-ÿ'-]*)?)\s*[.!]?$", text.strip())

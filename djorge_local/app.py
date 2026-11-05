@@ -636,7 +636,30 @@ class App:
             e = eventos[0]
             ini = str(e.get("start") or e.get("due") or "")
             frase += f" Próximo compromisso: {e['title']}, {data_fmt(ini[:10], ini[11:16] or None)}."
-        return {"tarefas_relevantes": relevantes[:6], "mensagens_importantes": importantes,
+        destaques = []
+        try:
+            from .uiprefs import destaques_ativos
+            from .notificacoes import _norm
+            ds = destaques_ativos(self.ui.get().get("destaques"), agora)
+            rems = [(_norm(d["alvo"]), d) for d in ds if d["tipo"] == "remetente"]
+            ets = [(_norm(d["alvo"]), d) for d in ds if d["tipo"] == "etiqueta"]
+            vistos = set()
+            for n in (st.destacadas() if st is not None else []):
+                if destaques_ativos([n["destaque"]], agora):
+                    destaques.append(dict(n, _tipo="notificacao")); vistos.add(n["id"])
+            for n in (st.list(limit=300) if st is not None and (rems or ets) else []):
+                if n["id"] in vistos:
+                    continue
+                quem = _norm(" ".join([n.get("remetente") or "", n.get("titulo") or ""]))
+                d = next((d for a, d in rems if a and a in quem), None) or \
+                    next((d for a, d in ets if a and a == _norm(n.get("etiqueta"))), None)
+                if d:
+                    destaques.append(dict(n, destaque=dict(d["estilo"], ate=d["ate"]), _tipo="notificacao"))
+                    vistos.add(n["id"])
+            destaques = destaques[:12]
+        except Exception:
+            destaques = []
+        return {"tarefas_relevantes": relevantes[:6], "destaques": destaques, "mensagens_importantes": importantes,
                 "mensagens_cards": msgs, "notificacoes_recentes": recentes, "proximos_eventos": eventos,
                 "automacoes": n_auto, "resumo_frase": frase,
                 "secretario": {"ativo": bool(sec and sec.conf.get("ativo")), "modo": sec.conf.get("modo") if sec else None}}
@@ -799,9 +822,13 @@ def v21_get(app: App, path: str, q: dict):
         return (200, a) if a else (404, {"error": "automação não encontrada"})
     if path == "/api/notificacoes":
         st = _sec(app).store
-        return 200, {"notificacoes": st.list(etiqueta=_q1(q, "etiqueta"), q=_q1(q, "q"), app=_q1(q, "app"),
-                                             lida=_q1(q, "lida"), fonte=_q1(q, "fonte"),
-                                             arquivada=_q1(q, "arquivada", "0"), limit=int(_q1(q, "n", "200")))}
+        from .secretario import intencao
+        ag = (app.ui.get().get("nome_agente") or "Djorge")
+        lst = st.list(etiqueta=_q1(q, "etiqueta"), q=_q1(q, "q"), app=_q1(q, "app"), lida=_q1(q, "lida"),
+                      fonte=_q1(q, "fonte"), arquivada=_q1(q, "arquivada", "0"), limit=int(_q1(q, "n", "200")))
+        for n in lst:
+            n["intencao"] = intencao(n, ag, {"motivos": n.get("motivos"), "pedido": (n.get("dados") or {}).get("pedido")})
+        return 200, {"notificacoes": lst}
     if path == "/api/notificacoes/etiquetas":
         return 200, {"etiquetas": _sec(app).store.etiquetas()}
     if path.startswith("/api/notificacoes/"):
@@ -970,7 +997,7 @@ def v21_post(app: App, path: str, b: dict):
         if len(parts) == 5 and parts[4] == "acao":
             return 200, sec.acao(parts[3], str(b.get("acao") or ""), b)
         if len(parts) == 4:
-            kw = {k: b[k] for k in ("lida", "etiqueta", "arquivada") if k in b}
+            kw = {k: b[k] for k in ("lida", "etiqueta", "arquivada", "destaque") if k in b}
             if "etiqueta" in kw:
                 kw["etiqueta"] = str(kw["etiqueta"] or "").strip()[:40]
             return 200, sec.store.update(parts[3], **kw)
@@ -1005,6 +1032,28 @@ def v21_post(app: App, path: str, b: dict):
     return None
 
 
+def deduplicar_cards(app, simular: bool = False) -> dict:
+    """Junta cards idênticos criados pelas automações (mesmo título normalizado, tipo, tags e origem): fica o mais
+    antigo. `simular` só conta."""
+    from .notificacoes import _norm
+    grupos = {}
+    for c in sorted(app.cards.all(), key=lambda c: str(c.get("created") or "")):
+        src = c.get("source") or {}
+        if src.get("integration") not in ("secretario", "automacao", "regra"):
+            continue
+        k = (_norm(c.get("title")), c.get("kind"), tuple(sorted(c.get("tags") or [])), src.get("integration"))
+        grupos.setdefault(k, []).append(c)
+    rep = [x for g in grupos.values() for x in g[1:]]
+    if not simular:
+        for c in rep:
+            try:
+                app.cards.delete(c["id"])
+            except Exception:
+                pass
+    return {"repetidos": len(rep), "grupos": sum(1 for g in grupos.values() if len(g) > 1), "juntados": 0 if simular
+            else len(rep)}
+
+
 def de_texto_call(texto, marcar):
     from .automacoes import de_texto
     return de_texto(texto, marcar=marcar)
@@ -1033,6 +1082,8 @@ def v2_post(app: App, path: str, b: dict):
         return 200, _acao_ui(app, "editar_card", lambda _: cid, lambda: app.cards.update(cid, b))
     if path == "/api/cards":
         return 200, _acao_ui(app, "criar_card", lambda c: c["id"], lambda: app.cards.create(b))
+    if path == "/api/cards/deduplicar":
+        return 200, deduplicar_cards(app, simular=bool(b.get("simular")))
     if path == "/api/cards/move":
         return 200, _acao_ui(app, "mover_card", lambda c: c["id"],
                              lambda: app.cards.move(b["id"], b.get("column"), b.get("order"), b.get("start")))

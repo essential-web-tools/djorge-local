@@ -28,7 +28,8 @@ CATEGORIAS = ("pessoal", "trabalho", "financeiro", "compras e entregas", "agenda
               "segurança")
 ACAO_PT = {"criar_card": "criar um card", "tarefa": "criar uma tarefa", "alerta": "criar um card de alerta",
            "notificar": "avisar na tela", "etiquetar": "etiquetar", "arquivar": "arquivar",
-           "abrir_app": "abrir o app", "responder_sugestao": "sugerir uma resposta"}
+           "abrir_app": "abrir o app", "responder_sugestao": "sugerir uma resposta",
+           "destacar": "pôr em destaque na interface"}
 CAMPO_PT = {"valor": "valor", "prazo": "prazo", "remetente": "quem mandou", "empresa": "empresa", "data": "data",
             "hora": "hora", "link": "link", "codigo": "código"}
 STOP = {"de", "da", "do", "das", "dos", "a", "o", "as", "os", "um", "uma", "uns", "umas", "e", "ou", "sobre", "com",
@@ -80,7 +81,11 @@ def normalizar(a: Dict, base: Optional[Dict] = None) -> Dict:
         p["campos"] = [c for c in (p.get("campos") or []) if c in CAMPOS]
         acoes.append({"acao": ac, "params": {k: v for k, v in p.items() if k in (
             "titulo", "campos", "coluna", "prioridade", "etiqueta", "app", "para", "texto", "url", "mensagem", "tipo",
-            "web", "assunto")}})
+            "web", "assunto", "cor", "icone", "fixar", "ate")}})
+        if ac == "destacar":
+            from .uiprefs import ate_valido, estilo_destaque
+            est = estilo_destaque(acoes[-1]["params"])
+            acoes[-1]["params"] = dict(est, ate=ate_valido(acoes[-1]["params"].get("ate")))
     out["entao"] = acoes
     return out
 
@@ -288,8 +293,94 @@ CAMPO_RX = {"valor": r"\b(valor|valores|preco|quanto custa|total)\b", "prazo": r
 CAT_RX = [(r"\b(boleto|fatura|conta de|contas a pagar|cobranca|pagamento)", "financeiro"),
           (r"\b(promoc|propaganda|cupom|newsletter|oferta)", "promoções"),
           (r"\b(entrega|rastreio|encomenda)", "compras e entregas"),
-          (r"\b(reuniao|reunioes|convite|consulta)", "agenda")]
+          (r"\b(reuniao|reunioes|convite|consulta)", "agenda"),
+          (r"\b(banco|bancos|cartao de credito)\b", "financeiro")]
 APPS = ["WhatsApp", "Telegram", "Outlook", "Gmail", "Teams", "Slack", "Instagram", "Discord", "Signal"]
+
+
+_GATILHO = re.compile(r"\b(sempre que|toda vez que|todas as vezes que|cada vez que|assim que|quando|caso)\s+", re.I)
+_GATILHO_SE = re.compile(r"(?:^|[,;:.]\s*|\be\s+)(se)\s+", re.I)
+_FIM_COND = re.compile(r"\s*(?:,|;|\s(?:entao|então)\s|\s+e\s+(?=(?:me\s+|a\s+|o\s+)?(?:coloque|coloca|crie|cria|deixe|deixa|"
+                       r"destaque|destaca|avise|avisa|mostre|mostra|ponha|poe|põe|bote|marque|marca|arquive|arquiva|"
+                       r"etiquete|etiqueta|abra|abre|fixe|fixa|faca|faça|faz)\b))", re.I)
+_NOME = r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+(?:\s+(?:d[aeo]s?\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+){0,2}"
+_FALA = re.compile(r"\b(?:alerta|aviso|notifica[cç][aã]o|toast|lembrete)\s+(?:dizendo|escrito|que diga|que diz|com a frase|"
+                   r"com o texto|com a mensagem|falando)\s*:?\s*[\"“'‘]([^\"”'’]{1,120})[\"”'’]|"
+                   r"\b(?:alerta|aviso)\s+(?:dizendo|escrito|que diga|que diz|falando)\s*:?\s*([^,;.]{2,80}?)(?=\s+(?:sempre que|toda vez que|"
+                   r"quando|caso|se)\b|[,;.]|$)", re.I)
+DESTACAR_RX = r"\b(em destaque|destaque|destaca|destacar|destaques|realce|realca|ressalte|ressalta|fixe no topo|fixa no topo)\b"
+ICONE_RX = [(r"\b(amor|coracao|namorad\w*|esposa|marido|mae|pai)\b", "coracao"), (r"\b(urgente|alerta)\b", "alerta"),
+            (r"\b(fixa|fixe|topo)\b", "pino")]
+
+
+def _cond_e_faz(texto: str):
+    """Separa o gatilho ("sempre que a Tamy mandar mensagem") do que fazer (o resto da frase, antes e depois)."""
+    m = _GATILHO.search(texto) or _GATILHO_SE.search(texto)
+    if not m:
+        return None
+    ini = m.start(1)
+    resto = texto[m.end():]
+    f = _FIM_COND.search(resto)
+    cond = resto[:f.start()] if f else resto
+    depois = resto[f.end():] if f else ""
+    faz = (texto[:ini].strip(" ,;.") + " " + depois).strip(" ,;.")
+    return cond.strip(" ,;."), faz or cond
+
+
+def _remetente(cond: str):
+    """("a", "Tamy Pqna") de "a Tamy Pqna enviar mensagem"; ("", "fulano@x.com"); None."""
+    m = re.search(r"[\w.+-]+@[\w.-]+", cond)
+    if m:
+        return "", m.group(0)
+    for m in re.finditer(r"\b(d[oa]|de|a|o|pel[oa])\s+(" + _NOME + r")", cond):
+        nome = m.group(2)
+        if nome.split()[0] in APPS:
+            continue
+        art = {"da": "a", "do": "o", "a": "a", "o": "o", "pela": "a", "pelo": "o"}.get(m.group(1).lower(), "")
+        return art, " ".join(w if w.islower() and len(w) <= 3 else w[:1].upper() + w[1:] for w in nome.split())
+    m = re.search(r"^\s*(" + _NOME + r")\s+(?:me\s+)?(?:mand|envi|escrev|lig|respond|chamar)", cond)
+    if m and m.group(1).split()[0] not in APPS:
+        return "", m.group(1)
+    return None
+
+
+def resumo_curto(a: Dict, artigo: str = "") -> str:
+    """"Se a Tamy Pqna mandar mensagem → aviso “Seu amor mandou mensagem” e a mensagem dela fica em destaque"."""
+    q = a["quando"]
+    coisa = "e-mail" if "email" in q["fontes"] else "notificação" if "notifications" in q["fontes"] else \
+        ("mensagem no " + q["apps"][0]) if q["apps"] else "mensagem"
+    fem = coisa != "e-mail"
+    if q["remetente"]:
+        quem = (artigo + " " if artigo else "") + q["remetente"]
+        gat = f"Se {quem} mandar {coisa}"
+    else:
+        gat = f"Se chegar {coisa}"
+        if q["vip"]:
+            gat += " de alguém importante"
+        if q["categoria"]:
+            gat += f" da categoria {q['categoria']}"
+    if q["assunto"]:
+        gat += f" sobre {q['assunto']}"
+    if q["palavras"]:
+        gat += " com " + " ou ".join(f"“{p}”" for p in q["palavras"])
+    dono = {"a": "dela", "o": "dele"}.get(artigo, "")
+    faz = []
+    for e in a["entao"]:
+        p, ac = e["params"], e["acao"]
+        tit = str(p.get("titulo") or "")
+        if ac == "notificar":
+            faz.append(f"aviso “{tit}”" if tit and "{" not in tit else "aviso na tela")
+        elif ac == "destacar":
+            faz.append(f"{'a' if fem else 'o'} {coisa.split(' no ')[0]}{' ' + dono if dono else ''} fica em destaque"
+                       + (" no topo" if p.get("fixar") and not dono else ""))
+        elif ac in ("alerta", "tarefa", "criar_card"):
+            nome = {"alerta": "card de alerta", "tarefa": "tarefa", "criar_card": "card"}[ac]
+            faz.append(f"{nome} “{tit}”" if tit and "{" not in tit else nome)
+        elif ac == "etiquetar":
+            faz.append(f"etiqueta “{p.get('etiqueta')}”")
+        else:
+            faz.append(ACAO_PT[ac])
+    return gat + " → " + (", ".join(faz[:-1]) + " e " + faz[-1] if len(faz) > 1 else faz[0])
 
 
 def de_texto(frase: str, marcar=None, vips=()) -> Dict:
@@ -297,28 +388,30 @@ def de_texto(frase: str, marcar=None, vips=()) -> Dict:
     texto = " ".join(str(frase or "").split())[:600]
     if len(texto) < 8:
         raise ValueError("escreva a automação, ex.: “Se eu receber uma mensagem sobre orçamentos, crie um card de alerta”")
-    s = fold(texto)
-    m = re.match(r"^\s*(?:se|quando|sempre que|toda vez que|caso)\s+(.+?)(?:,\s*|\s+(?:entao|então)\s+)(.+)$", texto,
-                 re.I)
-    if m:
-        cond, faz = m.group(1), m.group(2)
+    fala = _FALA.search(texto)
+    fala_txt = (fala.group(1) or fala.group(2)).strip() if fala else ""
+    sem_fala = (texto[:fala.start()] + " alerta " + texto[fala.end():]) if fala else texto
+    cf = _cond_e_faz(sem_fala)
+    if cf:
+        cond, faz = cf
     else:
-        parts = re.split(r",\s*", texto, maxsplit=1)
-        cond, faz = (parts + [""])[:2] if len(parts) == 2 else (texto, texto)
+        parts = re.split(r",\s*", sem_fala, maxsplit=1)
+        cond, faz = (parts + [""])[:2] if len(parts) == 2 else (sem_fala, sem_fala)
     sc, sf = fold(cond), fold(faz)
     notas, quando = [], {"fontes": [], "apps": [], "palavras": []}
     if re.search(r"\be-?mails?\b", sc):
         quando["fontes"].append("email")
     if re.search(r"\bnotificac", sc):
         quando["fontes"].append("notifications")
-    quando["apps"] = [a for a in APPS if re.search(rf"\b{a.casefold()}\b", sc)]
+    quando["apps"] = [a for a in APPS if re.search(rf"\b{a.casefold()}\b|\bzap\b" if a == "WhatsApp" else rf"\b{a.casefold()}\b", sc)]
     ass = re.search(r"\b(?:sobre|falando de|falando sobre|a respeito de|relacionad[ao]s? a|referente a)\s+(.+)$", cond, re.I)
     if ass:
         a = re.split(r"\s+(?:d[oa]s?|de)\s+(?=[A-ZÁÉÍÓÚ])|\s+(?:no|pelo|pela|do app)\s+", ass.group(1).strip(" .,;"))[0]
         quando["assunto"] = a.strip(" .,;")
-    rem = re.search(r"\b(?:d[oa]|de)\s+([A-ZÁÉÍÓÚÂÊÔÃÕ][\wÀ-ÿ]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕ][\wÀ-ÿ]+)?|[\w.+-]+@[\w.-]+)", cond)
-    if rem and rem.group(1) not in APPS:
-        quando["remetente"] = rem.group(1)
+    artigo = ""
+    rem = _remetente(cond if not ass else cond[:ass.start()] + " " + cond[ass.end():])
+    if rem:
+        artigo, quando["remetente"] = rem
     if re.search(r"\b(meu chefe|minha chefe|vips?|pessoas? importantes?)\b", sc):
         quando["vip"] = True
     quando["palavras"] += re.findall(r"[\"“']([^\"”']{2,40})[\"”']", cond)
@@ -341,11 +434,19 @@ def de_texto(frase: str, marcar=None, vips=()) -> Dict:
         except Exception:
             notas.append("O modelo não está carregado: entendi só pelas regras.")
     acoes = []
+    if fala_txt:
+        acoes.append("notificar")
     for rx, ac in ACAO_RX:
+        if ac == "alerta" and fala_txt:
+            continue
         if re.search(rx, sf) and ac not in acoes:
             if ac == "criar_card" and ("alerta" in acoes or "tarefa" in acoes):
                 continue
             acoes.append(ac)
+    if re.search(DESTACAR_RX, sf) and "destacar" not in acoes:
+        acoes.append("destacar")
+        if acoes == ["criar_card", "destacar"] and not re.search(r"\b(card|cartao|tarefa|evento|lembrete)\b", sf):
+            acoes.remove("criar_card")
     if not acoes:
         acoes = ["criar_card"]
         notas.append("Não entendi o que fazer: deixei “criar um card”. Ajuste antes de ativar.")
@@ -373,18 +474,28 @@ def de_texto(frase: str, marcar=None, vips=()) -> Dict:
             et = re.search(r"\b(?:como|etiqueta)\s+[\"“']?([\wÀ-ÿ ]{2,30}?)[\"”']?(?:[,.]|$|\s+e\s)", faz, re.I)
             p["etiqueta"] = (et.group(1).strip() if et else rotulo or "importante").casefold()
         elif ac == "notificar":
-            p["titulo"] = (rotulo[:1].upper() + rotulo[1:] if rotulo else "Mensagem") + " — {remetente}"
-            p["mensagem"] = "{text:140}"
+            if fala_txt:
+                p["titulo"] = fala_txt
+                p["mensagem"] = ("{remetente}: " if not quando.get("remetente") else "") + "{text:140}"
+            else:
+                p["titulo"] = (rotulo[:1].upper() + rotulo[1:] if rotulo else "Mensagem") + " — {remetente}"
+                p["mensagem"] = "{text:140}"
+        elif ac == "destacar":
+            from .uiprefs import ACCENTS
+            cor = next((c for c in ACCENTS if re.search(rf"\b{c}\b", sf)), "rosa")
+            ic = next((i for rx, i in ICONE_RX if re.search(rx, fold(texto))), "estrela")
+            p = {"cor": cor, "icone": ic, "fixar": True}
         elif ac == "abrir_app":
             p["app"] = "email" if re.search(r"e-?mail", sf) else "navegador" if re.search(r"navegador|site", sf) else "whatsapp"
         entao.append({"acao": ac, "params": p})
-    nome = (rotulo[:1].upper() + rotulo[1:]) if rotulo else "Automação"
+    nome = (rotulo[:1].upper() + rotulo[1:]) if rotulo else (
+        f"Mensagens de {quando['remetente']}" if quando.get("remetente") else "Automação")
     a = normalizar({"nome": nome, "quando": quando, "entao": entao})
     if not any(a["quando"][k] for k in ("fontes", "apps", "remetente", "palavras", "assunto", "categoria",
                                         "prioridade_min", "vip")):
         notas.append("Vale para tudo que chegar. Se não for isso, diga de quem, de qual app ou sobre o quê.")
     a["origem"] = texto
-    return {"automacao": a, "resumo": resumo(a), "notas": notas}
+    return {"automacao": a, "resumo": resumo(a), "resumo_curto": resumo_curto(a, artigo), "notas": notas}
 
 
 # ------------------------------------------------------------------------------------------------- store --

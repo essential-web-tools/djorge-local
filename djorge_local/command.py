@@ -38,6 +38,7 @@ CAMPOS = ["data", "hora", "período do dia", "pessoa", "evento ou compromisso", 
 CAMPOS_MODELO = ["pessoa", "empresa ou estabelecimento", "lugar", "evento ou compromisso", "lista", "aplicativo",
                  "endereço de e-mail"]
 PRIORIDADES = ("modelo", "equilibrado", "regras")
+PERGUNTA_REGRA = "Este pedido descreve uma regra que deve acontecer sempre que algo ocorrer?"
 SEMANA = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
 MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro",
          "novembro", "dezembro"]
@@ -75,6 +76,8 @@ FRASE = {
     "abrir_ok": "Abrindo {alvo}.",
     "regra": "Montei a regra: {resumo} Confira no editor antes de ativar.",
     "regra_criada": "Regra “{nome}” ativada.",
+    "automacao": "Posso criar esta automação? {resumo}.",
+    "automacao_criada": "Automação “{nome}” salva e ativa.",
     "ui": "Pronto: {descricao}.",
     "nenhuma": "Não entendi bem o que fazer com isso. Posso criar cards e lembretes, montar listas, mandar mensagens, "
                "buscar, fazer contas, ver datas e montar regras.",
@@ -310,7 +313,13 @@ class Command:
                 SemReq("CHOICE", text, options=[TOOL_PT[t] for t in names], descriptions=[TOOLS[t] for t in names],
                        ask=ASK_TOOL["pt"])]
         reqs += [SemReq("resolve", text, mode="ENTITY", target=c, threshold=0.5) for c in CAMPOS_MODELO]
+        reqs.append(SemReq("NOUL", text, options=[PERGUNTA_REGRA]))   # no mesmo lote
         out = eng.run(reqs)
+        try:
+            p_regra = float(out[-1].get("p_true", out[-1].get("probability", 0)))
+        except Exception:
+            p_regra = None
+        out = out[:-1]
         can = float(out[0].get("p_true", out[0].get("probability", 0)))
         back = {TOOL_PT[t]: t for t in names}
         dist = out[1].get("distribution") or {}
@@ -322,7 +331,7 @@ class Command:
                     continue                                # "não é com a Ana" não vira a Ana
                 trechos.append(Trecho(m.start, m.end, campo, text[m.start:m.end], valor=text[m.start:m.end].strip(),
                                       p=float(m.probability), fonte="modelo"))
-        return {"can": can, "tools": tools, "trechos": trechos}
+        return {"can": can, "tools": tools, "trechos": trechos, "p_regra": p_regra}
 
     # ------------------------------------------------------------------ comando --
     def run(self, text: str, context: Optional[Dict] = None, stream: bool = False, cid: Optional[str] = None) -> Dict:
@@ -383,6 +392,13 @@ class Command:
             md = self._model(eng, text)
             fields = combinar(text, md["trechos"], regras)
             model_tools, can = md["tools"], round(md["can"], 4)
+            pr = md.get("p_regra")
+            if pr is not None and model_tools:            # "descreve uma regra que acontece sempre que…?"
+                model_tools = dict(model_tools)
+                if pr >= 0.6 and P.condicional(text) or pr >= 0.85:
+                    model_tools["regra"] = max(model_tools.get("regra", 0), pr)
+                    if P.condicional(text):
+                        model_tools["bilhete"] = model_tools.get("bilhete", 0) * 0.2
         else:
             fields = combinar(text, [], regras)
             if eng is None:
@@ -475,9 +491,10 @@ class Command:
             elif tool == "abrir":
                 self._abrir(out, text, fields, corpo, cid)
             elif tool == "regra":
-                if eng is None:
-                    raise ModeloAusente("regra")
-                self._rule(out, text)
+                if not self._automacao(out, text, eng):
+                    if eng is None:
+                        raise ModeloAusente("regra")
+                    self._rule(out, text)
             else:
                 out["reply"] = FRASE["nenhuma"]
                 out["dicas"] = P.dicas(text, pis)
@@ -974,6 +991,33 @@ class Command:
         if alvo == "whatsapp" and contato.get("nome") and not contato.get("telefone"):
             out["dicas"] = [f"Não achei o telefone de {contato['nome']}: o WhatsApp vai abrir para você escolher o contato."]
 
+    def _automacao(self, out, text, eng) -> bool:
+        """Pedido condicional -> automação (automacoes.de_texto) proposta com resumo legível; salva ao confirmar."""
+        sec = getattr(self.app, "secretario", None)
+        if sec is None or not P.condicional(text):
+            return False
+        from .automacoes import compilar, de_texto
+        marcar = None
+        if eng is not None and getattr(self.app, "rules", None) is not None:
+            marcar = lambda t: self.app.rules.marcar(t)
+        try:
+            r = de_texto(text, marcar=marcar)
+            arvore = compilar(r["automacao"])
+        except Exception:
+            return False
+        graph = None
+        try:
+            from . import treegraph
+            graph = treegraph.tree_to_graph(arvore)
+        except Exception:
+            pass
+        out["proposal"] = {"action": "create_automacao", "automacao": r["automacao"], "summary": r["resumo_curto"],
+                           "resumo": r["resumo"], "notes": r["notas"], "tree": arvore, "graph": graph}
+        out["needs_confirm"] = True
+        out["authorization"] = {"decisao": "confirmar", "motivos": ["automação nova age sozinha no que chegar"], "p": None}
+        out["reply"] = FRASE["automacao"].format(resumo=r["resumo_curto"])
+        return True
+
     def _rule(self, out, text):
         r = self.app.rules.from_text(text)
         graph = None
@@ -1150,6 +1194,13 @@ class Command:
             res = self._buscar_web(q)
             rec["results"] = res["results"]
             return res
+        if a == "create_automacao":
+            dados = dict(p["automacao"])
+            ed = edits or {}
+            if isinstance(ed.get("automacao"), dict):
+                dados.update(ed["automacao"])
+            salvo = self.app.secretario.automacoes.salvar(dados)
+            return {"ok": True, "automacao": salvo, "reply": FRASE["automacao_criada"].format(nome=salvo["nome"])}
         if a == "create_tree":
             tree = (edits or {}).get("tree") or p["tree"]
             if (edits or {}).get("graph"):
@@ -1223,4 +1274,9 @@ class Command:
         r = triar(str(text or "")[:8000], remetente=remetente, assunto=assunto, engine=eng,
                   hoje=_now(self.app.cfg).date())
         r["model"] = eng is not None
+        try:
+            from .secretario import intencao
+            r["intencao"] = intencao({}, self._prefs()["agente"], r, _now(self.app.cfg).date())
+        except Exception:
+            pass
         return r

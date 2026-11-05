@@ -119,7 +119,7 @@ def _cond(c: dict, ev: dict) -> bool:
 
 PRIORIDADES = {"baixa": 1, "normal": 2, "alta": 3, "urgente": 4}
 NOVAS_ACOES = ("criar_card", "tarefa", "alerta", "notificar", "etiquetar", "arquivar", "abrir_app",
-               "responder_sugestao")
+               "responder_sugestao", "destacar")
 
 
 def fold(s) -> str:

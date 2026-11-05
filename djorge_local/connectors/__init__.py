@@ -58,11 +58,22 @@ class Base(threading.Thread):
         self.stop_ev.wait(float(s))
 
 
+# os toasts do próprio Djorge não podem voltar como notificação (laço: toast -> captura -> automação -> toast…)
+PROPRIOS = ("djorge", "djorge local", "djorge.local", "djorge.local.2", "python", "pythonw", "python.exe", "pythonw.exe")
+
+
+def proprio_app(app) -> bool:
+    a = " ".join(str(app or "").casefold().replace("\\", "/").split("/")[-1:]).strip()
+    return bool(a) and (a in PROPRIOS or a.startswith("djorge") or "djorge local" in a or a.startswith("python"))
+
+
 # ------------------------------------------------------------------------------------------- notifications --
 class Notifications(Base):
     name_ = "notifications"
 
     def _ok_app(self, app):
+        if proprio_app(app):
+            return False
         a = (app or "").casefold()
         allow, deny = self.conf.get("apps_allow") or [], self.conf.get("apps_deny") or []
         if deny and any(d.casefold() in a for d in deny):

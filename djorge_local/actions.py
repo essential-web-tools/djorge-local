@@ -179,6 +179,12 @@ class Actions:
             out["mensagem"] = str(spec.get("mensagem") or spec.get("message") or ev.get("text") or "")[:300]
         elif kind == "etiquetar":
             out["etiqueta"] = str(spec.get("etiqueta") or ev.get("categoria") or "").strip()[:40]
+        elif kind == "destacar":
+            from .uiprefs import ate_valido, estilo_destaque
+            try:
+                out["destaque"] = dict(estilo_destaque(spec), ate=ate_valido(spec.get("ate")))
+            except ValueError:
+                out["destaque"] = estilo_destaque({})
         elif kind in ("abrir_app", "responder_sugestao"):
             sp = dict(spec)
             sp.setdefault("para", ev.get("telefone") or ev.get("remetente_email") or "")
@@ -197,7 +203,7 @@ class Actions:
         prep = self.preparar(spec, ctx)
         if mode == "testar":
             return dict(prep, status="simulado")
-        if mode == "sugerir" and spec["action"] != "etiquetar":   # etiquetar é só organização: sempre vale
+        if mode == "sugerir" and spec["action"] not in ("etiquetar", "destacar"):   # etiquetar é só organização: sempre vale
             return dict(prep, status="sugerido", spec=spec)
         return self.executar_nova(spec, ctx, prep)
 
