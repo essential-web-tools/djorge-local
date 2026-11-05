@@ -63,6 +63,13 @@ def validate(trees: List[dict]) -> List[dict]:
         if t.get("start") not in nodes:
             raise TreeError(f"{t['name']}: 'start' não existe em nodes")
         for nid, n in nodes.items():
+            if isinstance(n.get("if"), dict) and n["if"].get("regex"):
+                try:
+                    regex_segura(n["if"]["regex"])
+                except TreeError as e:
+                    raise TreeError(f"{t['name']}.{nid}: {e}")
+            if n.get("action") == "tratar" and n.get("tipo") not in TRATAMENTOS:
+                raise TreeError(f"{t['name']}.{nid}: tratamento desconhecido '{n.get('tipo')}'")
             for nxt in _nexts(n):
                 if nxt not in nodes:
                     raise TreeError(f"{t['name']}.{nid}: próximo nó inexistente '{nxt}'")
@@ -96,9 +103,7 @@ def _cond(c: dict, ev: dict) -> bool:
     if c.get("contains_all"):
         ok &= all(x.casefold() in t for x in c["contains_all"])
     if c.get("regex"):
-        if len(c["regex"]) > 300:
-            raise TreeError("regex longa demais")
-        ok &= re.search(c["regex"], t, re.I) is not None
+        ok &= re.search(regex_segura(c["regex"]), t[:20000], re.I) is not None
     if c.get("sender_has"):
         quem = fold(" ".join(str(ev.get(k) or "") for k in ("sender", "remetente")) + (
             " " + str(ev.get("title") or "") if ev.get("source") == "notifications" else ""))
@@ -116,12 +121,123 @@ def _cond(c: dict, ev: dict) -> bool:
             str(c["prioridade_min"]).casefold(), 0)
     if c.get("vip"):
         ok &= bool(ev.get("vip"))
+    if not ok:
+        return False
+    # v2.5 (automações com mais condições)
+    if c.get("not_contains"):
+        ok &= not any(fold(x) and fold(x) in fold(t) for x in c["not_contains"])
+    if c.get("has_attachment"):
+        ok &= tem_anexo(ev)
+    if c.get("has_link"):
+        ok &= bool(ev.get("link")) or re.search(r"https?://|\bwww\.", t) is not None
+    if c.get("has_code"):
+        ok &= bool(ev.get("codigo")) or re.search(r"(codigo|code|senha|token|otp|pin)\D{0,25}\d{4,8}\b", fold(t)) is not None
+    if c.get("valor_gt") not in (None, "") or c.get("valor_lt") not in (None, ""):
+        v = valor_num(ev)
+        if v is None:
+            ok = False
+        else:
+            if c.get("valor_gt") not in (None, ""):
+                ok &= v > float(c["valor_gt"])
+            if c.get("valor_lt") not in (None, ""):
+                ok &= v < float(c["valor_lt"])
+    if c.get("hora_entre"):
+        ok &= hora_entre(_quando(ev), *list(c["hora_entre"])[:2])
+    if c.get("dias_semana"):
+        ok &= _quando(ev).weekday() in [int(d) for d in c["dias_semana"]]
+    if c.get("tag_in"):
+        tags = [fold(x) for x in (ev.get("tags") or [])] + [fold(ev.get("etiqueta"))]
+        ok &= any(fold(x) in tags for x in c["tag_in"])
+    if c.get("column_in"):
+        ok &= fold(ev.get("column")) in [fold(x) for x in c["column_in"]]
+    if c.get("all"):
+        ok &= all(_cond(x, ev) for x in c["all"])
+    if c.get("any"):
+        ok &= any(_cond(x, ev) for x in c["any"])
+    if c.get("not"):
+        ok &= not _cond(c["not"], ev)
     return bool(ok)
+
+
+COND_KEYS = ("contains_any", "contains_all", "regex", "source_in", "app_in", "sender_has", "seguranca_in",
+             "categoria_in", "prioridade_min", "vip", "not_contains", "has_attachment", "has_link", "has_code",
+             "valor_gt", "valor_lt", "hora_entre", "dias_semana", "tag_in", "column_in", "all", "any", "not",
+             "count_min")
+_REGEX_PERIGOSA = re.compile(r"\([^)]*[+*][^)]*\)\s*[+*{]|\\\d|\(\?[<=!P]")
+
+
+def regex_segura(p: str) -> str:
+    """Regex simples e segura: curta, sem quantificador aninhado ((a+)+), sem retrovisor nem lookaround."""
+    p = str(p or "")
+    if len(p) > 200:
+        raise TreeError("regex longa demais (máx. 200 caracteres)")
+    if _REGEX_PERIGOSA.search(p):
+        raise TreeError("regex insegura: evite repetição dentro de repetição, retrovisores e lookarounds")
+    try:
+        re.compile(p)
+    except re.error as e:
+        raise TreeError(f"regex inválida: {e}")
+    return p
+
+
+def tem_anexo(ev: dict) -> bool:
+    if ev.get("anexos") or ev.get("attachments") or ev.get("tem_anexo"):
+        return True
+    t = fold(f"{ev.get('title', '')} {ev.get('text', '')}")
+    return re.search(r"\b(em anexo|anexad[oa]s?|segue anexo|anexo)\b|\.(pdf|docx?|xlsx?|zip|jpe?g|png)\b", t) is not None
+
+
+def valor_num(ev: dict):
+    """Valor em número (R$ 1.250,00 -> 1250.0) a partir do campo valor ou do texto."""
+    for v in (ev.get("valor_num"), ev.get("valor")):
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+        if isinstance(v, str) and v.strip():
+            n = _num(v)
+            if n is not None:
+                return n
+    m = re.search(r"r\$\s*([\d.]+(?:,\d{1,2})?|\d+(?:\.\d{1,2})?)", fold(f"{ev.get('title', '')} {ev.get('text', '')}"))
+    return _num(m.group(1)) if m else None
+
+
+def _num(s: str):
+    s = re.sub(r"[^\d.,-]", "", str(s))
+    if not s:
+        return None
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif s.count(".") > 1 or re.search(r"\.\d{3}$", s):
+        s = s.replace(".", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _quando(ev: dict):
+    import datetime as _dt
+    t = ev.get("time")
+    if isinstance(t, str) and t:
+        try:
+            return _dt.datetime.fromisoformat(t[:19])
+        except ValueError:
+            pass
+    return _dt.datetime.now()
+
+
+def hora_entre(agora, de: str, ate: str) -> bool:
+    hm = agora.strftime("%H:%M")
+    de, ate = str(de or "00:00")[:5], str(ate or "23:59")[:5]
+    return de <= hm <= ate if de <= ate else (hm >= de or hm <= ate)     # 22:00-06:00 atravessa a meia-noite
 
 
 PRIORIDADES = {"baixa": 1, "normal": 2, "alta": 3, "urgente": 4}
 NOVAS_ACOES = ("criar_card", "tarefa", "alerta", "notificar", "etiquetar", "arquivar", "abrir_app",
-               "responder_sugestao", "destacar")
+               "responder_sugestao", "destacar",
+               # v2.5
+               "lembrete", "nota", "atualizar_card", "mover_card", "concluir_card", "prioridade", "abrir_site",
+               "ignorar", "encadear", "adicionar_lista", "registrar")
+TRATAMENTOS = ("extrair", "classificar", "resumir", "formatar", "agrupar")
 
 
 def fold(s) -> str:
@@ -194,8 +310,39 @@ def _branch(n: dict, res: dict) -> List[str]:
 class Runner:
     def __init__(self, cfg, models, actions):
         self.cfg, self.models, self.actions = cfg, models, actions
+        self.contagens: Dict[tuple, List[float]] = {}     # (árvore, nó) -> horários (condição "mais de N em X min")
+        self.grupos: Dict[tuple, Dict] = {}               # (árvore, nó) -> {inicio, itens, tree} (tratamento agrupar)
+        self.relogio = time.time                          # os testes trocam o relógio
+
+    def _modelo(self):
+        try:
+            loaded = [x for x in self.models.loaded() if x in self.models.decision_models()]
+        except Exception:
+            return None
+        return self.models.get(loaded[0]) if loaded else None
+
+    def _contar(self, n: dict, ctx) -> dict:
+        c = n["if"]["count_min"] or {}
+        lim, jan = int(c.get("n") or 1), float(c.get("minutos") or 10) * 60
+        agora = self.relogio()
+        k = (ctx.get("tree"), ctx.get("nid"))
+        xs = [x for x in self.contagens.get(k, []) if agora - x <= jan]
+        if ctx.get("mode") != "testar":
+            xs.append(agora)
+            self.contagens[k] = xs[-500:]
+            total = len(xs)
+        else:
+            total = len(xs) + 1
+        return {"answer": total > lim, "value": total, "probability": 1.0, "engine": "regra"}
+
+    def _tratar(self, n: dict, ctx) -> dict:
+        """Tratamentos antes das ações; mudam o evento (campos novos viram {placeholders})."""
+        from . import automacoes as T
+        return T.tratar(self, n, ctx)
 
     def _decide(self, n: dict, ev: dict, ctx) -> dict:
+        if "if" in n and isinstance(n["if"], dict) and n["if"].get("count_min"):
+            return self._contar(n, ctx)
         if "if" in n:
             return {"answer": _cond(n["if"], ev), "probability": 1.0, "engine": "regra"}
         if "check" in n and "keywords" in n:            # palavra-chave primeiro; o modelo só se estiver carregado
@@ -223,11 +370,13 @@ class Runner:
             out["abstain"] = True
         return out
 
-    def run(self, tree: dict, ev: dict, mode: str = None) -> dict:
-        """mode: None (executa), "sugerir" (ações do secretário viram sugestões), "testar" (nada é executado)."""
+    def run(self, tree: dict, ev: dict, mode: str = None, start: str = None, cadeia: int = 0) -> dict:
+        """mode: None (executa), "sugerir" (ações do secretário viram sugestões), "testar" (nada é executado).
+        start: começar de outro nó (o agrupar continua dali); cadeia: profundidade de automações encadeadas."""
         nodes = tree["nodes"]
-        ctx = {"event": ev, "results": {}, "mode": mode}
-        trail, queue, steps = [], [tree["start"]], 0
+        ev = dict(ev)                                   # tratamentos mudam o evento só nesta árvore
+        ctx = {"event": ev, "results": {}, "mode": mode, "tree": tree["name"], "cadeia": cadeia, "runner": self}
+        trail, queue, steps = [], [start or tree["start"]], 0
         seen: Dict[str, int] = {}
         while queue:
             nid = queue.pop(0)
@@ -236,9 +385,21 @@ class Runner:
             if steps > self.cfg["max_steps"] or seen[nid] > 3:
                 trail.append({"node": nid, "error": "limite de passos/ciclo atingido"}); break
             n = nodes[nid]
+            ctx["nid"] = nid
             t0 = time.perf_counter()
-            if "action" in n:
+            if n.get("action") == "tratar":
+                try:
+                    res = self._tratar(n, ctx)
+                except Exception as e:
+                    res = {"action": "tratar", "tipo": n.get("tipo"), "status": "erro", "error": f"{type(e).__name__}: {e}"}
+                ctx["results"][nid] = res
+                nxt = [] if res.get("parar") else (n["then"] if isinstance(n.get("then"), list)
+                                                   else ([n["then"]] if n.get("then") else []))
+            elif "action" in n:
                 res = self.actions.run(n, ctx, tree["name"], nid)
+                if res.get("card_id"):
+                    ev.setdefault("card_id", res["card_id"])
+                    ctx["ultimo_card"] = res["card_id"]
                 nxt = [] if n["action"] == "stop" else (n["then"] if isinstance(n.get("then"), list)
                                                         else ([n["then"]] if n.get("then") else []))
             else:
@@ -253,4 +414,23 @@ class Runner:
             if n.get("action") == "stop":
                 break
             queue += nxt
-        return {"tree": tree["name"], "trail": trail, "results": ctx["results"]}
+        return {"tree": tree["name"], "trail": trail, "results": ctx["results"], "event": ev}
+
+    def esvaziar_grupos(self, arvores: Dict[str, dict], mode: str = None, forcar: bool = False) -> List[dict]:
+        """Grupos (tratamento agrupar) cujo tempo acabou: roda o resto da árvore com o resumo das mensagens."""
+        from . import automacoes as T
+        out = []
+        for k, g in list(self.grupos.items()):
+            tree = arvores.get(k[0])
+            n = (tree or {}).get("nodes", {}).get(k[1])
+            if tree is None or n is None:
+                self.grupos.pop(k, None); continue
+            if not forcar and self.relogio() - g["inicio"] < float(n.get("minutos") or 10) * 60:
+                continue
+            self.grupos.pop(k, None)
+            ev = T.juntar(g["itens"])
+            nxt = n.get("then")
+            nxt = nxt[0] if isinstance(nxt, list) and nxt else nxt
+            if nxt:
+                out.append(self.run(tree, ev, mode=mode, start=nxt))
+        return out

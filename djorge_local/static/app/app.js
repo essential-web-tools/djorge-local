@@ -544,7 +544,7 @@ function kcardHTML(c) {
       ${(c.tags || []).slice(0, 3).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}
       ${src ? `<span class="src" title="${esc(src)}">${srcIco(src)}</span>` : ""}
       ${(c.people || []).length ? `<span class="ppl" style="margin-left:auto">${c.people.slice(0, 3).map(p => `<i data-tip="${esc(titleCase(p.nome || p.email))}">${esc(initials(p.nome || p.email))}</i>`).join("")}</span>` : ""}
-    </div></article>`;
+    </div>${c.done ? "" : motivoHTML(c) + conflitoHTML(c) + askHTML(c)}</article>`;
 }
 let dragId = null;
 function wireCards(root) {
@@ -936,9 +936,35 @@ function trowHTML(c) {
   const hl = hlCard(c);
   return `<div class="trow ${c.done ? "done" : ""} ${SEL.has(c.id) ? "selc" : ""}" data-id="${esc(c.id)}"${hlAttr(hl)} tabindex="0" role="button" aria-label="${esc(c.title)}">
     <button type="button" class="cbx" role="checkbox" aria-checked="${!!c.done}" data-id="${esc(c.id)}" aria-label="Concluir">${ico("check")}</button>
-    <div class="tt"><b>${hlSelo(hl)}${esc(cardTitle(c))}</b>${c.objetivo ? `<small class="tobj">${ico("target", "xs")} ${esc(c.objetivo)}</small>` : ""}<small>${esc(KINDS[c.kind] || "")}${cardDate(c) ? " · " + esc(whenTxt(c)) : ""}${(c.tags || []).length ? " · " + c.tags.map(t => "#" + esc(t)).join(" ") : ""}</small></div>
+    <div class="tt"><b>${hlSelo(hl)}${esc(cardTitle(c))}</b>${c.objetivo ? `<small class="tobj">${ico("target", "xs")} ${esc(c.objetivo)}</small>` : ""}<small>${esc(KINDS[c.kind] || "")}${cardDate(c) ? " · " + esc(whenTxt(c)) : ""}${(c.tags || []).length ? " · " + c.tags.map(t => "#" + esc(t)).join(" ") : ""}</small>${c.done ? "" : motivoHTML(c) + conflitoHTML(c)}</div>
     ${c.priority ? `<span class="pri p${c.priority}"><i></i>${esc(PRI[c.priority])}</span>` : ""}
     ${isLate(c) ? `<span class="tag" style="background:var(--bad-soft);color:var(--bad)">atrasado</span>` : ""}</div>`;
+}
+
+/* ----- prioridade dinâmica, conflitos de data e perguntas discretas (o que falta no card) ----- */
+const fmtDia = iso => { const d = parseD(iso); return d ? `${pad(d.getDate())}/${pad(d.getMonth() + 1)}` : ""; };
+const prioAuto = c => (c && c.prioridade_auto) || null;
+function motivoHTML(c) { const p = prioAuto(c); if (!p || (!p.motivo && !p.conflito)) return "";
+  return `<span class="pmot ${p.conflito ? "conf" : ""}" data-tip="${p.origem === "manual" ? "Você escolheu a prioridade; isto é só um aviso" : "Prioridade automática"}">${ico(p.conflito ? "warn" : "up", "xs")}${esc(p.motivo || "dia cheio")}</span>`; }
+function conflitoHTML(c, full) { const cs = asList(c && c.conflitos); if (!cs.length) return "";
+  const o = cs[0]; return `<span class="cconf">${ico("cal", "xs")}<span>${esc(full ? cs.map(x => x.motivo).join(" · ") : o.motivo)}</span>${o.sugestao ? `<button type="button" class="btn xs ghost" data-mover="${esc(c.id)}" data-dia="${esc(o.sugestao)}">Mover para ${esc(fmtDia(o.sugestao))}</button>` : ""}</span>`; }
+function askHTML(c, list) { const fs = list || asList(c && c.faltando); if (!fs.length || !c || !c.id) return "";
+  return `<span class="asks">${fs.map(f => `<span class="ask" data-ask="${esc(c.id)}" data-campo="${esc(f.campo)}" data-tipo="${esc(f.tipo || "text")}" data-q="${esc(f.pergunta)}"><button type="button" class="chip sug" data-askopen>${ico("spark", "xs")}${esc(f.pergunta)}</button></span>`).join("")}</span>`; }
+async function moverDia(id, dia) { const r = await tryApi(`/api/cards/${encodeURIComponent(id)}/mover_dia`, {data: dia}); if (!r) return;
+  toast(`Movido para ${fmtDia(dia)}`); await loadCards(true); S._inicioT = 0; render(); }
+function wireAsk(root, after) {
+  $$("[data-mover]", root).forEach(b => b.onclick = e => { e.stopPropagation(); moverDia(b.dataset.mover, b.dataset.dia); });
+  $$(".ask [data-askopen]", root).forEach(b => b.onclick = e => { e.stopPropagation(); const box = b.parentNode, id = box.dataset.ask, campo = box.dataset.campo;
+    const t = box.dataset.tipo === "date" ? "date" : box.dataset.tipo === "time" ? "time" : "text";
+    box.innerHTML = `<form class="askf"><label class="sr" for="ask-${esc(id)}-${esc(campo)}">${esc(box.dataset.q)}</label><input class="inp" id="ask-${esc(id)}-${esc(campo)}" type="${t}" placeholder="${esc(box.dataset.q)}" required>
+      <button class="btn xs primary" type="submit">OK</button><button class="btn xs ghost" type="button" data-nao="item" data-tip="Não perguntar neste card">Não perguntar</button><button class="btn xs ghost" type="button" data-nao="tipo" data-tip="Nunca perguntar isso em cards desta origem">Nunca perguntar isso</button></form>`;
+    const f = $("form", box), i = $("input", box); i.focus();
+    $$("button, input", box).forEach(x => x.addEventListener("click", ev => ev.stopPropagation()));
+    i.onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Escape") { after && after(); } };
+    const fim = async (r, msg) => { if (!r) return; toast(msg); await loadCards(true); S._inicioT = 0; after ? after(r) : render(); };
+    f.onsubmit = async ev => { ev.preventDefault(); if (!i.value.trim()) return; fim(await tryApi(`/api/cards/${encodeURIComponent(id)}/responder`, {campo, valor: i.value.trim()}), "Anotado no card"); };
+    $$("[data-nao]", box).forEach(x => x.onclick = async () => fim(await tryApi(`/api/cards/${encodeURIComponent(id)}/nao_perguntar`, {campo, escopo: x.dataset.nao}), x.dataset.nao === "tipo" ? "Não pergunto mais isso" : "Ok, não pergunto"));
+  });
 }
 
 /* ---------------------------------------------------------------- QUADRO */

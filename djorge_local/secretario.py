@@ -275,6 +275,12 @@ class Secretario:
             hoje = self.agora().date()
         except Exception:
             hoje = None
+        if eng is not None:                               # contexto do usuário como prefixo nas decisões
+            try:
+                from .command import com_contexto
+                eng = com_contexto(eng, self.app)
+            except Exception:
+                pass
         tri = triar(str(ev.get("text") or "")[:8000], remetente=remetente_de(ev) or None,
                     assunto=ev.get("title") or None, engine=eng, vips=self.conf.get("vips") or (), hoje=hoje)
         tri["model"] = eng is not None
@@ -479,6 +485,14 @@ class Secretario:
             return "toasts desligados"
         if self.em_silencio():
             return "silenciado"
+        try:                                             # floreios (V2 OR): tom feliz/sério, se ligado
+            from . import floreios as fl
+            p = self.app.ui.get() or {}
+            e = fl.enfeitar(titulo, msg, fl.tom(f"{titulo} {msg}"), nome_usuario=p.get("nome_usuario") or None,
+                            ativo=bool(p.get("floreios", True)))
+            titulo, msg = e["titulo"] or titulo, e["mensagem"]
+        except Exception:
+            pass
         from . import toasts
         return "ok" if toasts.mostrar(titulo, msg) else "sem toast"
 
@@ -508,6 +522,8 @@ class Secretario:
         nid = ev.get("notif_id")
         if nid:
             card["source"] = {"integration": "secretario", "external_id": nid, "url": None}
+        card["meta"] = dict(card.get("meta") or {}, origem="notificacao" if nid else "automacao",
+                            prioridade_origem="auto", prioridade_base=int(card.get("priority") or 0))
         c = self.app.cards.create(card)
         r = {"status": "ok", "card_id": c["id"], "desfazer": {"tipo": "card", "id": c["id"]}}
         if nid:

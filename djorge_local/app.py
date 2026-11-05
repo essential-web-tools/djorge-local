@@ -606,7 +606,12 @@ class App:
         import datetime as _dt
         agora = _dt.datetime.now()
         hoje = agora.date().isoformat()
-        cards = [c for c in self.cards.all() if not c.get("done") and c.get("column") != "feito"]
+        recalcular_prioridades(self)
+        try:
+            avisar_datas(self, agora)
+        except Exception as e:
+            self._svc_err["datas"] = f"{type(e).__name__}: {e}"
+        cards = anotar_cards(self, [c for c in self.cards.all() if not c.get("done") and c.get("column") != "feito"])
         tarefas = [c for c in cards if c.get("kind") in ("tarefa", "lembrete")]
         tarefas.sort(key=lambda c: ((c.get("due") or "9999")[:16], -int(c.get("priority") or 0)))
         relevantes = [c for c in tarefas if (c.get("due") or "9999")[:10] <= hoje or int(c.get("priority") or 0) >= 2
@@ -659,10 +664,270 @@ class App:
             destaques = destaques[:12]
         except Exception:
             destaques = []
-        return {"tarefas_relevantes": relevantes[:6], "destaques": destaques, "mensagens_importantes": importantes,
+        try:
+            pd = proximas_datas(self, 30)
+        except Exception:
+            pd = {"datas": [], "aniversarios": [], "uf": ""}
+        perguntas = [{"card_id": c["id"], "titulo": c.get("title"), **f} for c in cards for f in c.get("faltando") or []][:6]
+        conflitos = [{"card_id": c["id"], "titulo": c.get("title"), **o} for c in cards for o in c.get("conflitos") or []][:6]
+        return {"proximas_datas": [d for d in pd["datas"] if d["tipo"] != "comemorativa" or d["alerta"]][:6],
+                "aniversarios": pd["aniversarios"][:6], "uf": pd.get("uf", ""), "perguntas": perguntas,
+                "conflitos": conflitos,
+                "tarefas_relevantes": relevantes[:6], "destaques": destaques, "mensagens_importantes": importantes,
                 "mensagens_cards": msgs, "notificacoes_recentes": recentes, "proximos_eventos": eventos,
                 "automacoes": n_auto, "resumo_frase": frase,
                 "secretario": {"ativo": bool(sec and sec.conf.get("ativo")), "modo": sec.conf.get("modo") if sec else None}}
+
+
+# ------------------------------------------------------------------ v2 OR: prioridade, perguntas, datas, contexto --
+def _prefs(app) -> dict:
+    try:
+        return app.ui.get() or {}
+    except Exception:
+        return {}
+
+
+def contexto_txt(app) -> str:
+    return str(_prefs(app).get("sobre") or "")
+
+
+def uf_de(app, prefs: dict = None) -> str:
+    p = prefs if prefs is not None else _prefs(app)
+    if p.get("uf"):
+        return p["uf"]
+    try:
+        from .contexto_usuario import sinais
+        return sinais(p.get("sobre") or "").get("uf") or ""
+    except Exception:
+        return ""
+
+
+_ROT_SINAIS = {"trabalho": lambda v: v.replace("_", " "), "filhos": lambda v: "filhos" if v else "sem filhos",
+               "religiao": lambda v: v.replace("_", " "), "escala": lambda v: "trabalha em escala",
+               "estudante": lambda v: "estuda", "viaja": lambda v: "viaja", "sem_floreios": lambda v: "direto ao ponto"}
+
+
+def entendi(texto: str) -> dict:
+    """"Entendi: SP · banco · filhos" a partir do texto "Sobre você"."""
+    from .contexto_usuario import sinais
+    sin = sinais(texto or "")
+    partes = []
+    if sin.get("uf"):
+        partes.append(sin["uf"])
+    elif sin.get("cidade"):
+        partes.append(sin["cidade"])
+    for k, f in _ROT_SINAIS.items():
+        if k in sin:
+            partes.append(f(sin[k]))
+    return {"sinais": sin, "texto": " · ".join(partes)}
+
+
+def conflitos_card(app, c: dict, prefs: dict = None) -> list:
+    """Feriados/véspera/ponte que atrapalham o card, cada um com o dia útil sugerido para mover."""
+    from . import calendario as cal
+    if c.get("done") or not (c.get("due") or c.get("start")):
+        return []
+    p = prefs if prefs is not None else _prefs(app)
+    try:
+        out = cal.conflitos(c, p.get("sobre") or "", uf_de(app, p) or None)
+    except Exception:
+        return []
+    for o in out:
+        if not o.get("sugestao"):
+            import datetime as _dt
+            d = _dt.date.fromisoformat(o["data"])
+            if not cal.eh_dia_util(d, uf_de(app, p) or None):
+                o["sugestao"] = cal.dia_util_anterior(d, uf_de(app, p) or None).isoformat()
+    return out
+
+
+def extras_card(app, c: dict, prefs: dict = None, do_dia=None) -> dict:
+    """Card com campos calculados (não gravados): prioridade_auto, conflitos, faltando."""
+    from . import prioridade as pr
+    p = prefs if prefs is not None else _prefs(app)
+    c = dict(c)
+    if do_dia is None:
+        d = pr._dia(c)
+        do_dia = [x for x in app.cards.list(done=False) if pr._dia(x) == d] if d else []
+    r = pr.calcular(c, None, do_dia)
+    r["origem"] = pr.origem(c)
+    c["prioridade_auto"] = r
+    c["conflitos"] = conflitos_card(app, c, p)
+    c["faltando"] = pr.faltantes(c, p.get("nao_perguntar") or [])
+    return c
+
+
+def anotar_cards(app, cards: list) -> list:
+    from . import prioridade as pr
+    p = _prefs(app)
+    dias = pr.por_dia(cards)
+    return [extras_card(app, c, p, dias.get(pr._dia(c) or "", [])) for c in cards]
+
+
+def recalcular_prioridades(app, forcar: bool = False) -> int:
+    """Recalcula (no máximo a cada 2 min) as prioridades de origem auto."""
+    import time as _t
+    if not forcar and _t.time() - getattr(app, "_prio_t", 0) < 120:
+        return 0
+    app._prio_t = _t.time()
+    try:
+        from . import prioridade as pr
+        return pr.recalcular(app.cards)
+    except Exception as e:
+        app._svc_err["prioridade"] = f"{type(e).__name__}: {e}"
+        return 0
+
+
+def _chave_data(d: dict) -> str:
+    return f"{d['data']}|{d['nome']}"
+
+
+def proximas_datas(app, dias: int = 45) -> dict:
+    import datetime as _dt
+    from . import calendario as cal
+    p = _prefs(app)
+    uf = uf_de(app, p) or None
+    hoje = _dt.date.today()
+    esc = p.get("alertas_datas") or {}
+    ds = []
+    for d in cal.proximas(hoje, dias, uf):
+        d = dict(d)
+        d["alerta"] = bool(esc.get(_chave_data(d), d.get("alerta_sugerido")))
+        d["chave"] = _chave_data(d)
+        d["dias"] = (_dt.date.fromisoformat(d["data"]) - hoje).days
+        ds.append(d)
+    try:
+        anivs = cal.aniversarios([c for c in app.cards.all()], hoje, min(dias, 30))
+    except Exception:
+        anivs = []
+    return {"uf": uf or "", "datas": ds, "aniversarios": anivs, "parabenizar": bool(p.get("parabenizar", True))}
+
+
+def avisar_datas(app, agora=None) -> int:
+    """Uma vez por dia: avisa (centro de avisos + toast) das datas com alerta ligado para hoje/amanhã e
+    dos aniversários do dia (se "parabenizar" estiver ligado). Usa floreios."""
+    import datetime as _dt
+    agora = agora or _dt.datetime.now()
+    marca = agora.date().isoformat()
+    if getattr(app, "_datas_dia", None) == marca:
+        return 0
+    app._datas_dia = marca
+    try:
+        from . import alertas as _al
+        s = _al.servico(app)
+    except Exception:
+        return 0
+    from . import floreios as fl
+    p = _prefs(app)
+    pd = proximas_datas(app, 1)
+    n = 0
+    for d in pd["datas"]:
+        if not d["alerta"] or d["dias"] > 1:
+            continue
+        quando = "hoje" if d["dias"] == 0 else "amanhã"
+        e = fl.enfeitar(d["nome"], "", "feliz" if d["tipo"] != "facultativo" else "neutro",
+                        ocasiao={"tipo": "feriado" if d["tipo"] == "feriado" else "comemorativa", "nome": d["nome"],
+                                 "quando": quando}, nome_usuario=p.get("nome_usuario") or None,
+                        ativo=bool(p.get("floreios", True)))
+        n += s.aviso_avulso(e["titulo"], e["mensagem"] or f"{d['nome']} é {quando}.", chave="data:" + d["chave"])
+    if p.get("parabenizar", True):
+        for a in pd["aniversarios"]:
+            if a.get("dias", 0) != 0:
+                continue
+            e = fl.enfeitar(f"Aniversário de {a['nome']}", "Que tal mandar os parabéns?", "feliz",
+                            ocasiao={"tipo": "aniversario", "pessoa": a["nome"]}, ativo=bool(p.get("floreios", True)))
+            n += s.aviso_avulso(e["titulo"], e["mensagem"], chave=f"aniv:{marca}:{a['nome']}", card_id=a.get("card_id"))
+    return n
+
+
+def busca_extra(app, q: str, limit: int = 6) -> list:
+    """Ctrl K: notas, notificações e automações (o histórico de ações já vem da busca principal)."""
+    from .notificacoes import _norm
+    q = " ".join(str(q or "").split())
+    if len(q) < 2:
+        return []
+    fq, out = _norm(q), []
+    try:
+        for n in app.notas.listar(q=q)["notas"][:limit]:
+            out.append({"scope": "notas", "id": n["id"], "title": n["titulo"] or "Sem título", "snippet": n.get("trecho") or ""})
+    except Exception:
+        pass
+    st = app.notificacoes
+    try:
+        for n in (st.list(q=q, limit=limit) if st is not None else []):
+            out.append({"scope": "notificacoes", "id": n["id"], "title": n.get("titulo") or n.get("app") or "Notificação",
+                        "snippet": str(n.get("texto") or "")[:120]})
+    except Exception:
+        pass
+    sec = app.secretario
+    try:
+        for a in (sec.automacoes.listar() if sec is not None else []):
+            hay = _norm(" ".join([str(a.get("nome") or ""), str(a.get("resumo") or "")]))
+            if all(w in hay for w in fq.split()):
+                out.append({"scope": "automacoes", "id": a.get("id"), "title": a.get("nome") or "Automação",
+                            "snippet": str(a.get("resumo") or "")[:120]})
+    except Exception:
+        pass
+    return out
+
+
+def or_rotas(app, metodo: str, path: str, b: dict):
+    """Rotas do agente OR. Devolve (código, objeto) ou None."""
+    from . import prioridade as pr
+    if metodo == "GET" and path == "/api/datas":
+        try:
+            dias = max(1, min(120, int((b or {}).get("dias") or 45)))
+        except ValueError:
+            dias = 45
+        return 200, proximas_datas(app, dias)
+    if metodo == "POST" and path == "/api/datas/alerta":
+        ch = str(b.get("chave") or "").strip()
+        if not ch:
+            raise ValueError("falta a data (chave)")
+        cur = dict(_prefs(app).get("alertas_datas") or {})
+        cur[ch] = bool(b.get("ativo"))
+        app.ui.set({"alertas_datas": cur})
+        return 200, {"ok": True, "chave": ch, "ativo": cur[ch]}
+    if metodo == "GET" and path == "/api/contexto":
+        return 200, dict(entendi(contexto_txt(app)), uf=uf_de(app))
+    if metodo == "POST" and path.startswith("/api/cards/") and path.count("/") == 4:
+        cid, acao = path.split("/")[3], path.split("/")[4]
+        if acao not in ("responder", "nao_perguntar", "prioridade_auto", "mover_dia"):
+            return None
+        c = app.cards.get(cid)
+        if not c:
+            return 404, {"error": "card não encontrado"}
+        if acao == "responder":
+            novo = _acao_ui(app, "responder_card", lambda x: cid,
+                            lambda: app.cards.update(cid, pr.responder(c, str(b.get("campo") or ""), b.get("valor"))))
+            return 200, extras_card(app, novo)
+        if acao == "nao_perguntar":
+            campo = str(b.get("campo") or "")
+            if campo not in pr.CAMPOS:
+                raise ValueError(f"campo: use {', '.join(pr.CAMPOS)}")
+            if b.get("escopo") in ("tipo", "sempre", "nunca"):
+                lst = list(_prefs(app).get("nao_perguntar") or [])
+                ch = f"{pr.origem_card(c)}:{campo}"
+                if ch not in lst:
+                    app.ui.set({"nao_perguntar": lst + [ch]})
+                return 200, extras_card(app, c)
+            return 200, extras_card(app, app.cards.update(cid, pr.recusar(c, campo)))
+        if acao == "prioridade_auto":
+            app.cards.update(cid, {"meta": {"prioridade_origem": "auto"}})
+            recalcular_prioridades(app, forcar=True)
+            return 200, extras_card(app, app.cards.get(cid))
+        if acao == "mover_dia":
+            d = str(b.get("data") or "")
+            import re as _re
+            if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+                raise ValueError("data: use AAAA-MM-DD")
+            patch = {}
+            for k in ("due", "start", "end"):
+                if c.get(k):
+                    patch[k] = d + str(c[k])[10:]
+            novo = _acao_ui(app, "mover_dia_util", lambda x: cid, lambda: app.cards.update(cid, patch))
+            return 200, extras_card(app, novo)
+    return None
 
 
 def rss_mb():
@@ -740,21 +1005,30 @@ def v2_get(app: App, path: str, q: dict):
     r = v4_rotas(app, "GET", path, {k: _q1(q, k) for k in q})
     if r is not None:
         return r
+    r = or_rotas(app, "GET", path, {k: _q1(q, k) for k in q})
+    if r is not None:
+        return r
     if path == "/api/cards":
-        return 200, {"cards": app.cards.list(q=_q1(q, "q"), kind=_q1(q, "kind"), column=_q1(q, "column"),
+        recalcular_prioridades(app)
+        return 200, {"cards": anotar_cards(app, app.cards.list(q=_q1(q, "q"), kind=_q1(q, "kind"), column=_q1(q, "column"),
                                              tag=_q1(q, "tag"), frm=_q1(q, "from"), to=_q1(q, "to"),
                                              source=_q1(q, "source"), priority=_q1(q, "priority"),
-                                             done=_q1(q, "done"), person=_q1(q, "person"))}
+                                             done=_q1(q, "done"), person=_q1(q, "person")))}
     if path.startswith("/api/cards/"):
         c = app.cards.get(path.rsplit("/", 1)[1])
-        return (200, c) if c else (404, {"error": "card não encontrado"})
+        return (200, extras_card(app, c)) if c else (404, {"error": "card não encontrado"})
     if path == "/api/agenda":
         return 200, {"cards": app.cards.agenda(_q1(q, "from"), _q1(q, "to"))}
     if path == "/api/search":
-        return 200, app.search.search(_q1(q, "q", ""), _q1(q, "scope", "all"), engine=app.command.engine())
+        r = app.search.search(_q1(q, "q", ""), _q1(q, "scope", "all"), engine=app.command.engine())
+        if _q1(q, "scope", "all") == "all":
+            r = dict(r, results=list(r.get("results") or []) + busca_extra(app, _q1(q, "q", "")))
+        return 200, r
     if path == "/api/ui":
         from .uiprefs import ACCENTS, CHOICES, SIDEBAR
-        return 200, {"prefs": app.ui.get(), "choices": dict(CHOICES, accent_colors=ACCENTS, sidebar=list(SIDEBAR))}
+        pr_ = app.ui.get()
+        return 200, {"prefs": pr_, "choices": dict(CHOICES, accent_colors=ACCENTS, sidebar=list(SIDEBAR)),
+                     "contexto": dict(entendi(pr_.get("sobre") or ""), uf=uf_de(app, pr_))}
     if path == "/api/model/info":
         return 200, app.service("model").info()
     if path == "/api/integrations":
@@ -1077,11 +1351,14 @@ def v2_post(app: App, path: str, b: dict):
     r = v4_rotas(app, "POST", path, b)
     if r is not None:
         return r
+    r = or_rotas(app, "POST", path, b)
+    if r is not None:
+        return r
     if path == "/api/cards" and b.get("id") and app.cards.get(str(b["id"])):
         cid = str(b["id"])                                # card que já existe: atualiza, não duplica
-        return 200, _acao_ui(app, "editar_card", lambda _: cid, lambda: app.cards.update(cid, b))
+        return 200, extras_card(app, _acao_ui(app, "editar_card", lambda _: cid, lambda: app.cards.update(cid, b)))
     if path == "/api/cards":
-        return 200, _acao_ui(app, "criar_card", lambda c: c["id"], lambda: app.cards.create(b))
+        return 200, extras_card(app, _acao_ui(app, "criar_card", lambda c: c["id"], lambda: app.cards.create(b)))
     if path == "/api/cards/deduplicar":
         return 200, deduplicar_cards(app, simular=bool(b.get("simular")))
     if path == "/api/cards/move":
@@ -1094,7 +1371,8 @@ def v2_post(app: App, path: str, b: dict):
         if len(parts) == 5 and parts[4] == "delete":
             return 200, {"ok": _acao_ui(app, "apagar_card", lambda _: parts[3], lambda: app.cards.delete(parts[3]))}
         if len(parts) == 4:
-            return 200, _acao_ui(app, "editar_card", lambda _: parts[3], lambda: app.cards.update(parts[3], b))
+            return 200, extras_card(app, _acao_ui(app, "editar_card", lambda _: parts[3],
+                                                  lambda: app.cards.update(parts[3], b)))
         return None
     if path == "/api/command":
         if len(str(b.get("text", ""))) > 2000:

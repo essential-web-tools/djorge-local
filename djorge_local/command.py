@@ -250,6 +250,39 @@ def _sem_campos(text: str, fields: List[Trecho], drop=("data", "hora", "período
     return (t[:1].upper() + t[1:])[:200] if t else ""
 
 
+def _prefixo_contexto(app) -> str:
+    try:
+        from .contexto_usuario import para_modelo
+        return para_modelo((app.ui.get() or {}).get("sobre") or "")
+    except Exception:
+        return ""
+
+
+class _EngComContexto:
+    """Embrulha o motor: perguntas de decisão (CHOICE/NOUL/SCORE) recebem o prefixo do contexto do usuário;
+    extrações (resolve) ficam no texto puro, para os trechos continuarem certos."""
+
+    def __init__(self, eng, prefixo: str):
+        self._eng, self._p = eng, prefixo
+
+    def __getattr__(self, k):
+        return getattr(self._eng, k)
+
+    def run(self, reqs, *a, **k):
+        import dataclasses
+        out = []
+        for r in reqs:
+            if getattr(r, "kind", "") in ("CHOICE", "NOUL", "SCORE") and dataclasses.is_dataclass(r):
+                r = dataclasses.replace(r, source=self._p + str(r.source))
+            out.append(r)
+        return self._eng.run(out, *a, **k)
+
+
+def com_contexto(eng, app):
+    p = _prefixo_contexto(app)
+    return _EngComContexto(eng, p) if (eng is not None and p) else eng
+
+
 class Command:
     def __init__(self, app):
         self.app = app
@@ -331,8 +364,9 @@ class Command:
         (ASK_TOOL, TOOL_PT + descrições TOOLS) e resolve ENTITY dos campos do app (CAMPOS_MODELO)."""
         from djorge.runtime.semantic import SemReq
         names = list(TOOLS)
+        ctx = _prefixo_contexto(self.app)                 # "Sobre o usuário: …" ajuda a escolher a ferramenta
         reqs = [SemReq("NOUL", text, options=[CAN["pt"]]),
-                SemReq("CHOICE", text, options=[TOOL_PT[t] for t in names], descriptions=[TOOLS[t] for t in names],
+                SemReq("CHOICE", ctx + text, options=[TOOL_PT[t] for t in names], descriptions=[TOOLS[t] for t in names],
                        ask=ASK_TOOL["pt"])]
         reqs += [SemReq("resolve", text, mode="ENTITY", target=c, threshold=0.5) for c in CAMPOS_MODELO]
         reqs.append(SemReq("NOUL", text, options=[PERGUNTA_REGRA]))   # no mesmo lote
@@ -788,6 +822,11 @@ class Command:
             rec = FRASE["repete"].format(rec=c["recurrence"]) if c.get("recurrence") else ""
             out["reply"] = FRASE["card_criado" if action == "create_card" else "card_atualizado"].format(
                 artigo=art, tipo=tipo, titulo=c.get("title") or titulo, quando=_quando_pt(c) + rec)
+            if res.get("ressalva"):
+                out["reply"] += " " + res["ressalva"]
+                out["conflitos"] = res["conflitos"]
+            if res.get("faltando"):
+                out["faltando"] = res["faltando"]
             if not quando.get("achou") and kind in ("tarefa", "evento", "lembrete"):
                 out["dicas"] = [f"Tente: “{F.frase(titulo).lower()} amanhã às 9h”" if len(titulo) < 50 else
                                 "Tente: “… amanhã às 9h”", "Tente: “… todo dia 20 às 9h”"]
@@ -1165,6 +1204,20 @@ class Command:
         q.update(e)
         return q
 
+    def _com_ressalvas(self, res: Dict, c: Dict) -> Dict:
+        """Conflitos de data (feriado, véspera, banco fechado) e o que falta perguntar, para a resposta."""
+        try:
+            from .app import extras_card
+            x = extras_card(self.app, c)
+        except Exception:
+            return res
+        if x.get("conflitos"):
+            res["conflitos"] = x["conflitos"]
+            res["ressalva"] = "Atenção: " + "; ".join(o["motivo"] for o in x["conflitos"][:2]) + "."
+        if x.get("faltando"):
+            res["faltando"] = x["faltando"]
+        return res
+
     # ------------------------------------------------------------------ confirmação --
     def _execute(self, rec: Dict, edits: Dict) -> Dict:
         p = rec["proposal"]
@@ -1172,13 +1225,14 @@ class Command:
         if a == "create_card":
             card = dict(p["card"], **(edits or {}))
             card.pop("quando_fmt", None)
+            card["meta"] = dict(card.get("meta") or {}, origem="comando")
             c = self.app.cards.create(card)
-            return {"ok": True, "card": F.card(c)}
+            return self._com_ressalvas({"ok": True, "card": F.card(c)}, c)
         if a == "update_card":
             card = dict(p["card"], **(edits or {}))
             card.pop("quando_fmt", None)
             c = self.app.cards.update(p["id"], card)
-            return {"ok": True, "card": F.card(c)}
+            return self._com_ressalvas({"ok": True, "card": F.card(c)}, c)
         if a == "history_clear":
             h = getattr(self.app, "hist", None) or getattr(self.app, "history", None)
             if p.get("hoje"):

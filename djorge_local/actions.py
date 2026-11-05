@@ -35,6 +35,17 @@ from urllib.parse import quote
 
 from .tree import NOVAS_ACOES, render
 
+TONS = ("info", "aviso", "urgente", "sucesso")
+_PRIO_CARD = {"baixa": 0, "normal": 1, "alta": 2, "urgente": 3}
+
+
+def prioridade_card(v) -> int:
+    """baixa|normal|alta|urgente (ou 0-3) -> prioridade do card (0-3)."""
+    if str(v).strip().isdigit():
+        return max(0, min(3, int(v)))
+    return _PRIO_CARD.get(str(v).strip().casefold(), 1)
+
+
 CAMPO_ROTULO = {"valor": "Valor", "prazo": "Prazo", "remetente": "Quem mandou", "empresa": "Empresa",
                 "data": "Data", "hora": "Hora", "link": "Link", "codigo": "Código", "categoria": "Categoria",
                 "telefone": "Telefone", "email": "E-mail"}
@@ -54,17 +65,18 @@ def montar_card(spec: dict, ev: dict) -> dict:
     linhas = [f"{CAMPO_ROTULO.get(c, c.capitalize())}: {ev.get(c)}" for c in campos if ev.get(c)]
     resumo = str(ev.get("text") or "").strip()[:600]
     body = "\n".join(linhas + ([""] if linhas and resumo else []) + ([resumo] if resumo else []))
-    padrao = {"alerta": "Alerta — {remetente}", "tarefa": "{title}", "criar_card": "{title}"}[kind]
+    padrao = {"alerta": "Alerta — {remetente}", "tarefa": "{title}", "criar_card": "{title}", "lembrete": "{title}"}[kind]
     titulo = _limpa_titulo(spec.get("titulo") or render(padrao, {"event": ev, "results": {}})) or \
         _limpa_titulo(ev.get("title")) or "Mensagem recebida"
     tags = [t for t in [spec.get("etiqueta"), "alerta" if kind == "alerta" else None] if t]
     prio = spec.get("prioridade")
     prio = int(prio) if str(prio or "").isdigit() else (2 if kind == "alerta" else 1)
     card = {"title": titulo, "body": body, "kind": spec.get("tipo") or ("tarefa" if kind == "tarefa" else
-                                                                         "lembrete" if kind == "alerta" else "nota"),
+                                                                         "lembrete" if kind in ("alerta", "lembrete")
+                                                                         else "nota"),
             "column": spec.get("coluna") or ("hoje" if kind == "alerta" else "entrada"), "priority": min(3, prio),
             "tags": tags}
-    if ev.get("prazo_iso") and kind in ("tarefa", "alerta", "criar_card"):
+    if ev.get("prazo_iso") and kind in ("tarefa", "alerta", "criar_card", "lembrete"):
         card["due"] = ev["prazo_iso"]
     if card["kind"] == "evento" and ev.get("inicio_iso"):
         card["start"] = ev["inicio_iso"]
@@ -172,11 +184,48 @@ class Actions:
         """O que a ação faria (para testar e para sugestões), sem efeito nenhum."""
         kind, ev = spec["action"], ctx.get("event") or {}
         out = {"action": kind}
-        if kind in ("criar_card", "tarefa", "alerta"):
+        if kind in ("criar_card", "tarefa", "alerta", "lembrete"):
             out["card"] = montar_card(spec, ev)
         elif kind == "notificar":
             out["titulo"] = _limpa_titulo(spec.get("titulo") or spec.get("title") or ev.get("title") or "Djorge")
             out["mensagem"] = str(spec.get("mensagem") or spec.get("message") or ev.get("text") or "")[:300]
+            tom = str(spec.get("tom") or "info")
+            out["tom"] = tom if tom in TONS else "info"
+            if out["tom"] == "urgente" and not out["titulo"].lower().startswith("urgente"):
+                out["titulo"] = "Urgente: " + out["titulo"]
+        elif kind == "nota":
+            out["nota"] = {"titulo": _limpa_titulo(spec.get("titulo") or ev.get("title") or "Nota"),
+                           "corpo": str(spec.get("texto") or ev.get("resumo") or ev.get("text") or "")[:20000],
+                           "etiquetas": [spec["etiqueta"]] if spec.get("etiqueta") else []}
+        elif kind in ("atualizar_card", "mover_card", "concluir_card", "prioridade"):
+            out["card_id"] = spec.get("card_id") or ev.get("card_id") or ctx.get("ultimo_card") or ""
+            mud = {}
+            if spec.get("coluna") and kind in ("atualizar_card", "mover_card"):
+                mud["column"] = str(spec["coluna"])
+            if kind == "concluir_card" or spec.get("concluir"):
+                mud["done"], mud["column"] = True, "feito"
+            if spec.get("prioridade") not in (None, "") and kind in ("atualizar_card", "prioridade"):
+                mud["priority"] = prioridade_card(spec["prioridade"])
+            if spec.get("etiqueta") and kind == "atualizar_card":
+                mud["tag"] = str(spec["etiqueta"])[:40]
+            if spec.get("titulo") and kind == "atualizar_card":
+                mud["title"] = _limpa_titulo(spec["titulo"])
+            out["mudancas"] = mud
+            if kind == "prioridade":
+                out["prioridade"] = str(spec.get("prioridade") or "")
+        elif kind == "abrir_site":
+            try:
+                out.update(link_app({"app": "navegador", "url": spec.get("url")}))
+            except ValueError as e:
+                out["erro"] = str(e)
+        elif kind == "encadear":
+            out["automacao"] = str(spec.get("automacao") or "")
+        elif kind == "adicionar_lista":
+            out["lista"] = _limpa_titulo(spec.get("lista") or "Lista")
+            out["item"] = _limpa_titulo(spec.get("texto") or ev.get("resumo") or ev.get("title") or ev.get("text") or "")
+        elif kind == "registrar":
+            out["mensagem"] = str(spec.get("mensagem") or spec.get("texto") or
+                                  f"{ev.get('title') or ''} {ev.get('text') or ''}".strip())[:500]
         elif kind == "etiquetar":
             out["etiqueta"] = str(spec.get("etiqueta") or ev.get("categoria") or "").strip()[:40]
         elif kind == "destacar":
@@ -192,6 +241,8 @@ class Actions:
                 sp.setdefault("app", "email" if ev.get("remetente_email") and not ev.get("telefone") else "whatsapp")
                 sp["texto"] = spec.get("texto") or f"Olá{', ' + ev['remetente'].split()[0] if ev.get('remetente') else ''}! Recebi sua mensagem e já respondo."
             out["texto"] = sp.get("texto", "")
+            if kind == "responder_sugestao" and spec.get("abrir"):
+                out["abrir"] = True
             try:
                 out.update(link_app(sp))
             except ValueError as e:
@@ -203,7 +254,7 @@ class Actions:
         prep = self.preparar(spec, ctx)
         if mode == "testar":
             return dict(prep, status="simulado")
-        if mode == "sugerir" and spec["action"] not in ("etiquetar", "destacar"):   # etiquetar é só organização: sempre vale
+        if mode == "sugerir" and spec["action"] not in ("etiquetar", "destacar", "registrar", "prioridade"):   # etiquetar é só organização: sempre vale
             return dict(prep, status="sugerido", spec=spec)
         return self.executar_nova(spec, ctx, prep)
 
@@ -218,7 +269,21 @@ class Actions:
                     sp["para"] = ev.get("telefone") or ev.get("remetente_email") or ""
                 return abrir_app(sp)
             if kind == "responder_sugestao":
+                if spec.get("abrir") and prep.get("url"):      # abre o app com o rascunho; quem envia é a pessoa
+                    try:
+                        ok = _open_url(prep["url"])
+                    except Exception:
+                        ok = False
+                    return dict(prep, status="aberto (você envia)" if ok else "pronto")
                 return dict(prep, status="pronto")             # só o rascunho; a pessoa abre e envia
+            if kind == "abrir_site":
+                if prep.get("erro"):
+                    return dict(prep, status="erro")
+                try:
+                    ok = _open_url(prep["url"])
+                except Exception:
+                    ok = False
+                return dict(prep, status="aberto" if ok else "não abriu")
             fn = self.hooks.get(kind)
             if fn is None:
                 if kind == "notificar":

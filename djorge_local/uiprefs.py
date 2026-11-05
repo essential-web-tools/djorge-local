@@ -40,7 +40,15 @@ DEFAULTS = {
     "inicio_secoes": list(("destaques",) + ("tarefas", "eventos", "mensagens", "notificacoes")),
     "inicio_ocultas": [],            # seções do Início escondidas
     "secao_destaque": "",            # seção do Início em destaque ("" = nenhuma)
+    "sobre": "",                     # "Sobre você" (até 400, normalizado por contexto_usuario)
+    "uf": "",                        # estado para feriados ("" = do "Sobre você")
+    "floreios": True,                # alertas felizes/sérios (floreios.py)
+    "parabenizar": True,             # aniversários: avisar para parabenizar
+    "alertas_datas": {},             # {"AAAA-MM-DD|Nome": true/false} escolha por data
+    "nao_perguntar": [],             # perguntas recusadas para sempre: "campo" ou "origem:campo"
 }
+UFS = ("AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE",
+       "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO")
 CHOICES = {"theme": ("claro", "escuro", "auto"), "density": ("compacta", "normal", "confortavel"),
            "accent": tuple(ACCENTS), "default_view": VIEWS,
            "font_size": ("pequena", "normal", "grande", "muito grande"),
@@ -61,8 +69,8 @@ DENS_STEPS = CHOICES["density"]
 # ------------------------------------------------------------------ destaques (o agente edita a interface) --
 TIPOS_DESTAQUE = ("card", "notificacao", "remetente", "etiqueta", "secao")
 ICONES = ("estrela", "coracao", "alerta", "pino", "sino", "fogo")
-SECOES_INICIO = ("destaques", "tarefas", "eventos", "mensagens", "notificacoes")
-SECAO_PT = {"destaques": "Em destaque", "tarefas": "Tarefas mais relevantes", "eventos": "Próximos eventos",
+SECOES_INICIO = ("destaques", "tarefas", "eventos", "mensagens", "notificacoes", "datas", "perguntas")
+SECAO_PT = {"datas": "Próximas datas", "perguntas": "Falta pouco", "destaques": "Em destaque", "tarefas": "Tarefas mais relevantes", "eventos": "Próximos eventos",
             "mensagens": "Mensagens importantes", "notificacoes": "Notificações recentes"}
 ALVOS_CARD = ("@urgentes", "@importantes", "@hoje", "@atrasadas")
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$")
@@ -131,7 +139,24 @@ def validate(patch: Dict) -> Dict:
             v = " ".join(v.split())[:40]
             if k == "nome_agente" and not v:
                 v = DEFAULTS["nome_agente"]
-        elif k in ("voice_enabled", "speak_replies"):
+        elif k == "sobre":
+            from .contexto_usuario import normalizar as _nc, LIMITE
+            if not isinstance(v, str):
+                raise ValueError("sobre: texto")
+            v = _nc(v)[:LIMITE]
+        elif k == "uf":
+            v = str(v or "").strip().upper()
+            if v and v not in UFS:
+                raise ValueError("uf: sigla de estado (ex.: SP)")
+        elif k == "alertas_datas":
+            if not isinstance(v, dict) or len(v) > 400:
+                raise ValueError("alertas_datas: objeto {data|nome: sim/não}")
+            v = {str(a)[:120]: bool(b) for a, b in v.items()}
+        elif k == "nao_perguntar":
+            if not isinstance(v, list) or len(v) > 60:
+                raise ValueError("nao_perguntar: lista")
+            v = list(dict.fromkeys(str(x)[:60] for x in v if re.fullmatch(r"[\w*]+(:\w+)?", str(x))))
+        elif k in ("voice_enabled", "speak_replies", "floreios", "parabenizar"):
             if not isinstance(v, bool):
                 raise ValueError(f"{k}: verdadeiro ou falso")
         elif k == "kanban_columns":

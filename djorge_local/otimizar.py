@@ -3,7 +3,8 @@
 Feito UMA vez, em segundo plano, quando o modelo instalado não traz `onnx/` nem `local_profiles.json`
 (ex.: o .zip publicado era a pasta DOFL_FINAL do treino). Mesma receita de tools/export_local.py do repositório
 de treino: cópia enxuta (cabeças de decisão, calibração, tokenizador, metadata), corte de vocabulário, encoder
-ONNX, quantização int8 (reduce_range) em escada (all -> mlp -> embed -> none) e TESTE DE PARIDADE contra o
+ONNX (LoRA fundida nos pesos), quantização em escada (int8 completo / só pesos / estático calibrado ->
+sem os blocos sensíveis -> mlp/atenção -> só vocabulário + fp16 -> fp32; fica o MENOR que passa) e TESTE DE PARIDADE contra o
 PyTorch (>= 99 % das respostas iguais e diferença média de probabilidade < 0,03). Pacote que muda respostas é
 recusado e o app segue em PyTorch.
 
@@ -157,7 +158,101 @@ def vocab_keep(tok, V, cjk_top=6000):
     return sorted(keep), {"total": V, "kept": len(keep), "by_category": dict(Counter(cat.values()))}
 
 
-def quantize(fp32, out, mode, reduce_range=True, inter=None):
+# Escada de quantização, do pacote mais leve ao mais pesado. Dentro de um degrau todas as variantes são medidas e
+# fica a MENOR que passa a paridade; o primeiro degrau com alguma aprovada encerra a escada.
+#   all / all_fr   int8 dinâmico per-channel em tudo (reduce_range 7 bits / faixa cheia)
+#   wo8            int8 só nos PESOS (MatMulNBits, blocos de 32, conta em fp32): ~3x menos erro que o dinâmico
+#   static         int8 estático (QDQ) calibrado com frases pt-BR do próprio app
+#   sens           int8 dinâmico, menos os blocos de camadas mais sensíveis (medidos um a um), que ficam em fp16
+#   mlp / attn     int8 só nas MLPs / só na atenção
+#   embed          só o vocabulário em int8; o resto em fp16 no disco (o pacote publicado até agora, sem fp16)
+#   none           fp32
+LADDER = (("all", "all_fr", "wo8", "static"), ("sens",), ("mlp", "attn"), ("embed",), ("none",))
+PARIDADE = {"agreement": 0.99, "mean_abs_prob_diff": 0.03}
+
+
+def _flat(ladder):
+    out = []
+    for g in ladder:
+        out += [g] if isinstance(g, str) else list(g)
+    return out
+
+
+def _grupos(ladder):
+    return [[g] if isinstance(g, str) else list(g) for g in ladder]
+
+
+def _weight_matmuls(m):
+    """MatMuls com peso (initializer) na ordem do grafo = ordem das camadas."""
+    ini = {t.name for t in m.graph.initializer}
+    return [n.name for n in m.graph.node if n.op_type == "MatMul" and any(i in ini for i in n.input)]
+
+
+def blocos(m, n_blocos):
+    """Divide as MatMuls com peso em blocos contíguos (≈ uma camada cada) para medir a sensibilidade."""
+    mm = _weight_matmuls(m)
+    n = max(1, min(len(mm), int(n_blocos)))
+    tam = -(-len(mm) // n)
+    return [mm[i:i + tam] for i in range(0, len(mm), tam)]
+
+
+def fp16_storage(path, min_elems=4096):
+    """Pesos fp32 que sobraram (não quantizados) gravados em fp16 + Cast: o disco cai pela metade nessas
+    partes; a conta continua em fp32 (o ONNX Runtime CPU expande na carga). Só pesos grandes de MatMul/Gather."""
+    import numpy as np
+    import onnx
+    from onnx import helper, numpy_helper
+    m = onnx.load(path)
+    uso = {}
+    for n in m.graph.node:
+        for i in n.input:
+            uso.setdefault(i, set()).add(n.op_type)
+    novos, casts = [], []
+    for t in list(m.graph.initializer):
+        if t.data_type != onnx.TensorProto.FLOAT or np.prod(t.dims or [1]) < min_elems:
+            continue
+        if not uso.get(t.name) or not uso[t.name] <= {"MatMul", "Gather", "Gemm"}:
+            continue
+        arr = numpy_helper.to_array(t)
+        if not np.isfinite(arr).all() or np.abs(arr).max() > 6e4:
+            continue
+        h = numpy_helper.from_array(arr.astype(np.float16), t.name + "__fp16")
+        m.graph.initializer.remove(t)
+        novos.append(h)
+        casts.append(helper.make_node("Cast", [h.name], [t.name], to=onnx.TensorProto.FLOAT, name=t.name + "__cast"))
+    if not casts:
+        return 0
+    m.graph.initializer.extend(novos)
+    nodes = casts + list(m.graph.node)
+    del m.graph.node[:]
+    m.graph.node.extend(nodes)
+    onnx.save(m, path, save_as_external_data=False)
+    return len(casts)
+
+
+def _embed_gather_int8(src, out):
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+    quantize_dynamic(src, out, weight_type=QuantType.QInt8, per_channel=True, reduce_range=True,
+                     op_types_to_quantize=["Gather"], use_external_data_format=False)
+
+
+class _Calib:
+    """CalibrationDataReader para o int8 estático: linhas serializadas das frases do app."""
+
+    def __init__(self, feeds):
+        self.it = iter(feeds)
+
+    def get_next(self):
+        return next(self.it, None)
+
+    def rewind(self):
+        pass
+
+
+def quantize(fp32, out, mode, reduce_range=True, inter=None, exclude=None, calib=None, fp16_rest=None):
+    """Gera `out` a partir do encoder fp32 no modo pedido (veja LADDER). `exclude`: MatMuls que ficam fora do
+    int8 (modo sens). `calib`: entradas de calibração (modo static). `fp16_rest`: grava em fp16 os pesos que
+    ficaram em fp32 (padrão: sim nos modos parciais)."""
     import onnx
     if mode == "none":
         onnx.save(onnx.load(fp32), out, save_as_external_data=False)
@@ -165,9 +260,38 @@ def quantize(fp32, out, mode, reduce_range=True, inter=None):
     from onnxruntime.quantization import QuantType, quantize_dynamic
     m = onnx.load(fp32, load_external_data=False)
     shapes = {t.name: list(t.dims) for t in m.graph.initializer}
-    exclude = []
+    excl = list(exclude or [])
+    if fp16_rest is None:
+        fp16_rest = mode in ("sens", "mlp", "attn", "embed")
     if mode == "all_fr":                       # int8 completo com faixa cheia (mais precisão)
         mode, reduce_range = "all", False
+    if mode == "wo8":
+        from onnxruntime.quantization.matmul_nbits_quantizer import MatMulNBitsQuantizer
+        q = MatMulNBitsQuantizer(onnx.load(fp32), bits=8, block_size=32, is_symmetric=True, accuracy_level=0,
+                                 op_types_to_quantize=("MatMul",), nodes_to_exclude=excl)
+        q.process()
+        tmp = out + ".wo8.onnx"
+        onnx.save(q.model.model, tmp, save_as_external_data=False)
+        try:
+            _embed_gather_int8(tmp, out)       # vocabulário em int8 também (o Gather não aceita 8 bits por bloco)
+        finally:
+            os.remove(tmp)
+        return
+    if mode == "static":
+        from onnxruntime.quantization import CalibrationMethod, QuantFormat, quantize_static
+        pre = out + ".pre.onnx"
+        onnx.save(onnx.load(fp32), pre, save_as_external_data=False)
+        try:
+            quantize_static(pre, out, _Calib(calib or []), quant_format=QuantFormat.QDQ, per_channel=True,
+                            reduce_range=reduce_range, activation_type=QuantType.QInt8, weight_type=QuantType.QInt8,
+                            op_types_to_quantize=["MatMul", "Gather"], nodes_to_exclude=excl,
+                            calibrate_method=CalibrationMethod.MinMax, use_external_data_format=False,
+                            extra_options={"ActivationSymmetric": True, "WeightSymmetric": True})
+        finally:
+            for f in (pre, pre + ".data"):
+                if os.path.exists(f):
+                    os.remove(f)
+        return
     if mode in ("mlp", "embed", "attn"):
         for n in m.graph.node:
             if n.op_type != "MatMul":
@@ -175,24 +299,98 @@ def quantize(fp32, out, mode, reduce_range=True, inter=None):
             dims = next((shapes[i] for i in n.input if i in shapes), None)
             is_mlp = bool(dims and inter and inter in dims)
             if mode == "embed" or (mode == "mlp" and not is_mlp) or (mode == "attn" and is_mlp):
-                exclude.append(n.name)
+                excl.append(n.name)
     quantize_dynamic(fp32, out, weight_type=QuantType.QInt8, per_channel=True, reduce_range=reduce_range,
-                     nodes_to_exclude=exclude, use_external_data_format=False)
+                     nodes_to_exclude=excl, use_external_data_format=False)
+    if fp16_rest:
+        fp16_storage(out)
+
+
+FRASES_APP = [  # pedidos, mensagens e notificações como os do app (testes e exemplos), para paridade e calibração
+    "O boleto vence amanhã e custa R$ 120,00.", "Reunião urgente com o cliente às 9h.",
+    "Seu pedido saiu para entrega.", "Ganhe um iPhone agora, clique no link!", "Ana mora em Lima.",
+    "Me lembra de ligar pro dentista sexta às 10h.", "Quanto é 15% de 230?", "Cria uma lista de compras.",
+    "crie um card para pagar a conta de luz dia 10", "mande uma mensagem pra Maria dizendo que vou atrasar",
+    "Sempre que chegar e-mail do banco, marque como importante.", "Seu código de verificação é 482913.",
+    "Fatura do cartão fechada: R$ 2.340,17, vencimento 15/11.", "Oi, tudo bem? Podemos remarcar para quinta?",
+    "Orçamento da reforma: piso R$ 4.800, mão de obra R$ 2.100.", "Sua encomenda foi entregue na portaria.",
+    "O chefe pediu o relatório até amanhã cedo.", "Lembrete: consulta com o Dr. Paulo amanhã às 14h30.",
+    "Promoção imperdível só hoje!!! 70% off", "anota aí: comprar pão, leite e café",
+    "Quais são minhas tarefas de hoje?", "Pix recebido de João Silva: R$ 350,00.",
+    "Atenção: tentativa de login no seu Gmail a partir de um novo dispositivo.",
+    "Vamos almoçar sábado na casa da vó?", "Pagamento do aluguel atrasado há 3 dias.",
+    "desliga o modo leve e abre as notificações", "Seu voo LA3456 para Recife foi alterado para 18h40.",
+    "Não esquece de levar o documento do carro.", "Bom dia! Segue a nota fiscal em anexo.",
+    "Toda segunda às 8h me manda o resumo da semana.",
+]
 
 
 def linhas_de_teste():
     from djorge.runtime.semantic import SemReq
-    txt = ["O boleto vence amanhã e custa R$ 120,00.", "Reunião urgente com o cliente às 9h.",
-           "Seu pedido saiu para entrega.", "Ganhe um iPhone agora, clique no link!", "Ana mora em Lima.",
-           "Me lembra de ligar pro dentista sexta às 10h.", "Quanto é 15% de 230?", "Cria uma lista de compras."]
-    return [SemReq("CHOICE", t, options=["cobrança", "entrega", "trabalho", "outro"], ask="Do que se trata?")
-            for t in txt] + [SemReq("NOUL", t, options=("o texto fala de dinheiro",)) for t in txt]
+    ops = ["cobrança", "entrega", "trabalho", "outro"]
+    return ([SemReq("CHOICE", t, options=ops, ask="Do que se trata?") for t in FRASES_APP]
+            + [SemReq("NOUL", t, options=("o texto fala de dinheiro",)) for t in FRASES_APP]
+            + [SemReq("NOUL", t, options=("é um pedido para o app fazer algo agora",)) for t in FRASES_APP[::2]])
 
 
-def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000):
-    """Artefato PyTorch -> pacote Local ONNX int8 em `out`. Levanta RuntimeError se a paridade falhar."""
+def _feeds(eng, reqs, lote=8):
+    """Entradas do grafo (ids, roles, mask) a partir das linhas serializadas (calibração / sensibilidade)."""
+    rows = [row for r in reqs for row in eng._rows(r)]
+    out = []
+    for i in range(0, len(rows), lote):
+        ids, roles, mask = eng.model.collate(rows[i:i + lote], "cpu")
+        f = lambda x: x.cpu().numpy() if hasattr(x, "cpu") else x
+        ids, roles, mask = f(ids), f(roles), f(mask)
+        out.append({"ids": ids.astype("int64"), "roles": roles.astype("int64"), "mask": mask.astype(bool)})
+    return out
+
+
+def _vmap(feeds, vmap):
+    import numpy as np
+    out = []
+    for fd in feeds:
+        x = fd["ids"].copy()
+        pos = x >= 0
+        x[pos] = vmap[x[pos]]
+        out.append(dict(fd, ids=x))
+    return out
+
+
+def sensibilidade(fp32, feeds, n_blocos, reduce_range=True):
+    """Erro de saída do encoder (média |ΔX|) quantizando UM bloco de camadas por vez: os mais sensíveis ficam
+    fora do int8 no modo sens. Devolve [(erro, [nós])] do mais sensível para o menos."""
+    import numpy as np
+    import onnx
+    import onnxruntime as ort
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+    from djorge.runtime.onnx_backend import session_options
+    m = onnx.load(fp32, load_external_data=False)
+    bl = blocos(m, n_blocos)
+    todos = [n for b in bl for n in b]
+    ref_s = ort.InferenceSession(fp32, session_options(), providers=["CPUExecutionProvider"])
+    ref = [ref_s.run(["X"], f)[0] for f in feeds]
+    del ref_s
+    tmp = fp32 + ".sens.onnx"
+    out = []
+    for b in bl:
+        quantize_dynamic(fp32, tmp, weight_type=QuantType.QInt8, per_channel=True, reduce_range=reduce_range,
+                         nodes_to_exclude=[n for n in todos if n not in b], op_types_to_quantize=["MatMul"],
+                         use_external_data_format=False)
+        s = ort.InferenceSession(tmp, session_options(), providers=["CPUExecutionProvider"])
+        err = float(np.mean([np.abs(s.run(["X"], f)[0] - r).mean() for f, r in zip(feeds, ref)]))
+        del s
+        out.append((err, b))
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    return sorted(out, key=lambda x: -x[0])
+
+
+def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000, paridade=None):
+    """Artefato PyTorch -> pacote Local ONNX (int8 quando possível) em `out`, o MENOR que passa a paridade.
+    Levanta RuntimeError se nenhum degrau passar."""
     p = progresso or (lambda f, etapa: None)
     artifact, out = str(artifact), str(out)
+    par = dict(PARIDADE, **(paridade or {}))
     from djorge.runtime.onnx_backend import export_encoder
     from djorge.runtime.semantic import SemanticEngine
     if os.path.exists(out):
@@ -217,7 +415,7 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000):
     q = os.path.join(out, "onnx", "encoder.int8.onnx")
     info["files"]["int8"] = "onnx/encoder.int8.onnx"
     json.dump(info, open(os.path.join(out, "onnx", "encoder.json"), "w"), indent=1)
-    p(0.6, "Conferindo as respostas com o modelo original…")
+    p(0.5, "Conferindo as respostas com o modelo original…")
     ref = SemanticEngine.from_artifact(artifact, device="cpu")
     reqs = []
     for r in linhas_de_teste():
@@ -226,30 +424,69 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000):
         except ValueError:
             pass
     r0 = ref.run(reqs)
+    import numpy as np
+    vm = os.path.join(out, "onnx", "vocab_map.npy")
+    feeds = _feeds(ref, reqs)
+    if os.path.exists(vm):
+        feeds = _vmap(feeds, np.load(vm))
     del ref
-    report = {"rows": len(reqs), "ladder": []}
+    report = {"rows": len(reqs), "ladder": [], "paridade": par, "lora_folded": info.get("lora_folded", 0)}
 
     def measure():
         eng = SemanticEngine.from_artifact(out, device="cpu", onnx="int8")
+        eng.run(reqs[:2])
         t = time.time(); r1 = eng.run(reqs); dt = (time.time() - t) / max(1, len(reqs))
         agree = sum(x.get("answer") == y.get("answer") for x, y in zip(r0, r1)) / max(1, len(reqs))
         dp = sum(abs(float(x.get("probability") or 0) - float(y.get("probability") or 0))
                  for x, y in zip(r0, r1)) / max(1, len(reqs))
-        return {"agreement": round(agree, 4), "mean_abs_prob_diff": round(dp, 4), "ms_per_row_cpu": round(dt * 1000, 1)}
+        return {"agreement": round(agree, 4), "mean_abs_prob_diff": round(dp, 4), "ms_per_row_cpu": round(dt * 1000, 2)}
 
-    passes = lambda m: m["agreement"] >= 0.99 and m["mean_abs_prob_diff"] < 0.03
+    passes = lambda m: m["agreement"] >= par["agreement"] and m["mean_abs_prob_diff"] < par["mean_abs_prob_diff"]
+    keep_best = os.path.join(out, "onnx", "encoder.best.onnx")
     chosen = None
-    for i, mode in enumerate(ladder):
-        p(0.65 + 0.3 * i / max(1, len(ladder)), f"Quantizando em int8 ({mode}) e conferindo…")
-        quantize(fp32, q, mode, reduce_range=True, inter=info.get("intermediate"))
-        m = measure()
-        m["mode"], m["mb"] = mode, round(os.path.getsize(q) / 1e6, 1)
-        report["ladder"].append(m)
-        log.info("quantização %s: %s", mode, m)
-        if passes(m):
-            chosen = m
+    flat = _flat(ladder)
+    sens_rank = None
+    for gi, grupo in enumerate(_grupos(ladder)):
+        aprovados = []
+        for mode in grupo:
+            i = flat.index(mode)
+            p(0.55 + 0.4 * i / max(1, len(flat)), f"Quantizando ({mode}) e conferindo…")
+            tentativas = [(mode, None)]
+            if mode == "sens":
+                if sens_rank is None:
+                    nb = int(info.get("layers") or 8) + 2
+                    sens_rank = sensibilidade(fp32, feeds, nb)
+                    report["sensibilidade"] = [round(e, 6) for e, _ in sens_rank]
+                tentativas = []
+                for k in sorted({1, 2, max(1, len(sens_rank) // 8), max(1, len(sens_rank) // 4),
+                                 max(1, len(sens_rank) // 2)}):
+                    if k < len(sens_rank):
+                        tentativas.append((f"sens{k}", [n for _, b in sens_rank[:k] for n in b]))
+            for nome, excl in tentativas:
+                try:
+                    quantize(fp32, q, "sens" if excl is not None else mode, reduce_range=True,
+                             inter=info.get("intermediate"), exclude=excl, calib=feeds)
+                    m = measure()
+                except Exception as e:                     # degrau que não roda neste ONNX Runtime: pula
+                    log.warning("quantização %s falhou: %s", nome, e)
+                    report["ladder"].append({"mode": nome, "erro": str(e)[:300]})
+                    continue
+                m["mode"], m["mb"] = nome, round(os.path.getsize(q) / 1e6, 2)
+                m["passou"] = passes(m)
+                report["ladder"].append(m)
+                log.info("quantização %s: %s", nome, m)
+                if m["passou"]:
+                    aprovados.append(m)
+                    if not chosen or m["mb"] < chosen["mb"]:
+                        chosen = m
+                        shutil.copy(q, keep_best)
+                    if excl is not None:
+                        break                               # sens: o menor k aprovado é o menor pacote
+        if aprovados:
             break
-    for f in ("encoder.onnx", "encoder.onnx.data"):
+    if chosen:
+        os.replace(keep_best, q)
+    for f in ("encoder.onnx", "encoder.onnx.data", "encoder.best.onnx"):
         fp = os.path.join(out, "onnx", f)
         if os.path.exists(fp):
             os.remove(fp)
@@ -259,18 +496,36 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000):
         raise RuntimeError("a versão ONNX mudaria as respostas do modelo (teste de paridade): seguindo em PyTorch")
     info["quant"] = chosen["mode"]
     report["variants"] = {"int8": chosen}
+    report["chosen"] = chosen["mode"]
     report["passed"] = True
     json.dump(info, open(os.path.join(out, "onnx", "encoder.json"), "w"), indent=1)
     json.dump({"name": "Djorge Origo Flash Local", "profiles": PROFILES, "default": "cpu", "converted_locally": True},
               open(os.path.join(out, "local_profiles.json"), "w"), indent=1)
     mp = os.path.join(out, "metadata", "djorge.json")
     meta_o = json.load(open(mp, encoding="utf-8"))
-    meta_o.update(local_package=True, onnx=info, parity=report, vocab_report=vrep, quantization="int8 (CPU)",
-                  converted=time.strftime("%Y-%m-%d"))
+    meta_o.update(local_package=True, onnx=info, parity=report, vocab_report=vrep,
+                  quantization=descrever_quant(chosen["mode"]), converted=time.strftime("%Y-%m-%d"))
     json.dump(meta_o, open(mp, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
-    report.update(size_mb=round(_size(out) / 1e6, 1), source_mb=round(before / 1e6, 1),
+    report.update(size_mb=round(_size(out) / 1e6, 2), source_mb=round(before / 1e6, 1),
                   minutes=round((time.time() - t0) / 60, 1))
     return report
+
+
+def descrever_quant(mode: str) -> str:
+    m = str(mode or "")
+    if m in ("all", "all_fr"):
+        return "int8 completo (CPU)"
+    if m == "wo8":
+        return "int8 nos pesos (CPU)"
+    if m == "static":
+        return "int8 estático calibrado (CPU)"
+    if m.startswith("sens"):
+        return f"int8 menos {m[4:] or '?'} blocos sensíveis (fp16) (CPU)"
+    if m in ("mlp", "attn"):
+        return f"int8 só {'MLP' if m == 'mlp' else 'atenção'} + fp16 (CPU)"
+    if m == "embed":
+        return "int8 só vocabulário + fp16 (CPU)"
+    return "fp32 (CPU)" if m == "none" else (m or "int8 (CPU)")
 
 
 # ----------------------------------------------------------------------------- em segundo plano --

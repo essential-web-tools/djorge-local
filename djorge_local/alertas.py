@@ -401,19 +401,57 @@ class Alertas:
         return dict(a, descricao=descrever(a))
 
     # ---- disparo ----
+    prefs: Callable[[], Dict] = None                      # app.ui.get (floreios, nome) — opcional
+
+    def _enfeitar(self, titulo: str, msg: str, seed=None) -> Dict:
+        """Floreios (V2 OR): tom feliz/sério/neutro e um enfeite curto, se a pessoa deixou ligado."""
+        if not callable(self.prefs):
+            return {"titulo": titulo, "msg": msg, "tom": "neutro"}
+        try:
+            p = self.prefs() or {}
+        except Exception:
+            p = {}
+        try:
+            from . import floreios as fl
+            t = fl.tom(f"{titulo} {msg}")
+            ocas = {"tipo": "aniversario"} if re.search(r"(?i)anivers[aá]rio", titulo or "") else None
+            e = fl.enfeitar(titulo, msg, t, ocasiao=ocas, nome_usuario=p.get("nome_usuario") or None, seed=seed,
+                            ativo=bool(p.get("floreios", True)))
+            return {"titulo": e["titulo"] or titulo, "msg": e["mensagem"], "tom": t}
+        except Exception:
+            return {"titulo": titulo, "msg": msg, "tom": "neutro"}
+
+    def aviso_avulso(self, titulo: str, msg: str, chave: str = None, card_id: str = None, toast: bool = True) -> int:
+        """Aviso sem alerta agendado (datas, aniversários). `chave` evita repetir o mesmo aviso. Devolve 1 ou 0."""
+        with self.lock:
+            aid = "x:" + (chave or uuid.uuid4().hex[:12])[:100]
+            if chave and self.db.execute("SELECT 1 FROM avisos WHERE alerta_id=?", (aid,)).fetchone():
+                return 0
+            self.db.execute("INSERT INTO avisos (id, t, alerta_id, card_id, titulo, msg, lido) VALUES (?,?,?,?,?,?,0)",
+                            (uuid.uuid4().hex[:12], _iso(self.agora()), aid, card_id, titulo, msg))
+            self.db.commit()
+        if toast:
+            try:
+                self.mostrar(titulo, msg)
+            except Exception:
+                pass
+        return 1
+
     def _disparar(self, a: Dict, agora: _dt.datetime) -> Dict:
         msg = a.get("msg") or (descrever(a) if a.get("repetir") else "")
-        ev = {"alerta_id": a["id"], "titulo": a["titulo"], "msg": msg, "canais": []}
+        e = self._enfeitar(a["titulo"], msg, seed=f"{a['id']}{int(a.get('disparos') or 0)}")
+        titulo, msg = e["titulo"], e["msg"]
+        ev = {"alerta_id": a["id"], "titulo": titulo, "msg": msg, "canais": [], "tom": e["tom"]}
         if "toast" in a.get("canal", CANAIS):
             try:
-                self.mostrar(a["titulo"], msg)
+                self.mostrar(titulo, msg)
                 ev["canais"].append("toast")
             except Exception:
                 pass
         if "app" in a.get("canal", CANAIS):
             with self.lock:
                 self.db.execute("INSERT INTO avisos (id, t, alerta_id, card_id, titulo, msg, lido) VALUES (?,?,?,?,?,?,0)",
-                                (uuid.uuid4().hex[:12], _iso(agora), a["id"], a.get("card_id"), a["titulo"], msg))
+                                (uuid.uuid4().hex[:12], _iso(agora), a["id"], a.get("card_id"), titulo, msg))
                 self.db.commit()
             ev["canais"].append("app")
         return ev
@@ -482,6 +520,9 @@ def servico(app) -> Alertas:
     if s is None:
         from . import config as _c
         s = Alertas(Path(getattr(_c, "HOME")) / "alertas.db")
+        ui = getattr(app, "ui", None)
+        if ui is not None:
+            s.prefs = ui.get
         try:
             app._alertas = s
         except Exception:

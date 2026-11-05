@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 CAMPOS = ("id", "t", "pedido", "ferramenta", "acao", "alvo", "resultado", "alteracoes", "desfeito")
-_IGNORA_DIFF = {"updated", "created", "order"}
+_IGNORA_DIFF = {"updated", "created", "order", "meta"}   # meta: prioridade auto, perguntas (técnico)
 _local = threading.local()
 
 

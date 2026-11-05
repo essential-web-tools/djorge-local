@@ -18,8 +18,10 @@ from typing import Dict, List, Optional
 KINDS = ("tarefa", "evento", "lembrete", "nota", "lista", "mensagem")
 COLUMNS = ("entrada", "hoje", "fazendo", "aguardando", "feito")
 FIELDS = ("id", "kind", "title", "body", "column", "start", "end", "due", "all_day", "priority", "tags", "people",
-          "checklist", "recurrence", "color", "pinned", "done", "source", "order", "created", "updated", "alertas", "objetivo")
-_JSON = ("tags", "people", "checklist", "source", "alertas")
+          "checklist", "recurrence", "color", "pinned", "done", "source", "order", "created", "updated", "alertas", "objetivo", "meta")
+_JSON = ("tags", "people", "checklist", "source", "alertas", "meta")
+# meta: {prioridade_origem manual|auto, prioridade_motivo, prioridade_base, origem, nao_perguntar[], respostas{}}
+META_KEYS = ("prioridade_origem", "prioridade_motivo", "prioridade_base", "origem", "nao_perguntar", "respostas")
 _SQLCOL = {"column": "col", "order": "ord", "end": "end_", "start": "start_"}   # nomes reservados no SQL
 
 
@@ -138,6 +140,27 @@ def normalize(data: Dict, base: Optional[Dict] = None) -> Dict:
                 raise ValueError("source: objeto {integration, external_id, url}")
             v = {kk: (str(v[kk])[:500] if v.get(kk) is not None else None)
                  for kk in ("integration", "external_id", "url")}
+        elif k == "meta":
+            if v is None:
+                v = {}
+            if not isinstance(v, dict):
+                raise ValueError("meta: objeto esperado")
+            m = dict(c.get("meta") or {})
+            for kk, vv in v.items():
+                if kk not in META_KEYS:
+                    continue
+                if kk == "prioridade_origem" and vv not in ("manual", "auto"):
+                    raise ValueError("meta.prioridade_origem: manual ou auto")
+                if kk == "nao_perguntar":
+                    vv = [str(x)[:40] for x in (vv or [])][:20]
+                elif kk == "respostas":
+                    vv = {str(a)[:40]: str(b)[:200] for a, b in dict(vv or {}).items()}
+                elif kk == "prioridade_base":
+                    vv = max(0, min(3, int(vv or 0)))
+                else:
+                    vv = str(vv or "")[:160]
+                m[kk] = vv
+            v = m
         elif k == "alertas":                              # V2_SPEC_4: {quando|antes, repetir, ate, janela, canal}
             from .alertas import normalizar_lista
             v = normalizar_lista(v)
@@ -152,6 +175,13 @@ def normalize(data: Dict, base: Optional[Dict] = None) -> Dict:
     c.setdefault("source", {"integration": None, "external_id": None, "url": None})
     c.setdefault("alertas", [])
     c.setdefault("objetivo", "")
+    c.setdefault("meta", {})
+    if not isinstance(c["meta"], dict):
+        c["meta"] = {}
+    if "priority" in data and not (data.get("meta") or {}).get("prioridade_origem"):
+        antes = int((base or {}).get("priority") or 0)
+        if (base is None and c["priority"] > 0) or (base is not None and c["priority"] != antes):
+            c["meta"] = dict(c["meta"], prioridade_origem="manual", prioridade_motivo="")  # escolha da pessoa
     if "done" in data and "column" not in data:          # marcar feito leva para a coluna "feito"
         if c["done"]:
             c["column"] = "feito"
@@ -178,7 +208,7 @@ class Cards:
               id TEXT PRIMARY KEY, kind TEXT, title TEXT, body TEXT, col TEXT, start_ TEXT, end_ TEXT, due TEXT,
               all_day INTEGER, priority INTEGER, tags TEXT, people TEXT, checklist TEXT, recurrence TEXT, color TEXT,
               pinned INTEGER, done INTEGER, source TEXT, ord REAL, created TEXT, updated TEXT,
-              src_int TEXT, src_ext TEXT, alertas TEXT, objetivo TEXT DEFAULT '');
+              src_int TEXT, src_ext TEXT, alertas TEXT, objetivo TEXT DEFAULT '', meta TEXT);
             CREATE INDEX IF NOT EXISTS cards_col ON cards(col, ord);
             CREATE INDEX IF NOT EXISTS cards_when ON cards(start_, due);
             CREATE INDEX IF NOT EXISTS cards_src ON cards(src_int, src_ext);
@@ -187,6 +217,8 @@ class Cards:
                 self.db.execute("ALTER TABLE cards ADD COLUMN alertas TEXT")     # bancos antigos
             if "objetivo" not in [r[1] for r in self.db.execute("PRAGMA table_info(cards)")]:
                 self.db.execute("ALTER TABLE cards ADD COLUMN objetivo TEXT DEFAULT ''")
+            if "meta" not in [r[1] for r in self.db.execute("PRAGMA table_info(cards)")]:
+                self.db.execute("ALTER TABLE cards ADD COLUMN meta TEXT")
             self.db.commit()
 
     # ------------------------------------------------------------------ básico --
@@ -195,7 +227,7 @@ class Cards:
         for k in FIELDS:
             v = r[_SQLCOL.get(k, k)]
             if k in _JSON:
-                v = json.loads(v or ("{}" if k == "source" else "[]"))
+                v = json.loads(v or ("{}" if k in ("source", "meta") else "[]"))
             elif k in ("all_day", "pinned", "done"):
                 v = bool(v)
             c[k] = v
@@ -242,6 +274,17 @@ class Cards:
                 c["order"] = self._next_order(c["column"])
             self._write(c)
             return c
+
+    def set_auto(self, cid: str, priority: int, meta: Dict) -> None:
+        """Prioridade calculada (origem auto): grava direto, sem mexer em `updated` nem no histórico."""
+        with self.lock:
+            cur = self.get(cid)
+            if not cur:
+                return
+            m = dict(cur.get("meta") or {}, **(meta or {}))
+            self.db.execute("UPDATE cards SET priority=?, meta=? WHERE id=?",
+                            (max(0, min(3, int(priority))), json.dumps(m, ensure_ascii=False), str(cid)))
+            self.db.commit()
 
     def delete(self, cid: str) -> bool:
         with self.lock:

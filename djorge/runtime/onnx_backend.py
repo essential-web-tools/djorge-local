@@ -70,12 +70,39 @@ def trim_embeddings(model, keep_ids):
     return vmap
 
 
+def merge_lora(model) -> int:
+    """Folds every ACTIVE LoRA adapter into its base Linear (W + B@A*scale, in float32) and removes the wrapper.
+    Same function, but each projection is ONE MatMul in the graph instead of three: faster, smaller, and int8
+    quantization no longer has to round the tiny low-rank matrices (where most of its error came from)."""
+    import torch
+    import torch.nn as nn
+    from ..model.lora import LoRALinear
+    n = 0
+    with torch.no_grad():
+        for parent in list(model.modules()):
+            for name, child in list(parent.named_children()):
+                if isinstance(child, LoRALinear):
+                    base = child.base
+                    lin = nn.Linear(base.in_features, base.out_features, bias=base.bias is not None)
+                    W = base.weight.detach().float().clone()
+                    for k in child.active:
+                        if k in child.A:
+                            W += (child.B[k].float() @ child.A[k].float()) * child.scale[k]
+                    lin.weight.data.copy_(W)
+                    if base.bias is not None:
+                        lin.bias.data.copy_(base.bias.detach().float())
+                    setattr(parent, name, lin)
+                    n += 1
+    return n
+
+
 def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = True, fp16: bool = False,
-                   keep_ids=None, reduce_range: bool = True) -> dict:
+                   keep_ids=None, reduce_range: bool = True, fold_lora: bool = True) -> dict:
     import torch
     from .semantic import SemanticEngine
     eng = SemanticEngine.from_artifact(artifact, device="cpu", dtype="float32")
     model = eng.model.eval().float()
+    folded = merge_lora(model.backbone) if fold_lora else 0
     os.makedirs(os.path.join(out_dir, "onnx"), exist_ok=True)
     vocab = None
     if keep_ids is not None:
@@ -119,22 +146,44 @@ def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = Tr
         files["fp16"] = "onnx/encoder.fp16.onnx"
     info = {"files": files, "hidden": model.cfg["hidden"], "layers": model.cfg["layers"], "d": model.cfg["d"],
             "opset": max(opset, 18), "reduce_range": bool(reduce_range),
-            "intermediate": int(getattr(model.backbone.config, "intermediate_size", 0) or 0)}
+            "intermediate": int(getattr(model.backbone.config, "intermediate_size", 0) or 0), "lora_folded": folded}
     if vocab:
         info["vocab"] = vocab
     json.dump(info, open(os.path.join(out_dir, "onnx", "encoder.json"), "w"), indent=1)
     return info
 
 
+def session_options(threads: int = 0, arena: Optional[bool] = None):
+    """Light ONNX Runtime session for a desktop app: graph optimisation ALL, intra-op = `threads` (0 = ORT
+    default), ONE inter-op thread (the encoder graph is a chain: parallel branches gain nothing), no busy-wait
+    spinning between calls (an idle app must not burn CPU), and the memory arena off by default
+    (DJORGE_ORT_ARENA=1 turns it back on): the arena keeps the largest batch's buffers forever."""
+    import onnxruntime as ort
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    so.inter_op_num_threads = 1
+    if threads:
+        so.intra_op_num_threads = int(threads)
+    if arena is None:
+        arena = os.environ.get("DJORGE_ORT_ARENA", "0") == "1"
+    so.enable_cpu_mem_arena = bool(arena)
+    so.enable_mem_pattern = bool(arena)
+    for k, v in (("session.intra_op.allow_spinning", "0"), ("session.inter_op.allow_spinning", "0")):
+        try:
+            so.add_session_config_entry(k, v)
+        except Exception:
+            pass
+    return so
+
+
 class OnnxEncoder:
-    def __init__(self, path: str, providers: Optional[List[str]] = None, threads: int = 0):
+    def __init__(self, path: str, providers: Optional[List[str]] = None, threads: int = 0, arena: Optional[bool] = None):
         import onnxruntime as ort
         avail = ort.get_available_providers()
         prov = [p for p in (providers or PREFERRED) if p in avail] or ["CPUExecutionProvider"]
-        so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        if threads:
-            so.intra_op_num_threads = threads
+        so = session_options(threads, arena)
+        self.threads = threads
         self.sess = ort.InferenceSession(path, so, providers=prov)
         self.provider = self.sess.get_providers()[0]
         mp = os.path.join(os.path.dirname(path), "vocab_map.npy")      # trimmed vocabulary: old id -> kept row
