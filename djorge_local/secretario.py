@@ -20,7 +20,10 @@ from typing import Dict, List, Optional
 from .tree import NOVAS_ACOES, fold
 
 FONTES = ("notifications", "email", "imap", "whatsapp", "mensagem", "http", "integracao")
+LISTAS = ("apps_ignorados", "vips", "remetentes_ignorados", "palavras_ignoradas", "categorias_ignoradas")
 DEFAULT = {"ativo": False, "modo": "sugerir", "apps_ignorados": [], "vips": [],
+           "remetentes_ignorados": [], "palavras_ignoradas": [], "categorias_ignoradas": [],
+           "ignorar_como": "arquivar",          # "arquivar" (guarda arquivada, sem avisos nem ações) | "descartar"
            "horario_silencio": {"ativo": False, "inicio": "22:00", "fim": "07:00"},
            "resumo_diario_hora": "18:00", "toasts": True}
 SEM = ["seg.", "ter.", "qua.", "qui.", "sex.", "sáb.", "dom."]
@@ -141,7 +144,11 @@ class Secretario:
                 if v not in ("sugerir", "agir"):
                     raise ValueError("modo: sugerir ou agir")
                 c[k] = v
-            elif k in ("apps_ignorados", "vips"):
+            elif k == "ignorar_como":
+                if v not in ("arquivar", "descartar"):
+                    raise ValueError("ignorar_como: arquivar ou descartar")
+                c[k] = v
+            elif k in LISTAS:
                 if isinstance(v, str):
                     v = [x.strip() for x in re.split(r"[\n,;]", v) if x.strip()]
                 if not isinstance(v, list):
@@ -286,13 +293,61 @@ class Secretario:
                         "prioridade": 3 if ev.get("vip") else 2})
         return out
 
+    def ignorada(self, ev: Dict) -> Optional[str]:
+        """Motivo se a notificação casa com algo que a pessoa mandou ignorar (app, remetente ou palavras)."""
+        c = self.conf
+        app_nome = fold(ev.get("app"))
+        for x in c.get("apps_ignorados") or []:
+            if fold(x) and app_nome and fold(x) in app_nome:
+                return f"app ignorado: {x}"
+        rem = fold(" ".join(str(ev.get(k) or "") for k in ("remetente", "from", "sender", "autor", "title")))
+        for x in c.get("remetentes_ignorados") or []:
+            if fold(x) and fold(x) in rem:
+                return f"remetente ignorado: {x}"
+        texto = fold(" ".join(str(ev.get(k) or "") for k in ("title", "titulo", "assunto", "text", "texto", "body")))
+        for x in c.get("palavras_ignoradas") or []:
+            if fold(x) and re.search(r"(?<!\w)" + re.escape(fold(x)) + r"(?!\w)", texto):
+                return f"palavra ignorada: {x}"
+        return None
+
+    def ignorar_parecidas(self, notif: Dict, por: str) -> Dict:
+        """'Ignorar notificações como esta': por app, remetente ou tipo (categoria)."""
+        mapa = {"app": ("apps_ignorados", notif.get("app")),
+                "remetente": ("remetentes_ignorados", notif.get("remetente")),
+                "tipo": ("categorias_ignoradas", notif.get("etiqueta")),
+                "categoria": ("categorias_ignoradas", notif.get("etiqueta"))}
+        if por not in mapa or not mapa[por][1]:
+            raise ValueError(f"não dá para ignorar por {por} nesta notificação")
+        chave, valor = mapa[por]
+        lista = list(self.conf.get(chave) or [])
+        if fold(valor) not in [fold(x) for x in lista]:
+            lista.append(str(valor))
+        self.configurar({chave: lista})
+        return {"ok": True, "chave": chave, "valor": valor, "config": self.config()}
+
     def processar(self, ev: Dict) -> Optional[Dict]:
         if ev.get("skipped") or ev.get("source") not in FONTES or ev.get("id") == "teste":
             return None
-        app_nome = fold(ev.get("app"))
-        if app_nome and any(fold(x) and fold(x) in app_nome for x in self.conf.get("apps_ignorados") or []):
-            return {"ignorado": True}
-        tri = self.triar(ev)
+        motivo = self.ignorada(ev)
+        if motivo and self.conf.get("ignorar_como") == "descartar":
+            return {"ignorado": True, "motivo": motivo}
+        tri = self.triar(ev) if not motivo else {"categoria": "", "prioridade": "baixa", "nota": 0,
+                                                  "motivos": [motivo]}
+        if not motivo:
+            cat = fold(tri.get("categoria"))
+            if cat and any(fold(x) == cat for x in self.conf.get("categorias_ignoradas") or []):
+                motivo = f"tipo ignorado: {tri.get('categoria')}"
+                if self.conf.get("ignorar_como") == "descartar":
+                    return {"ignorado": True, "motivo": motivo}
+        if motivo:                                        # guarda arquivada, sem avisos nem ações
+            e = dict(ev)
+            n = self.store.add(e, etiqueta=tri.get("categoria") or "ignorada", prioridade="baixa", nota=0,
+                               motivos=[motivo], dados={})
+            try:
+                self.store.update(n["id"], arquivada=True, lida=True)
+            except Exception:
+                pass
+            return {"ignorado": True, "motivo": motivo, "notificacao": n["id"]}
         e = self.enriquecer(ev, tri)
         dados = {k: e.get(k) for k in self.CAMPOS_EV if e.get(k) not in (None, "")}
         n = self.store.add(e, etiqueta=tri.get("categoria") or "", prioridade=tri.get("prioridade") or "normal",
@@ -442,7 +497,12 @@ class Secretario:
             if r.get("card_id"):
                 self.store.update(nid, acoes=self.store.get(nid)["acoes"] + [r])
             return r
-        raise ValueError("ação: aprovar, recusar, desfazer, arquivar, desarquivar, lida, nao_lida, abrir_app, criar_card")
+        if acao == "ignorar_parecidas":                   # {por: app | remetente | tipo}
+            r = self.ignorar_parecidas(n, b.get("por") or "app")
+            self.store.update(nid, arquivada=True, lida=True)
+            return r
+        raise ValueError("ação: aprovar, recusar, desfazer, arquivar, desarquivar, lida, nao_lida, abrir_app, "
+                         "criar_card, ignorar_parecidas")
 
     def desfazer(self, nid: str) -> Dict:
         n = self.store.get(nid)

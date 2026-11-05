@@ -1170,15 +1170,16 @@ function notifCtx(e, id) {
   const sug = asList(n.acoes_sugeridas || n.sugestoes);
   ctxMenu(e, [...(sug.length ? [{group: "Sugerido"}, ...sug.map((a, i) => ({value: "a:" + i, label: actLabel(a), icon: "spark"})), {hr: 1}] : []),
     {value: "read", label: n.lida ? "Marcar como não lida" : "Marcar como lida", icon: "check"}, {value: "tag", label: "Etiquetar…", icon: "hash"}, {value: "card", label: "Criar card a partir disso", icon: "board"},
-    {value: "sel", label: NSEL.has(String(id)) ? "Tirar da seleção" : "Selecionar", icon: "check"}, {value: "mute", label: `Ignorar notificações de ${titleCase(n.app || "este app")}`, icon: "x"},
+    {value: "sel", label: NSEL.has(String(id)) ? "Tirar da seleção" : "Selecionar", icon: "check"}, {group: "Ignorar notificações como esta"}, ...(n.app ? [{value: "ig:app", label: `Deste app (${titleCase(n.app)})`, icon: "x"}] : []), ...(n.remetente ? [{value: "ig:remetente", label: `Deste remetente (${titleCase(n.remetente)})`, icon: "x"}] : []), ...(n.etiqueta ? [{value: "ig:tipo", label: `Deste tipo (${titleCase(n.etiqueta)})`, icon: "x"}] : []), {hr: 1},
     {value: "rule", label: "Criar automação parecida…", icon: "tree"}, {hr: 1}, {value: "copy", label: "Copiar texto", icon: "list"}], async v => {
     if (v.startsWith("a:")) { const a = sug[+v.slice(2)]; const r = await tryApi(`/api/notificacoes/${encodeURIComponent(n.id)}/acao`, {acao: "aprovar", i: a && a.i != null ? a.i : +v.slice(2)}); if (r) { toast(`${actLabel(a)}: feito`); loadCards(true); viewNotifs(); } }
     if (v === "read") markNotifs([n.id], !n.lida);
     if (v === "tag") tagMenu(null, e, t => tryApi("/api/notificacoes/" + encodeURIComponent(n.id), {etiqueta: t}).then(r => { if (r) { toast(`Etiqueta “${titleCase(t)}”`); viewNotifs(); } }));
     if (v === "card") { const c = await createCard({kind: "tarefa", title: n.titulo || n.title || titleCase(n.app || "Notificação"), body: n.texto || n.text || "", column: "entrada", tags: n.etiqueta ? [n.etiqueta] : []}); if (c) openCard(c.id); }
     if (v === "sel") toggleNSel(id);
-    if (v === "mute") { const cfg = await tryApi("/api/secretario", undefined, {silent: true}) || {}; const ig = [...new Set([...(cfg.apps_ignorados || []), n.app].filter(Boolean))];
-      if (await tryApi("/api/secretario", {...cfg, apps_ignorados: ig})) toast(`O secretário vai ignorar ${titleCase(n.app)}`); }
+    if (v.startsWith("ig:")) { const r = await tryApi(`/api/notificacoes/${encodeURIComponent(n.id)}/acao`, {acao: "ignorar_parecidas", por: v.slice(3)});
+      if (r && r.ok) { const ch = r.chave, val = r.valor; viewNotifs();
+        toast(`Vou ignorar notificações ${v === "ig:app" ? "de" : v === "ig:tipo" ? "do tipo" : "de"} ${titleCase(val)}`, "", {action: "Desfazer", onAction: async () => { const c = await tryApi("/api/secretario", undefined, {silent: true}) || {}; await tryApi("/api/secretario", {[ch]: (c[ch] || []).filter(x => String(x).toLowerCase() !== String(val).toLowerCase())}); toast("Pronto, voltou a valer"); }}); } }
     if (v === "rule") { go("automacoes"); setTimeout(() => autoBuilder({nome: `Notificações de ${titleCase(n.app || "")}`, ativa: true, quando: {fontes: ["notifications"], apps: n.app ? [n.app] : [], palavras: []}, entao: [{acao: "criar_card", params: {titulo: "{titulo}"}}]}), 60); }
     if (v === "copy") copyText([n.titulo, n.texto].filter(Boolean).join("\n"));
   });
@@ -1368,7 +1369,7 @@ function contactsInto(dl, q) { clearTimeout(contT); if (!q || q.length < 2) retu
 /* ----- secretário em 3 passos ----- */
 async function secretaryWizard(after) {
   let cfg = {}; try { cfg = await api("/api/secretario") || {}; } catch (e) { if (e.status === 404 || e.status === 503) return toast("O secretário ainda não está disponível nesta versão.", "warn"); }
-  const st = {ativo: cfg.ativo !== false, modo: cfg.modo || "sugerir", apps_ignorados: [...(cfg.apps_ignorados || [])], vips: [...(cfg.vips || [])], horario_silencio: typeof cfg.horario_silencio === "object" && cfg.horario_silencio ? (cfg.horario_silencio.ativo === false ? "" : `${cfg.horario_silencio.inicio || ""}-${cfg.horario_silencio.fim || ""}`) : (cfg.horario_silencio || ""), resumo_diario_hora: cfg.resumo_diario_hora || "08:00"};
+  const st = {ativo: cfg.ativo !== false, modo: cfg.modo || "sugerir", apps_ignorados: [...(cfg.apps_ignorados || [])], remetentes_ignorados: [...(cfg.remetentes_ignorados || [])], palavras_ignoradas: [...(cfg.palavras_ignoradas || [])], categorias_ignoradas: [...(cfg.categorias_ignoradas || [])], ignorar_como: cfg.ignorar_como || "arquivar", vips: [...(cfg.vips || [])], horario_silencio: typeof cfg.horario_silencio === "object" && cfg.horario_silencio ? (cfg.horario_silencio.ativo === false ? "" : `${cfg.horario_silencio.inicio || ""}-${cfg.horario_silencio.fim || ""}`) : (cfg.horario_silencio || ""), resumo_diario_hora: cfg.resumo_diario_hora || "08:00"};
   let step = 0; const apps = [...new Set([...(NOTIFS || []).map(n => n.app), "Teams", "Slack", "Spotify", "Steam", "Discord", "Windows Update"].filter(Boolean))];
   const m = modal({title: "Configurar o secretário", cls: "md wiz", body: `<div class="wsteps" aria-hidden="true"><i></i><i></i><i></i></div><div id="wb" class="wbody"></div>`, foot: `<button class="btn ghost" id="wback">Voltar</button><span style="flex:1"></span><span class="hint" id="wn"></span><button class="btn primary" id="wnext">Continuar</button>`});
   const B = m.box;
@@ -1379,12 +1380,20 @@ async function secretaryWizard(after) {
       ${setRow("Resumo do dia", "Um aviso com o que importa, todo dia neste horário.", `<input class="inp" type="time" id="w-res" value="${esc(st.resumo_diario_hora)}" style="width:120px" aria-label="Hora do resumo">`)}
       ${setRow("Horário de silêncio", "Sem avisos nesse intervalo (ex.: 22:00-07:00).", `<input class="inp" id="w-sil" value="${esc(st.horario_silencio)}" placeholder="22:00-07:00" style="width:140px" aria-label="Horário de silêncio">`)}`;
       $("#w-on", wb).onchange = e => st.ativo = e.target.checked; $("#w-res", wb).onchange = e => st.resumo_diario_hora = e.target.value; $("#w-sil", wb).oninput = e => st.horario_silencio = e.target.value; }
-    if (step === 1) { wb.innerHTML = `<h3>O que ignorar e quem é VIP</h3><p class="hint">Apps ignorados não viram nada. Pessoas VIP sempre chegam como importantes.</p>
+    if (step === 1) { wb.innerHTML = `<h3>O que ignorar e quem é VIP</h3><p class="hint">Notificações ignoradas não viram nada (apps, remetentes, palavras ou tipos). Pessoas VIP sempre chegam como importantes.</p>
       <div class="field"><span class="lbl">Ignorar estes apps</span><div class="row" style="gap:6px" id="w-apps">${apps.map(x => `<button type="button" class="chip ${st.apps_ignorados.includes(x) ? "on" : ""}" data-app="${esc(x)}" aria-pressed="${st.apps_ignorados.includes(x)}">${esc(titleCase(x))}</button>`).join("")}</div></div>
       <div class="field"><label for="w-ai">Outro app</label><div class="tagin" id="w-ax"></div></div>
+      <div class="field"><label for="w-ri">Ignorar estes remetentes</label><div class="tagin" id="w-rem"></div></div>
+      <div class="field"><label for="w-pi">Ignorar quando tiver estas palavras</label><div class="tagin" id="w-pal"></div><small>Ex.: cupom, newsletter, promoção</small></div>
+      <div class="field"><span class="lbl">Ignorar estes tipos</span><div class="row" style="gap:6px" id="w-cats">${["promoções", "notificações", "compras e entregas", "financeiro", "trabalho", "pessoal", "agenda"].map(x => `<button type="button" class="chip ${st.categorias_ignoradas.includes(x) ? "on" : ""}" data-cat="${esc(x)}" aria-pressed="${st.categorias_ignoradas.includes(x)}">${esc(titleCase(x))}</button>`).join("")}</div></div>
+      ${setRow("O que fazer com as ignoradas", "Arquivar guarda sem avisar; descartar nem guarda.", `<select class="inp" id="w-igc" aria-label="O que fazer com as ignoradas"><option value="arquivar" ${st.ignorar_como === "arquivar" ? "selected" : ""}>Arquivar em silêncio</option><option value="descartar" ${st.ignorar_como === "descartar" ? "selected" : ""}>Descartar</option></select>`)}
       <div class="field"><label for="w-vi">Pessoas VIP</label><div class="tagin" id="w-vip"></div><small>Nomes, e-mails ou telefones. Ex.: chefe, Ana Souza, @empresa.com.br</small></div>`;
       $$("[data-app]", wb).forEach(b => b.onclick = () => { const s = new Set(st.apps_ignorados); s.has(b.dataset.app) ? s.delete(b.dataset.app) : s.add(b.dataset.app); st.apps_ignorados = [...s]; b.classList.toggle("on"); b.setAttribute("aria-pressed", s.has(b.dataset.app)); });
       tagInput($("#w-ax", wb), st.apps_ignorados.filter(x => !apps.includes(x)), "w-ai", "nome do app + Enter", x => { st.apps_ignorados = [...new Set([...st.apps_ignorados.filter(y => apps.includes(y)), ...x])]; });
+      tagInput($("#w-rem", wb), st.remetentes_ignorados, "w-ri", "nome ou e-mail + Enter", x => st.remetentes_ignorados = x);
+      tagInput($("#w-pal", wb), st.palavras_ignoradas, "w-pi", "palavra + Enter", x => st.palavras_ignoradas = x);
+      $$("[data-cat]", wb).forEach(b => b.onclick = () => { const s2 = new Set(st.categorias_ignoradas); s2.has(b.dataset.cat) ? s2.delete(b.dataset.cat) : s2.add(b.dataset.cat); st.categorias_ignoradas = [...s2]; b.classList.toggle("on"); b.setAttribute("aria-pressed", s2.has(b.dataset.cat)); });
+      $("#w-igc", wb).onchange = e => st.ignorar_como = e.target.value;
       tagInput($("#w-vip", wb), st.vips, "w-vi", "nome + Enter", x => st.vips = x); }
     if (step === 2) { wb.innerHTML = `<h3>Sugerir ou agir?</h3><p class="hint">Você pode mudar depois.</p><div class="wopts" role="radiogroup" aria-label="Modo">
       <button type="button" role="radio" class="wopt" data-m="sugerir" aria-checked="${st.modo === "sugerir"}"><span class="rem">${ico("hand")}</span><b>Sugerir</b><p>O secretário propõe (criar card, etiquetar, arquivar) e você aprova num clique. Recomendado para começar.</p></button>

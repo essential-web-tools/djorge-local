@@ -231,7 +231,7 @@ def test_secretario_config_ignorados_e_silencio(app, srv):
     assert code == 400
     assert sec.em_silencio(dt.datetime(2026, 11, 2, 23, 30)) and sec.em_silencio(dt.datetime(2026, 11, 3, 6, 59))
     assert not sec.em_silencio(dt.datetime(2026, 11, 2, 12, 0))
-    assert app.handle(_ev("Nova música", app="Spotify"))["secretario"] == {"ignorado": True}
+    assert app.handle(_ev("Nova música", app="Spotify"))["secretario"]["ignorado"] is True
     # silêncio: o alerta vira card, mas sem toast
     from djorge_local import toasts
     sec.agora = lambda: dt.datetime(2026, 11, 2, 23, 0)
@@ -384,3 +384,16 @@ def test_inicio_e_comando_com_etapas(app, srv):
     assert code == 404
     code, w = srv("/api/web?q=")                       # sem rede no teste: só a validação
     assert code == 400
+
+
+def test_ignorar_app_remetente_palavra_tipo(tmp_path):
+    from djorge_local.secretario import Secretario
+    import inspect
+    sig = inspect.signature(Secretario.__init__)
+    assert "ignorada" in dir(Secretario) and "ignorar_parecidas" in dir(Secretario)
+    s = Secretario.__new__(Secretario)
+    s.conf = {"apps_ignorados": ["Spotify"], "remetentes_ignorados": ["Loja X"], "palavras_ignoradas": ["cupom"]}
+    assert s.ignorada({"app": "Spotify", "title": "Tocando"}).startswith("app")
+    assert s.ignorada({"app": "Gmail", "remetente": "Loja X", "text": "oi"}).startswith("remetente")
+    assert s.ignorada({"app": "Gmail", "text": "Seu CUPOM chegou"}).startswith("palavra")
+    assert s.ignorada({"app": "Gmail", "text": "Reunião amanhã"}) is None
