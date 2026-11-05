@@ -50,12 +50,13 @@ function human(e) {
   const fm = friendlyMsg(m); if (fm) return fm;
   if (e.status === 503) return "Essa parte do app não está disponível agora" + (m ? `: ${m}` : ".");
   if (e.status >= 500) return "O Djorge encontrou um problema interno. Tente de novo em instantes.";
-  return m || "Algo deu errado.";
+  return m ? (s => s.charAt(0).toLocaleUpperCase("pt-BR") + s.slice(1))(String(m).replace(/^[a-z_]+(\.[a-z_]+)?:\s+/, "")) : "Algo deu errado.";
 }
 /* erros técnicos viram dicas em linguagem simples */
 function friendlyMsg(m) {
   m = String(m || "");
   if (/data inv[aá]lida|invalid (iso|date)|isoformat|ValueError:.*(due|start|data)/i.test(m)) return "Não entendi a data. Tente “amanhã às 9h”, “03/11 14h” ou “sexta de manhã”.";
+  if (/antes_de: use uma data/i.test(m)) return "Essa data não parece válida. Escolha um dia no calendário (ex.: 01/11/2026).";
   if (/hora inv[aá]lida|invalid time/i.test(m)) return "Não entendi a hora. Tente “às 14h” ou “14:30”.";
   if (/KeyError|TypeError|AttributeError|Traceback/.test(m)) return "Faltou alguma informação no pedido. Tente dizer o quê, quando e para quem.";
   if (/destino|destinat[aá]rio|sem (para|to)\b/i.test(m)) return "Para quem é a mensagem? Tente: “#ana &chego em 10 minutos&”.";
@@ -1802,6 +1803,367 @@ function triageCard(r, text) {
   el.insertAdjacentHTML("beforeend", dicasHTML(r.dicas, r.perguntas)); wireDicas(el, text, asList(r.dicas), asList(r.perguntas));
   return el;
 }
+
+/* ---------------------------------------------------------------- PERFIL (rodapé da barra lateral) */
+function paintMe() { const n = USER(), ini = $("#me-ini"), nm = $("#me-name");
+  if (nm) nm.textContent = n || "Você"; if (ini) ini.textContent = (n || "Você").trim().charAt(0).toLocaleUpperCase("pt-BR"); }
+/* pedido extraído de uma notificação/mensagem: {titulo, tarefa, texto_central, quem, prazo, valor} */
+function pedidoHTML(n) { const p = (n.dados && n.dados.pedido) || n.pedido; if (!p || typeof p !== "object" || !(p.tarefa || p.titulo)) return "";
+  return `<span class="npedido">${ico("hand", "sm")}<span><b>${esc(p.tarefa || p.titulo)}</b>${p.quem ? ` · pedido de ${esc(titleCase(p.quem))}` : ""}${p.prazo ? ` · até ${esc(fmtDT(p.prazo))}` : ""}${p.valor ? ` · ${esc(typeof p.valor === "number" ? fmtMoney(p.valor) : p.valor)}` : ""}</span></span>`; }
+function connHint() { const c = S.status && S.status.connectors && S.status.connectors.notifications;
+  if (!c || /^(ativo|iniciando)/i.test(c)) return "";
+  return `<p class="hint connhint">${ico("warn", "sm")} Notificações do Windows: ${esc(c)}</p>`; }
+
+/* ---------------------------------------------------------------- HISTÓRICO (ações, não conversa) */
+const CAMPO_PT = {title: "Título", titulo: "Título", body: "Descrição", column: "Coluna", start: "Início", due: "Prazo", priority: "Prioridade", tags: "Tags", people: "Pessoas", done: "Concluído",
+  kind: "Tipo", checklist: "Checklist", recurrence: "Repetição", color: "Cor", pinned: "Fixado", alertas: "Avisos", all_day: "Dia todo", criado: "Criado", apagado: "Apagado", order: "Ordem"};
+const actTitle = x => x.pedido || (x.event && (x.event.title || x.event.text)) || x.text || titleCase(String(x.acao || x.ferramenta || "Ação").replace(/_/g, " "));
+function valTxt(v, campo) {
+  if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "—";
+  if (typeof v === "boolean") return v ? "sim" : "não";
+  if (campo === "column") return (COLS.find(c => c.id === v) || {}).label || String(v);
+  if (campo === "priority") return PRI[v] || String(v);
+  if (campo === "kind") return KINDS[v] || String(v);
+  if (Array.isArray(v)) return v.map(x => x && typeof x === "object" ? (x.nome || x.text || x.email || x.descricao || alertDesc(x)) : x).join(", ");
+  if (typeof v === "object") return v.descricao || v.nome || v.title || JSON.stringify(v).slice(0, 80);
+  const s = String(v); if (/^\d{4}-\d{2}-\d{2}/.test(s)) return fmtDT(s.length === 10 ? parseD(s) : s);
+  return s.length > 80 ? s.slice(0, 80) + "…" : s;
+}
+const altHTML = a => `<li><span class="campo">${esc(CAMPO_PT[a.campo] || titleCase(String(a.campo || "").replace(/_/g, " ")))}</span><span class="de">${esc(valTxt(a.de, a.campo))}</span>${ico("arrow", "xs")}<span class="para">${esc(valTxt(a.para, a.campo))}</span>${a.origem ? `<span class="tag">${esc(a.origem === "ui" ? "você" : a.origem)}</span>` : ""}${a.t ? `<time>${esc(ago(a.t))}</time>` : ""}</li>`;
+function histItemHTML(x, i) {
+  const [tl, ti] = TOOL_PT[x.ferramenta] || [titleCase(String(x.ferramenta || (x.event ? "evento" : "ação")).replace(/_/g, " ")), x.event ? "bell" : "spark"];
+  const alts = asList(x.alteracoes), al = x.alvo || {}, cid = al.tipo === "card" || al.card ? (al.id || al.card) : null, nid = al.tipo === "nota" ? al.id : null;
+  return `<div class="card hitem ${x.desfeito ? "undone" : ""}" data-hi="${i}" tabindex="0">
+    <div class="hrow"><span class="htool">${ico(ti, "sm")}${esc(tl)}</span><small>${esc(fmtDT(x.t || x.time || ""))}</small>${x.desfeito ? `<span class="tag">desfeito</span>` : ""}<span class="sp"></span>
+      ${cid && S.cards.find(c => c.id === cid) ? `<button class="btn sm ghost" data-hcard="${esc(cid)}">${ico("open", "sm")} Abrir card</button>` : ""}${nid ? `<button class="btn sm ghost" data-hnota="${esc(nid)}">${ico("note", "sm")} Abrir nota</button>` : ""}
+      ${x.id != null ? `<button class="iconbtn sm" data-hdel="${i}" aria-label="Apagar item" data-tip="Apagar">${ico("trash", "sm")}</button>` : ""}</div>
+    ${x.pedido ? `<p class="hped">${esc(x.pedido)}</p>` : `<p class="hped">${esc(actTitle(x).slice(0, 160))}</p>`}
+    ${x.resultado || x.acao ? `<p class="hres">${ico("arrow", "xs")}<span>${esc(x.resultado || titleCase(String(x.acao).replace(/_/g, " ")))}</span></p>` : ""}
+    ${alts.length ? `<ul class="alts">${alts.slice(0, 12).map(altHTML).join("")}${alts.length > 12 ? `<li class="more">+${alts.length - 12} alterações</li>` : ""}</ul>` : ""}</div>`;
+}
+async function histInto(box) {
+  box.innerHTML = `<div class="sk"></div>`;
+  let list; try { list = asList(await api("/api/history?n=200"), "items", "history"); } catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; return; }
+  const again = () => { histInto(box); renderRecents(); };
+  box.innerHTML = `<div class="row hbar"><button class="btn sm" id="hb-before">${ico("clock", "sm")} Apagar antes de…</button><button class="btn sm danger" id="hb-all" ${list.length ? "" : "disabled"}>${ico("trash", "sm")} Apagar tudo</button><span class="hint">Clique com o botão direito num item para mais opções.</span></div>` +
+    (list.length ? `<div class="hist">${list.map(histItemHTML).join("")}</div>` : empty("Nada por aqui ainda", `Quando você pedir algo, o que o ${AG()} fizer aparece aqui, com o antes e o depois.`));
+  const delOne = async i => { const x = list[i]; if (x.id == null) return toast("Este item não pode ser apagado sozinho.", "warn"); if (await tryApi(`/api/history/${encodeURIComponent(x.id)}/delete`, {})) { toast("Item apagado"); again(); } };
+  const before = async iso => { const r = await tryApi("/api/history/clear", {antes_de: iso}); if (r) { toast(r.apagados ? `${r.apagados} ite${r.apagados > 1 ? "ns apagados" : "m apagado"}` : "Nada para apagar antes dessa data"); again(); } };
+  $$("[data-hdel]", box).forEach(b => b.onclick = () => delOne(+b.dataset.hdel));
+  $$("[data-hcard]", box).forEach(b => b.onclick = () => openCard(b.dataset.hcard));
+  $$("[data-hnota]", box).forEach(b => b.onclick = () => { NOTAS.curId = b.dataset.hnota; store.set("notaCur", NOTAS.curId); closeModals(); go("notas"); });
+  $$("[data-hi]", box).forEach(r => r.oncontextmenu = e => { const i = +r.dataset.hi, x = list[i]; ctxMenu(e, [{value: "use", label: "Colocar o pedido no campo", icon: "edit", disabled: !x.pedido}, {value: "copy", label: "Copiar", icon: "list"}, {hr: 1}, {value: "before", label: "Apagar este e os mais antigos", icon: "clock", danger: true}, {value: "del", label: "Apagar", icon: "trash", danger: true, disabled: x.id == null}], v => {
+    if (v === "use") { closeModals(); setInput(x.pedido); } if (v === "copy") copyText([actTitle(x), x.resultado].filter(Boolean).join(" → "));
+    if (v === "del") delOne(i); if (v === "before" && (x.t || x.time)) before(isoLocal(new Date(new Date(x.t || x.time).getTime() + 1000))); }); });
+  $("#hb-all", box).onclick = () => confirmBox("Apagar todo o histórico?", "Os registros do que foi feito somem. Cards, notas e automações continuam.", "Apagar tudo", async () => { if (await tryApi("/api/history/clear", {tudo: true})) { toast("Histórico apagado"); again(); } });
+  $("#hb-before", box).onclick = () => askText("Apagar antes de", "Apagar o histórico anterior a", "", d => { if (d) before(d); }, ymd(addDays(new Date(), -30)), "date");
+}
+function closeModals() { while (modalStack.length) modalStack[modalStack.length - 1].close(); }
+function viewHist() {
+  const v = viewEl();
+  v.innerHTML = `<div class="view-inner narrow"><div class="vh"><div><span class="kicker">Histórico</span><h1>O que o ${esc(AG())} <em>fez</em></h1><p>Cada pedido e o que foi feito, com o antes e o depois. A conversa fica só na tela e não é salva.</p></div></div><div id="histbox"></div></div>`;
+  histInto($("#histbox", v));
+}
+async function cardChanges(box, id) {
+  box.innerHTML = `<div class="sk"></div>`;
+  try { const r = asList(await api(`/api/cards/${encodeURIComponent(id)}/alteracoes`), "alteracoes");
+    box.innerHTML = r.length ? `<ul class="alts big">${[...r].reverse().map(altHTML).join("")}</ul>` : `<p class="hint">Nenhuma alteração registrada neste card ainda.</p>`; }
+  catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; }
+}
+
+/* ---------------------------------------------------------------- ALERTAS (“Me avisar”) */
+const FREQ_OPTS = [["", "Não repetir"], ["diaria", "Todo dia"], ["dias_uteis", "Dias úteis"], ["semanal", "Toda semana"], ["mensal", "Todo mês"], ["horaria", "A cada N horas"]];
+const ESTADO_PT = {ativo: "ativo", adiado: "adiado", concluido: "concluído", desativado: "desativado"};
+function alertDesc(a) {
+  if (!a) return ""; if (a.descricao) return a.descricao;
+  const p = [], r = a.repetir;
+  if (r) p.push(r.freq === "horaria" ? `a cada ${r.intervalo || 1} h` : r.freq === "minutos" ? `a cada ${r.intervalo || 1} min` : ((FREQ_OPTS.find(f => f[0] === r.freq) || [, r.freq])[1]).toLowerCase());
+  if (a.quando) p.push((r ? "desde " : "") + fmtDT(a.quando));
+  if (a.antes != null) p.push(a.antes % 60 || !a.antes ? `${a.antes} min antes` : `${a.antes / 60} h antes`);
+  if (a.janela) p.push(`das ${a.janela.inicio} às ${a.janela.fim}`);
+  if (a.ate) p.push("até " + fmtDT(parseD(String(a.ate).slice(0, 10))));
+  return p.join(" · ") || "aviso";
+}
+const canalTxt = a => (a.canal || ["toast", "app"]).map(c => c === "toast" ? "Windows" : "app").join(" + ");
+function alertEditor(box, x) {
+  const draw = () => {
+    box.innerHTML = (x.alertas.length ? `<div class="alist">${x.alertas.map((a, i) => `<div class="arow">${ico(a.repetir ? "repeat" : "bell", "sm")}<span>${esc(alertDesc(a))}</span><small>${esc(canalTxt(a))}</small><button type="button" class="iconbtn sm" data-arm="${i}" aria-label="Remover aviso" data-tip="Remover">${ico("x", "sm")}</button></div>`).join("")}</div>` : "") +
+      `<button type="button" class="addc" id="al-add">${ico("bell", "sm")} Adicionar aviso</button>`;
+    $$("[data-arm]", box).forEach(b => b.onclick = () => { x.alertas.splice(+b.dataset.arm, 1); draw(); });
+    $("#al-add", box).onclick = form;
+  };
+  const form = () => {
+    const base = parseD(x.start) || parseD(x.due); let q = base && !base._dateOnly && (base.getHours() || base.getMinutes()) ? base : null;
+    if (!q) { q = startDay(base || addDays(new Date(), 1)); q.setHours(9); }
+    box.innerHTML = `<div class="aform">
+      ${segHTML("al-tipo", [["hora", "Num horário"], ["antes", "Antes do card"]], "hora", "Quando")}
+      <div class="arowf" data-for="hora"><label>Horário<input class="inp" type="datetime-local" id="al-q" value="${esc(isoLocal(q).slice(0, 16))}"></label></div>
+      <div class="arowf" data-for="antes" hidden><label>Minutos antes<input class="inp" type="number" min="0" step="5" id="al-min" value="30"></label></div>
+      <div class="arowf"><label>Repetir${selHTML("al-rep", FREQ_OPTS, "", "Repetir")}</label><label id="al-nw" hidden>A cada<input class="inp" type="number" min="1" max="24" id="al-n" value="2" style="width:70px"> h</label></div>
+      <div class="arowf"><label>Até o dia<input class="inp" type="date" id="al-ate"></label><label>Só das<input class="inp" type="time" id="al-ji"></label><label>às<input class="inp" type="time" id="al-jf"></label></div>
+      <div class="arowf"><span class="lbl">Avisar por</span><label class="ck"><input type="checkbox" id="al-ct" checked> Windows</label><label class="ck"><input type="checkbox" id="al-ca" checked> Dentro do app</label></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn sm ghost" id="al-no">Cancelar</button><button type="button" class="btn sm primary" id="al-ok">Adicionar aviso</button></div></div>`;
+    wireSel(box, "al-rep", FREQ_OPTS, v => { $("#al-nw", box).hidden = v !== "horaria"; });
+    wireSeg(box, "al-tipo", t => $$("[data-for]", box).forEach(r => r.hidden = r.dataset.for !== t));
+    $("#al-no", box).onclick = draw;
+    $("#al-ok", box).onclick = () => {
+      const tipo = segVal(box, "al-tipo"), rep = selVal(box, "al-rep"), a = {id: Math.random().toString(16).slice(2, 14)};
+      if (tipo === "antes") { a.antes = Math.max(0, +$("#al-min", box).value || 0); if (!$("#dr-sd") || !($("#dr-sd").value || $("#dr-dd").value)) return toast("Para avisar antes, o card precisa de data de início ou prazo.", "warn"); }
+      else { const v = $("#al-q", box).value; if (!v) return toast("Escolha o horário do aviso.", "warn"); a.quando = v + ":00"; }
+      if (rep) a.repetir = rep === "horaria" ? {freq: "horaria", intervalo: Math.max(1, +$("#al-n", box).value || 1)} : {freq: rep};
+      const ate = $("#al-ate", box).value; if (ate) a.ate = ate;
+      const ji = $("#al-ji", box).value, jf = $("#al-jf", box).value; if (ji && jf) a.janela = {inicio: ji, fim: jf}; else if (ji || jf) return toast("Diga o começo e o fim do período (ex.: das 08:00 às 18:00).", "warn");
+      a.canal = [$("#al-ct", box).checked && "toast", $("#al-ca", box).checked && "app"].filter(Boolean); if (!a.canal.length) return toast("Escolha pelo menos um jeito de avisar.", "warn");
+      x.alertas.push(a); draw(); toast("Aviso adicionado. Salve o card para valer.");
+    };
+  };
+  draw();
+}
+let ALERTS = {alertas: [], avisos: []};
+async function drawAlerts(box) {
+  if (!box) return;
+  try { ALERTS = await api("/api/alertas"); } catch (e) { box.innerHTML = ""; return; }
+  const act = asList(ALERTS, "alertas").filter(a => a.ativo !== false && (a.estado || "ativo") !== "concluido" && a.estado !== "desativado");
+  if (!act.length) { box.innerHTML = ""; return; }
+  const mins = asList(ALERTS.adiar).length ? ALERTS.adiar : [5, 15, 60];
+  box.innerHTML = `<section class="group alerts"><h3>Avisos do ${esc(AG())}<span>${act.length}</span></h3><div class="mlist">${act.map(a => `<div class="arow big" data-aid="${esc(a.id)}">
+    <span class="ti">${ico(a.repetir ? "repeat" : "bell", "sm")}</span><span class="abody"><b>${esc(a.titulo || "Lembrete")}</b><small>${esc(alertDesc(a))}${a.proximo ? ` · próximo ${esc(fmtDT(a.proximo, {rel: true}))}` : ""}${a.estado === "adiado" ? " · adiado" : ""} · ${esc(canalTxt(a))}</small></span>
+    <span class="aacts">${mins.map(m => `<button class="chip" data-adiar="${m}" data-tip="Adiar ${m} min">+${m >= 60 ? m / 60 + " h" : m + " min"}</button>`).join("")}
+      <button class="iconbtn sm" data-aact="concluir" aria-label="Concluir" data-tip="Concluir">${ico("check", "sm")}</button><button class="iconbtn sm" data-aact="desativar" aria-label="Desativar" data-tip="Desativar">${ico("stop", "sm")}</button>
+      ${a.card_id && S.cards.find(c => c.id === a.card_id) ? `<button class="iconbtn sm" data-acard="${esc(a.card_id)}" aria-label="Abrir card" data-tip="Abrir card">${ico("open", "sm")}</button>` : ""}</span></div>`).join("")}</div></section>`;
+  $$("[data-aid]", box).forEach(r => { const id = r.dataset.aid;
+    $$("[data-adiar]", r).forEach(b => b.onclick = async () => { if (await tryApi(`/api/alertas/${encodeURIComponent(id)}/adiar`, {min: +b.dataset.adiar})) { toast(`Adiado ${b.dataset.adiar} min`); drawAlerts(box); } });
+    $$("[data-aact]", r).forEach(b => b.onclick = async () => { if (await tryApi(`/api/alertas/${encodeURIComponent(id)}/${b.dataset.aact}`, {})) { toast(b.dataset.aact === "concluir" ? "Aviso concluído" : "Aviso desativado"); drawAlerts(box); } });
+    $$("[data-acard]", r).forEach(b => b.onclick = () => openCard(b.dataset.acard)); });
+}
+/* aviso dentro do app quando um alerta dispara */
+async function pollAlerts(first) {
+  if (document.hidden && !first) return;
+  let r; try { r = await api("/api/alertas"); } catch (e) { return; }
+  const novos = asList(r, "avisos").filter(a => !a.lido); if (!novos.length) return;
+  novos.slice(0, 3).forEach(a => toast(a.msg || "Está na hora.", "warn", {title: a.titulo || "Lembrete", ms: 15000, action: a.alerta_id ? "Adiar 15 min" : undefined,
+    onAction: a.alerta_id ? async () => { if (await tryApi(`/api/alertas/${encodeURIComponent(a.alerta_id)}/adiar`, {min: 15})) toast("Adiado 15 min"); } : undefined}));
+  tryApi("/api/alertas/avisos/lidos", {ids: novos.map(a => a.id)}, {silent: true});
+  if (S.view === "notificacoes") drawAlerts($("#alertbox"));
+}
+
+/* ---------------------------------------------------------------- NOTAS */
+const NOTAS = {list: [], pastas: [], etiquetas: [], f: store.get("notasF", {q: "", pasta: "", etiqueta: ""}), cur: null, curId: store.get("notaCur", null), saveT: null, mode: "edit", ana: null, ask: null};
+async function loadNotas() {
+  const qs = new URLSearchParams(Object.entries(NOTAS.f).filter(([, v]) => v)).toString();
+  const r = await api("/api/notas" + (qs ? "?" + qs : ""));
+  NOTAS.list = asList(r, "notas"); NOTAS.pastas = asList(r, "pastas").map(p => typeof p === "string" ? p : (p.pasta || p.nome)).filter(Boolean);
+  NOTAS.etiquetas = asList(r, "etiquetas").map(t => typeof t === "string" ? t : (t.etiqueta || t.nome)).filter(Boolean);
+}
+const notaTitle = n => (n.titulo || "").trim() || "Sem título";
+async function viewNotes() {
+  const v = viewEl();
+  v.innerHTML = `<div class="view-inner notes"><div class="vh"><div><span class="kicker">Notas</span><h1>Seu <em>bloco de notas</em></h1></div><span class="sp"></span><button class="btn primary sm" id="nnew">${ico("plus", "sm")} Nova nota</button></div>
+    <div class="nwrap"><aside class="nside" aria-label="Notas"><label class="fsearch">${ico("search", "sm")}<input id="nsq" type="search" placeholder="Buscar nas notas…" value="${esc(NOTAS.f.q || "")}" aria-label="Buscar nas notas"></label>
+      <div id="nfilt"></div><div id="nitems" class="nitems"><div class="sk"></div></div></aside><section class="ned" id="ned" aria-label="Editor da nota"></section></div></div>`;
+  $("#nnew", v).onclick = newNota;
+  let tq; $("#nsq", v).oninput = e => { clearTimeout(tq); tq = setTimeout(() => { NOTAS.f.q = e.target.value.trim(); store.set("notasF", NOTAS.f); refreshNotaList(); }, 250); };
+  await refreshNotaList(); if (S.view !== "notas") return;
+  const id = NOTAS.curId && (NOTAS.list.find(n => n.id === NOTAS.curId) || NOTAS.cur && NOTAS.cur.id === NOTAS.curId) ? NOTAS.curId : (NOTAS.list[0] || {}).id;
+  if (id) openNota(id); else drawEditor();
+}
+async function refreshNotaList() {
+  try { await loadNotas(); } catch (e) { const b = $("#nitems"); if (b) b.innerHTML = `<p class="hint">${esc(human(e))}</p>`; return; }
+  drawNotaList();
+}
+function drawNotaList() {
+  const fb = $("#nfilt"), box = $("#nitems"); if (!box) return; const F = NOTAS.f;
+  fb.innerHTML = (NOTAS.pastas.length ? `<div class="nfold" role="group" aria-label="Pastas"><button class="chip ${!F.pasta ? "on" : ""}" data-np="">${ico("note", "sm")}Todas</button>${NOTAS.pastas.map(p => `<button class="chip ${F.pasta === p ? "on" : ""}" data-np="${esc(p)}">${ico("folder", "sm")}${esc(p)}</button>`).join("")}</div>` : "") +
+    (NOTAS.etiquetas.length ? `<div class="nfold" role="group" aria-label="Etiquetas">${NOTAS.etiquetas.map(t => `<button class="chip ${F.etiqueta === t ? "on" : ""}" data-ne="${esc(t)}"><i class="mdot" style="background:${tagColor(t)}"></i>${esc(t)}</button>`).join("")}</div>` : "");
+  $$("[data-np]", fb).forEach(b => b.onclick = () => { F.pasta = b.dataset.np; store.set("notasF", F); refreshNotaList(); });
+  $$("[data-ne]", fb).forEach(b => b.onclick = () => { F.etiqueta = F.etiqueta === b.dataset.ne ? "" : b.dataset.ne; store.set("notasF", F); refreshNotaList(); });
+  const filt = F.q || F.pasta || F.etiqueta;
+  box.innerHTML = NOTAS.list.length ? NOTAS.list.map(n => `<button class="nitem ${NOTAS.cur && NOTAS.cur.id === n.id ? "cur" : ""}" data-nid="${esc(n.id)}" ${NOTAS.cur && NOTAS.cur.id === n.id ? 'aria-current="true"' : ""}>
+      <span class="nt">${n.fixada ? ico("pin", "xs") : ""}<b>${esc(notaTitle(n))}</b></span>${n.trecho ? `<span class="nx">${esc(String(n.trecho).slice(0, 120))}</span>` : ""}
+      <span class="nm">${n.pasta ? `${ico("folder", "xs")}${esc(n.pasta)} · ` : ""}${esc(ago(n.atualizada || n.criada))}${(n.etiquetas || []).slice(0, 3).map(t => `<i class="mdot" style="background:${tagColor(t)}" title="${esc(t)}"></i>`).join("")}</span></button>`).join("") :
+    `<p class="hint" style="padding:8px 4px">${filt ? "Nenhuma nota com esses filtros." : "Nenhuma nota ainda."}</p>${filt ? `<button class="btn sm" id="nfclr">Limpar filtros</button>` : ""}`;
+  const c = $("#nfclr", box); if (c) c.onclick = () => { Object.assign(F, {q: "", pasta: "", etiqueta: ""}); store.set("notasF", F); const q = $("#nsq"); if (q) q.value = ""; refreshNotaList(); };
+  $$("[data-nid]", box).forEach(b => { b.onclick = () => openNota(b.dataset.nid); b.oncontextmenu = e => notaCtx(e, b.dataset.nid); });
+}
+async function newNota() {
+  await flushNota();
+  const n = await tryApi("/api/notas", {titulo: "", corpo: "", pasta: NOTAS.f.pasta || "", etiquetas: NOTAS.f.etiqueta ? [NOTAS.f.etiqueta] : []});
+  if (!n || !n.id) return;
+  if (S.view !== "notas") { NOTAS.curId = n.id; store.set("notaCur", n.id); go("notas"); return; }
+  await refreshNotaList(); await openNota(n.id); const t = $("#ne-t"); if (t) t.focus();
+}
+async function openNota(id) {
+  await flushNota();
+  let n; try { n = await api("/api/notas/" + encodeURIComponent(id)); } catch (e) { toast(human(e), "bad"); return; }
+  NOTAS.cur = n; NOTAS.curId = n.id; store.set("notaCur", n.id); NOTAS.ana = null; NOTAS.ask = null;
+  $$("#nitems [data-nid]").forEach(b => { const on = b.dataset.nid === n.id; b.classList.toggle("cur", on); on ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current"); });
+  drawEditor();
+}
+function setSt(t, cls = "") { const s = $("#ne-st"); if (s) { s.textContent = t; s.className = "nst " + cls; } }
+async function saveNota(patch, quiet) {
+  const n = NOTAS.cur; if (!n) return null;
+  try { const r = await api("/api/notas/" + encodeURIComponent(n.id), patch);
+    if (r && r.id === n.id) { Object.assign(n, {atualizada: r.atualizada, pasta: r.pasta, etiquetas: r.etiquetas, fixada: r.fixada, cards: r.cards || n.cards}); }
+    const li = NOTAS.list.find(x => x.id === n.id); if (li) Object.assign(li, {titulo: n.titulo, pasta: n.pasta, etiquetas: n.etiquetas, fixada: n.fixada, atualizada: n.atualizada, trecho: (n.corpo || "").slice(0, 120)});
+    setSt("Salvo", "ok"); if (!quiet) drawNotaList(); return r; }
+  catch (e) { setSt("Não salvo", "bad"); toast(human(e), "bad"); return null; }
+}
+function queueSave() { setSt("Editando…"); clearTimeout(NOTAS.saveT); NOTAS.saveT = setTimeout(() => { NOTAS.saveT = null; setSt("Salvando…"); saveNota({titulo: NOTAS.cur.titulo, corpo: NOTAS.cur.corpo}); }, 700); }
+async function flushNota() { if (NOTAS.saveT && NOTAS.cur) { clearTimeout(NOTAS.saveT); NOTAS.saveT = null; await saveNota({titulo: NOTAS.cur.titulo, corpo: NOTAS.cur.corpo}, true); } }
+/* Markdown leve: títulos, **negrito**, *itálico*, listas, checklist e links */
+function mdInline(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*(?!\s)([^*]+?)\*/g, "$1<i>$2</i>").replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>'); }
+function mdHTML(src) {
+  const out = []; let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  String(src || "").split("\n").forEach((ln, i) => {
+    let m;
+    if ((m = /^(#{1,3})\s+(.*)$/.exec(ln))) { close(); out.push(`<h${m[1].length + 1}>${mdInline(m[2])}</h${m[1].length + 1}>`); }
+    else if ((m = /^\s*[-*]\s+\[( |x|X)\]\s*(.*)$/.exec(ln))) { if (list !== "ul") { close(); out.push(`<ul class="ck">`); list = "ul"; } const on = m[1] !== " ";
+      out.push(`<li class="${on ? "done" : ""}"><button type="button" class="cbx" role="checkbox" aria-checked="${on}" data-ln="${i}" aria-label="Marcar item">${ico("check")}</button><span>${mdInline(m[2])}</span></li>`); }
+    else if ((m = /^\s*[-*]\s+(.*)$/.exec(ln))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${mdInline(m[1])}</li>`); }
+    else if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(ln))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${mdInline(m[1])}</li>`); }
+    else if (!ln.trim()) close();
+    else { close(); out.push(`<p>${mdInline(ln)}</p>`); }
+  });
+  close(); return out.join("") || `<p class="hint">Nota vazia.</p>`;
+}
+function marked(src, trechos) {   /* texto com os trechos achados realçados */
+  const t = String(src || ""), sp = trechos.filter(x => x.fim > x.ini).sort((a, b) => a.ini - b.ini); let o = "", p = 0;
+  sp.forEach((x, k) => { if (x.ini < p) return; o += esc(t.slice(p, x.ini)) + `<mark data-k="${k}">${esc(t.slice(x.ini, x.fim))}</mark>`; p = x.fim; });
+  return o + esc(t.slice(p));
+}
+function mdWrap(ta, kind) {
+  const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value, sel = v.slice(s, e);
+  const ls = v.lastIndexOf("\n", s - 1) + 1;
+  let nv, ns, ne;
+  if (kind === "b" || kind === "i") { const m = kind === "b" ? "**" : "*", w = sel || (kind === "b" ? "negrito" : "itálico"); nv = v.slice(0, s) + m + w + m + v.slice(e); ns = s + m.length; ne = ns + w.length; }
+  else if (kind === "link") { const w = sel || "texto"; nv = v.slice(0, s) + `[${w}](https://)` + v.slice(e); ns = s + w.length + 3; ne = ns + 8; }
+  else { const pre = {h: "## ", ul: "- ", ck: "- [ ] "}[kind]; const block = v.slice(ls, e).split("\n").map(l => l.startsWith(pre) ? l.slice(pre.length) : pre + l.replace(/^(#{1,3}\s+|-\s+\[[ x]\]\s+|-\s+)/, "")).join("\n");
+    nv = v.slice(0, ls) + block + v.slice(e); ns = ls; ne = ls + block.length; }
+  ta.value = nv; ta.focus(); ta.setSelectionRange(ns, ne); ta.dispatchEvent(new Event("input"));
+}
+function drawEditor() {
+  const ed = $("#ned"); if (!ed) return; const n = NOTAS.cur;
+  if (!n) { ed.innerHTML = empty("Escreva sua primeira nota", `Anote ideias, listas e combinados. O ${AG()} acha tarefas e datas no texto e transforma em cards.`, `<button class="btn primary" id="nfirst">${ico("plus", "sm")} Nova nota</button>`); $("#nfirst", ed).onclick = newNota; return; }
+  const linked = (n.cards || []).map(id => S.cards.find(c => c.id === id)).filter(Boolean);
+  ed.innerHTML = `<div class="nehead"><label class="sr" for="ne-t">Título</label><input class="ttl" id="ne-t" value="${esc(n.titulo || "")}" placeholder="Título da nota">
+      <span class="nst ok" id="ne-st" role="status">Salvo</span>
+      <button class="iconbtn" id="ne-pin" aria-pressed="${!!n.fixada}" aria-label="${n.fixada ? "Desafixar" : "Fixar"}" data-tip="${n.fixada ? "Desafixar" : "Fixar"}">${ico("pin")}</button>
+      <button class="iconbtn" id="ne-more" aria-haspopup="menu" aria-label="Mais opções" data-tip="Mais">${ico("down")}</button></div>
+    <div class="nemeta"><button class="chip" id="ne-folder" aria-haspopup="menu">${ico("folder", "sm")}${esc(n.pasta || "Sem pasta")}</button><div class="tagin" id="ne-tags"></div></div>
+    <div class="netool" role="toolbar" aria-label="Formatação">
+      <button class="iconbtn sm" data-md="h" aria-label="Título" data-tip="Título">${ico("heading", "sm")}</button><button class="iconbtn sm" data-md="b" aria-label="Negrito" data-tip="Negrito (Ctrl B)">${ico("bold", "sm")}</button><button class="iconbtn sm" data-md="i" aria-label="Itálico" data-tip="Itálico (Ctrl I)">${ico("italic", "sm")}</button>
+      <button class="iconbtn sm" data-md="ul" aria-label="Lista" data-tip="Lista">${ico("list", "sm")}</button><button class="iconbtn sm" data-md="ck" aria-label="Checklist" data-tip="Checklist">${ico("boxok", "sm")}</button><button class="iconbtn sm" data-md="link" aria-label="Link" data-tip="Link">${ico("link", "sm")}</button>
+      <span class="vsep"></span>${segHTML("ne-mode", [["edit", "Editar"], ["ver", "Ver"]], NOTAS.mode === "ver" ? "ver" : "edit", "Modo")}
+      <span class="sp"></span><button class="btn sm ghost" id="ne-ver">${ico("clock", "sm")} Versões</button><button class="btn sm ghost" id="ne-sv">${ico("archive", "sm")} Salvar versão</button>
+      <button class="btn sm primary" id="ne-ana">${ico("spark", "sm")} Analisar com o ${esc(AG())}</button></div>
+    <div class="nebody"><textarea class="nearea" id="ne-c" placeholder="Escreva aqui. Use - [ ] para checklist, **negrito**, *itálico*…" ${NOTAS.mode === "ver" ? "hidden" : ""}>${esc(n.corpo || "")}</textarea><div class="neprev md" id="ne-p" ${NOTAS.mode === "ver" ? "" : "hidden"}></div></div>
+    <form class="neask" id="ne-askf"><label class="fsearch">${ico("search", "sm")}<input id="ne-q" placeholder="Perguntar à nota… (ex.: quando é a entrega?)" aria-label="Perguntar à nota"></label><button class="btn sm" type="submit">Perguntar</button></form>
+    <div id="ne-askr"></div>
+    ${linked.length ? `<div class="nelinks"><span class="lbl">Cards ligados</span>${linked.map(c => `<button class="chip" data-lcard="${esc(c.id)}">${ico(KIND_ICO[c.kind] || "check", "sm")}${esc(cardTitle(c))}${whenTxt(c) ? ` <small>${esc(whenTxt(c))}</small>` : ""}</button>`).join("")}</div>` : ""}
+    <div id="ne-anar"></div>`;
+  const t = $("#ne-t", ed), ta = $("#ne-c", ed), pv = $("#ne-p", ed);
+  const prev = () => { pv.innerHTML = NOTAS.ask && NOTAS.mode === "marca" ? `<pre class="nemark">${marked(n.corpo, NOTAS.ask)}</pre>` : mdHTML(n.corpo);
+    $$("[data-ln]", pv).forEach(b => b.onclick = () => { const ls = n.corpo.split("\n"), i = +b.dataset.ln; ls[i] = ls[i].replace(/\[( |x|X)\]/, m => m === "[ ]" ? "[x]" : "[ ]"); n.corpo = ls.join("\n"); ta.value = n.corpo; prev(); queueSave(); }); };
+  const setMode = m => { NOTAS.mode = m; ta.hidden = m === "edit" ? false : true; pv.hidden = m === "edit"; if (m !== "edit") prev(); $$("[data-seg='ne-mode'] button", ed).forEach(b => b.setAttribute("aria-checked", b.dataset.v === (m === "edit" ? "edit" : "ver"))); };
+  if (NOTAS.mode !== "edit") prev();
+  t.oninput = () => { n.titulo = t.value; queueSave(); };
+  ta.oninput = () => { n.corpo = ta.value; queueSave(); };
+  ta.onkeydown = e => { if ((e.ctrlKey || e.metaKey) && ["b", "i"].includes(e.key.toLowerCase())) { e.preventDefault(); mdWrap(ta, e.key.toLowerCase()); }
+    if (e.key === "Enter" && !e.shiftKey) { const s = ta.selectionStart, v = ta.value, ls = v.lastIndexOf("\n", s - 1) + 1, line = v.slice(ls, s), m = /^(\s*)(- \[[ x]\] |- |\d+\. )/.exec(line);
+      if (m) { e.preventDefault(); if (line.trim() === m[2].trim()) { ta.value = v.slice(0, ls) + v.slice(s); ta.setSelectionRange(ls, ls); } else { const pre = m[1] + m[2].replace("[x]", "[ ]").replace(/^(\d+)/, d => +d + 1); ta.value = v.slice(0, s) + "\n" + pre + v.slice(ta.selectionEnd); ta.setSelectionRange(s + 1 + pre.length, s + 1 + pre.length); } ta.dispatchEvent(new Event("input")); } } };
+  $$("[data-md]", ed).forEach(b => b.onclick = () => { if (NOTAS.mode !== "edit") setMode("edit"); mdWrap(ta, b.dataset.md); });
+  wireSeg(ed, "ne-mode", m => setMode(m === "edit" ? "edit" : "ver"));
+  tagInput($("#ne-tags", ed), n.etiquetas || [], "ne-tagi", "etiqueta", v => { n.etiquetas = v; saveNota({etiquetas: v}); });
+  $("#ne-pin", ed).onclick = async () => { n.fixada = !n.fixada; await saveNota({fixada: n.fixada}); drawEditor(); refreshNotaList(); };
+  $("#ne-folder", ed).onclick = e => folderMenu(e.currentTarget, n.pasta, p => moveNota(n.id, p));
+  $("#ne-more", ed).onclick = e => notaCtx({preventDefault() {}, clientX: e.currentTarget.getBoundingClientRect().right - 10, clientY: e.currentTarget.getBoundingClientRect().bottom + 4, target: e.currentTarget}, n.id);
+  $("#ne-sv", ed).onclick = async () => { clearTimeout(NOTAS.saveT); NOTAS.saveT = null; setSt("Salvando…"); if (await saveNota({titulo: n.titulo, corpo: n.corpo, versao: true})) toast("Versão salva"); };
+  $("#ne-ver", ed).onclick = () => notaVersions(n);
+  $("#ne-ana", ed).onclick = e => analyzeNota(n, e.currentTarget);
+  $("#ne-askf", ed).onsubmit = async e => { e.preventDefault(); const q = $("#ne-q", ed).value.trim(); if (!q) return; askNota(n, q, () => { setMode("marca"); }); };
+  $$("[data-lcard]", ed).forEach(b => b.onclick = () => openCard(b.dataset.lcard));
+  if (NOTAS.ana) drawAnalysis(n);
+}
+function folderMenu(anchor, cur, onPick) {
+  menu(anchor, [{value: "", label: "Sem pasta", checked: !cur, icon: "note"}, ...NOTAS.pastas.map(p => ({value: p, label: p, icon: "folder", checked: p === cur})), {hr: 1}, {value: "\u0000new", label: "Nova pasta…", icon: "plus"}],
+    v => { if (v === "\u0000new") askText("Nova pasta", "Nome da pasta", "ex.: Trabalho", x => { x = (x || "").trim(); if (x) onPick(x); }); else onPick(v); }, {label: "Pasta"});
+}
+async function moveNota(id, pasta) {
+  const r = await tryApi("/api/notas/" + encodeURIComponent(id), {pasta}); if (!r) return;
+  toast(pasta ? `Movida para ${pasta}` : "Tirada da pasta");
+  if (NOTAS.cur && NOTAS.cur.id === id) { NOTAS.cur.pasta = pasta; drawEditor(); } refreshNotaList();
+}
+function notaCtx(e, id) {
+  const n = NOTAS.list.find(x => x.id === id) || (NOTAS.cur && NOTAS.cur.id === id ? NOTAS.cur : null); if (!n) return;
+  ctxMenu(e, [{value: "open", label: "Abrir", icon: "open"}, {value: "pin", label: n.fixada ? "Desafixar" : "Fixar no topo", icon: "pin"}, {value: "move", label: "Mover para pasta…", icon: "folder"}, {value: "tags", label: "Etiquetas…", icon: "tag"},
+    {value: "ana", label: `Analisar com o ${AG()}`, icon: "spark"}, {hr: 1}, {value: "del", label: "Apagar nota", icon: "trash", danger: true}], async v => {
+    if (v === "open") openNota(id);
+    if (v === "pin") { if (await tryApi("/api/notas/" + encodeURIComponent(id), {fixada: !n.fixada})) { if (NOTAS.cur && NOTAS.cur.id === id) { NOTAS.cur.fixada = !n.fixada; drawEditor(); } refreshNotaList(); } }
+    if (v === "move") { const r = e.target && e.target.getBoundingClientRect ? e.target : $("#ned"); folderMenu(r, n.pasta, p => moveNota(id, p)); }
+    if (v === "tags") askText("Etiquetas", "Separe por vírgula", "ex.: trabalho, ideias", async x => { const et = [...new Set(String(x || "").split(",").map(s => s.trim().replace(/^#/, "")).filter(Boolean))];
+      if (await tryApi("/api/notas/" + encodeURIComponent(id), {etiquetas: et})) { if (NOTAS.cur && NOTAS.cur.id === id) { NOTAS.cur.etiquetas = et; drawEditor(); } refreshNotaList(); } }, (n.etiquetas || []).join(", "));
+    if (v === "ana") { await openNota(id); const b = $("#ne-ana"); if (b) b.click(); }
+    if (v === "del") confirmBox("Apagar esta nota?", `“${notaTitle(n)}” e as versões dela somem. Os cards criados a partir dela continuam.`, "Apagar", async () => {
+      if (NOTAS.cur && NOTAS.cur.id === id) { clearTimeout(NOTAS.saveT); NOTAS.saveT = null; }
+      if (await tryApi(`/api/notas/${encodeURIComponent(id)}/delete`, {})) { toast("Nota apagada"); if (NOTAS.cur && NOTAS.cur.id === id) { NOTAS.cur = null; NOTAS.curId = null; store.set("notaCur", null); }
+        await refreshNotaList(); if (!NOTAS.cur && NOTAS.list[0]) openNota(NOTAS.list[0].id); else drawEditor(); } });
+  });
+}
+async function notaVersions(n) {
+  await flushNota();
+  const m = modal({title: "Versões da nota", cls: "md", body: `<div class="vlist" id="vl"><div class="sk"></div></div>`, foot: `<button class="btn ghost" data-close>Fechar</button>`});
+  const box = $("#vl", m.box);
+  let vs; try { vs = asList(await api(`/api/notas/${encodeURIComponent(n.id)}/versoes`), "versoes"); } catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; return; }
+  box.innerHTML = vs.length ? vs.map((x, i) => `<div class="card vitem"><div class="hrow"><b>${esc(x.titulo || "Sem título")}</b><small>${esc(fmtDT(x.t))} · ${esc(ago(x.t))}</small><span class="sp"></span><button class="btn sm ghost" data-vsee="${i}">${ico("eye", "sm")} Ver</button><button class="btn sm" data-vres="${esc(x.id)}">${ico("undo", "sm")} Restaurar</button></div><pre class="vprev" hidden>${esc(x.corpo || "")}</pre><p class="vx">${esc(String(x.corpo || "").slice(0, 160))}</p></div>`).join("") :
+    `<p class="hint">Ainda não há versões. Elas são guardadas sozinhas enquanto você escreve, ou quando você clica em “Salvar versão”.</p>`;
+  $$("[data-vsee]", box).forEach(b => b.onclick = () => { const c = b.closest(".vitem"); $(".vprev", c).hidden = !$(".vprev", c).hidden; $(".vx", c).hidden = !$(".vprev", c).hidden; });
+  $$("[data-vres]", box).forEach(b => b.onclick = async () => { const r = await tryApi(`/api/notas/${encodeURIComponent(n.id)}/versoes`, {restaurar: +b.dataset.vres || b.dataset.vres});
+    if (r) { m.close(); toast("Versão restaurada. A anterior foi guardada nas versões."); NOTAS.cur = null; await openNota(n.id); refreshNotaList(); } });
+}
+async function askNota(n, q, after) {
+  const box = $("#ne-askr"); box.innerHTML = `<div class="sk"></div>`;
+  await flushNota();
+  let r; try { r = await api(`/api/notas/${encodeURIComponent(n.id)}/perguntar`, {q}); } catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; return; }
+  const tr = asList(r, "trechos"); NOTAS.ask = tr;
+  box.innerHTML = `<div class="card nask">${r.resposta ? `<p class="reply">${esc(r.resposta)}</p>` : ""}${tr.length ? `<p class="lbl">${tr.length === 1 ? "Achei este trecho" : `Achei ${tr.length} trechos`} na nota (realçados no texto):</p><ol class="tr">${tr.map((x, i) => `<li><button type="button" class="linkish" data-tr="${i}">${esc(x.texto)}</button></li>`).join("")}</ol>` : `<p class="hint">Não achei nada sobre isso nesta nota.</p>`}
+    <div class="row" style="justify-content:flex-end"><button class="btn sm ghost" id="askx">Fechar</button></div></div>`;
+  $("#askx", box).onclick = () => { box.innerHTML = ""; NOTAS.ask = null; if (NOTAS.mode === "marca") { NOTAS.mode = "edit"; drawEditor(); } };
+  $$("[data-tr]", box).forEach(b => b.onclick = () => { const x = tr[+b.dataset.tr], ta = $("#ne-c"); NOTAS.mode = "edit"; ta.hidden = false; $("#ne-p").hidden = true;
+    $$("[data-seg='ne-mode'] button").forEach(z => z.setAttribute("aria-checked", z.dataset.v === "edit")); ta.focus(); ta.setSelectionRange(x.ini, x.fim);
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 22; ta.scrollTop = Math.max(0, (ta.value.slice(0, x.ini).split("\n").length - 3) * lh); });
+  if (tr.length) after && after();
+}
+async function analyzeNota(n, btn) {
+  if (btn) { btn.setAttribute("aria-busy", "true"); btn.disabled = true; }
+  const box = $("#ne-anar"); if (box) box.innerHTML = `<div class="card nana"><p class="hint">${ico("spark", "sm")} Lendo a nota…</p></div>`;
+  try { NOTAS.ana = await api(`/api/notas/${encodeURIComponent(n.id)}/analisar`, {corpo: n.corpo, titulo: n.titulo}); NOTAS.ana._sel = new Set((NOTAS.ana.tarefas || []).map(t => t.indice)); drawAnalysis(n); }
+  catch (e) { if (box) box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; }
+  finally { if (btn) { btn.removeAttribute("aria-busy"); btn.disabled = false; } }
+}
+function drawAnalysis(n) {
+  const a = NOTAS.ana, box = $("#ne-anar"); if (!a || !box) return;
+  const tf = asList(a.tarefas), et = asList(a.etiquetas).filter(t => !(n.etiquetas || []).includes(t)), sel = a._sel;
+  const qTxt = q => !q ? "" : typeof q === "string" && /^\d{4}-\d{2}-\d{2}/.test(q) ? fmtDT(q.length === 10 ? parseD(q) : q, {rel: true}) : typeof q === "object" ? (q.texto || q.data || "") : String(q);
+  box.innerHTML = `<div class="card nana"><div class="rhead"><div class="rtool"><span class="ti">${ico("spark")}</span>O que o ${esc(AG())} achou</div><span class="sp"></span>${a.fonte ? `<span class="decby">${a.fonte === "modelo" ? "pelo modelo" : a.fonte === "regras" ? "pelas regras" : esc(a.fonte)}</span>` : ""}<button class="iconbtn sm" id="anx" aria-label="Fechar análise">${ico("x", "sm")}</button></div>
+    ${a.titulo_sugerido && a.titulo_sugerido !== n.titulo ? `<div class="narow"><span class="lbl">Título sugerido</span><b>${esc(a.titulo_sugerido)}</b><button class="btn sm" id="an-t">Usar este título</button></div>` : ""}
+    ${et.length ? `<div class="narow"><span class="lbl">Etiquetas</span>${et.map(t => `<span class="chip"><i class="mdot" style="background:${tagColor(t)}"></i>${esc(t)}</span>`).join("")}<button class="btn sm" id="an-e">Aplicar</button></div>` : ""}
+    ${tf.length ? `<div class="natf"><h4>Achei ${tf.length} tarefa${tf.length > 1 ? "s" : ""}</h4>${tf.map(t => `<label class="tfrow"><button type="button" class="cbx" role="checkbox" aria-checked="${sel.has(t.indice)}" data-ti="${t.indice}" aria-label="Escolher tarefa">${ico("check")}</button><span>${esc(t.frase || (t.card && t.card.title) || "")}</span>${t.quando ? `<small>${ico("cal", "xs")} ${esc(qTxt(t.quando))}</small>` : ""}</label>`).join("")}
+      <div class="row" style="justify-content:flex-end"><button class="btn sm primary" id="an-c" ${sel.size ? "" : "disabled"}>${ico("plus", "sm")} Criar ${sel.size} card${sel.size === 1 ? "" : "s"}</button></div></div>` : `<p class="hint">Não achei tarefas nesta nota.</p>`}
+    ${asList(a.resumo).length ? `<div class="narow col"><span class="lbl">Resumo</span><ul class="nres">${a.resumo.map(x => `<li>${esc(typeof x === "string" ? x : x.texto || x.frase || "")}</li>`).join("")}</ul></div>` : ""}
+    ${asList(a.datas).length ? `<div class="narow"><span class="lbl">Datas</span>${a.datas.map(d => `<span class="chip">${ico("cal", "sm")}${esc(typeof d === "string" ? qTxt(d) : (d.texto || qTxt(d.data || d.quando)))}</span>`).join("")}</div>` : ""}
+    ${asList(a.pessoas).length ? `<div class="narow"><span class="lbl">Pessoas</span>${a.pessoas.map(p => `<span class="chip">${ico("user", "sm")}${esc(titleCase(typeof p === "string" ? p : p.nome || p.texto || ""))}</span>`).join("")}</div>` : ""}</div>`;
+  $("#anx", box).onclick = () => { NOTAS.ana = null; box.innerHTML = ""; };
+  const bt = $("#an-t", box); if (bt) bt.onclick = () => { n.titulo = a.titulo_sugerido; $("#ne-t").value = n.titulo; saveNota({titulo: n.titulo}); drawAnalysis(n); toast("Título aplicado"); };
+  const be = $("#an-e", box); if (be) be.onclick = async () => { n.etiquetas = [...new Set([...(n.etiquetas || []), ...et])]; await saveNota({etiquetas: n.etiquetas}); drawEditor(); toast("Etiquetas aplicadas"); };
+  $$("[data-ti]", box).forEach(b => b.onclick = () => { const i = +b.dataset.ti; sel.has(i) ? sel.delete(i) : sel.add(i); drawAnalysis(n); });
+  const bc = $("#an-c", box); if (bc) bc.onclick = async () => { bc.disabled = true;
+    const r = await tryApi(`/api/notas/${encodeURIComponent(n.id)}/tarefas`, {indices: [...sel]}); if (!r) { bc.disabled = false; return; }
+    const ids = asList(r, "cards").map(c => typeof c === "string" ? c : c.id).filter(Boolean);
+    n.cards = [...new Set([...(n.cards || []), ...ids])]; toast(r.reply || `${r.criados || ids.length} card(s) criado(s)`, "", {action: "Ver no quadro", onAction: () => go("quadro")});
+    NOTAS.ana = null; await loadCards(true); drawEditor(); };
+}
+window.addEventListener("beforeunload", () => { if (NOTAS.saveT && NOTAS.cur) { try { fetch("/api/notas/" + encodeURIComponent(NOTAS.cur.id), {method: "POST", keepalive: true, headers: {"Content-Type": "application/json", "X-Token": TOKEN}, body: JSON.stringify({titulo: NOTAS.cur.titulo, corpo: NOTAS.cur.corpo})}); } catch (e) {} } });
 
 /* ---------------------------------------------------------------- MODELO */
 const modelReady = () => !!(S.model && (S.model.installed || S.model.state === "instalado"));
