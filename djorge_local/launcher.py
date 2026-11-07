@@ -308,6 +308,9 @@ def _window(url, cfg, app=None, minimizado=False):
                                 js_api=WindowApi(), background_color="#F6F3EE", text_select=True, hidden=oculto)
 
     def show():
+        ini = getattr(app, "inicio", None) if app is not None else None
+        if ini is not None:
+            ini.ja(modelo=True)                            # a pessoa abriu: liga tudo agora
         win.show(); win.restore()
     tray = _tray(app, cfg, show=show, quit_=lambda: _sair(app)) if app is not None else None
     if tray is None and oculto:
@@ -445,6 +448,9 @@ def main(argv=None):
         if not _signal_show():
             webbrowser.open(url)
         return
+    from . import leveza
+    minimizado = "--minimizado" in argv or "--minimized" in argv
+    leveza.marcar_inicio(minimizado)            # com o Windows: prioridade baixa, sem popups
     economy_mode(cfg)
     from .app import App, serve
     app = App(cfg)
@@ -453,30 +459,44 @@ def main(argv=None):
     except OSError as e:
         _fatal(f"a porta {cfg['server']['port']} está ocupada por outro programa ({e}). "
                "Mude a porta em config.yaml ou feche o outro programa.")
-    app.start()
+    # Sem modelo instalado não há nada a carregar: a interface mostra o card para baixar.
+    try:
+        from .model_download import ModelDownloader
+        tem_modelo = ModelDownloader(cfg, app.models).info()["installed"]
+    except Exception:
+        tem_modelo = True
+    if not tem_modelo:
+        logging.info("modelo ausente: aguardando download pela interface")
+    preload = app.models.preload if tem_modelo else None
+    if minimizado:
+        # início com o Windows: o painel responde já (servidor é leve, ~45 MB); conectores/integrações e o
+        # modelo (~600 MB) esperam o primeiro uso ou alguns minutos
+        lc = leveza.ler_config()
+        app.inicio = leveza.InicioAdiado(app.start, preload, lc.get("inicio_adiar_integracoes_s", 90),
+                                         lc.get("inicio_adiar_modelo_s", 300))
+        logging.info("início silencioso: integrações em %ss, modelo no 1º uso ou em %ss",
+                     lc.get("inicio_adiar_integracoes_s"), lc.get("inicio_adiar_modelo_s"))
+    else:
+        app.start()
+        app.inicio = None
+        if preload:
+            threading.Timer(1.5, preload).start()
     _wait_server(cfg)
     try:
         _modo_leve(app)
     except Exception:
         logging.exception("modo leve")
-    from . import leveza
-    minimizado = "--minimizado" in argv or "--minimized" in argv
-    # Sem modelo instalado não há nada a carregar: a interface mostra o card para baixar.
-    try:
-        from .model_download import ModelDownloader
-        if ModelDownloader(cfg, app.models).info()["installed"]:
-            threading.Timer(1.5, app.models.preload).start()
-        else:
-            logging.info("modelo ausente: aguardando download pela interface")
-    except Exception:
-        threading.Timer(1.5, app.models.preload).start()
     if _window(url, cfg, app, minimizado=minimizado):
         return
     _close_splash()
     print("Janela nativa indisponível: abrindo no navegador. Painel:", url)
     if not minimizado:
         webbrowser.open(url)
-    _tray(app, cfg, show=lambda: webbrowser.open(url), quit_=lambda: leveza.encerrar(app, 0))
+    def _abrir():
+        if getattr(app, "inicio", None) is not None:
+            app.inicio.ja(modelo=True)
+        webbrowser.open(url)
+    _tray(app, cfg, show=_abrir, quit_=lambda: leveza.encerrar(app, 0))
     threading.Event().wait()
 
 

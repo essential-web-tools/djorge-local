@@ -856,6 +856,10 @@ const byCardId = x => (x && x.id && S.cards.find(c => c.id === x.id)) || x;
 function evRowHTML(c) { c = byCardId(c); const d = cardDate(c) || parseD(c.start || c.quando);
   return `<div class="erow" ${c.id ? `data-id="${esc(c.id)}" data-ctx="card"` : ""} tabindex="0" role="button"><span class="edate">${d ? `<b>${d.getDate()}</b><small>${MONTHS[d.getMonth()].slice(0, 3)}</small>` : "—"}</span>
     <span class="tt"><b>${esc(c.titulo || cardTitle(c))}</b><small>${esc(c.quando_fmt || (d ? fmtDT(d, {rel: true}) : ""))}${(c.people || []).length ? " · " + esc(c.people.map(p => titleCase(p.nome || p.email)).join(", ")) : ""}</small></span></div>`; }
+/* status do dispositivo (bateria, rede, memória…): chip discreto, só quando o backend tiver */
+function dispChip(d) { if (!d || !d.disponivel) return "";
+  const t = d.aviso || d.curto || d.texto || [d.bateria != null && typeof d.bateria !== "object" ? `bateria ${d.bateria}%` : "", d.rede && typeof d.rede !== "object" ? d.rede : ""].filter(Boolean).join(" · ");
+  return t ? `<span class="chip dchip ${d.aviso ? "warnc" : ""}" data-tip="Este computador">${ico(d.aviso ? "warn" : "cpu", "xs")} ${esc(t)}</span>` : ""; }
 const DATA_TIPO = {feriado: "Feriado", facultativo: "Ponto facultativo", comemorativa: "Data comemorativa"};
 function dataRowHTML(d) { const dt = parseD(d.data);
   const quando = d.dias === 0 ? "hoje" : d.dias === 1 ? "amanhã" : d.dias != null ? `em ${d.dias} dias` : "";
@@ -873,6 +877,19 @@ function msgRowHTML(m) {
     <span class="mbody"><span class="mtop"><b>${esc(who)}</b>${hlSelo(hl)}${src ? `<span class="tag">${esc(SRC_NAME[src] || titleCase(src))}</span>` : ""}${m.priority >= 2 ? `<span class="pri p${m.priority}"><i></i>${esc(PRI[m.priority])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
       <span class="msubj">${esc(m.titulo || cardTitle(m))}</span>${m.body || m.texto || m.trecho ? `<span class="mtext">${esc(String(m.body || m.texto || m.trecho).slice(0, 180))}</span>` : ""}</span></div>`;
 }
+/* notificação: título claro (pedido ou título formatado) + uma linha com o que importa */
+const NPRI = {baixa: 0, normal: 0, media: 2, "média": 2, alta: 3, urgente: 3};
+const nPri = n => typeof n.prioridade === "number" ? n.prioridade : (NPRI[n.prioridade] || 0);
+function notifTitle(n) { const p = (n.dados && n.dados.pedido) || n.pedido || {};
+  let t = stripEmo(p.tarefa || p.titulo || n.titulo || n.title || "").trim();
+  if (!t) { t = String(n.texto || n.text || "").split(/[.!?\n]/)[0].trim(); if (t.length > 70) t = t.slice(0, 70).replace(/\s+\S*$/, "") + "…"; }
+  return t ? t.charAt(0).toLocaleUpperCase("pt-BR") + t.slice(1) : "Notificação"; }
+function notifInfo(n) { const d = n.dados || {}, p = d.pedido || n.pedido || {}, first = v => Array.isArray(v) ? v[0] : v, t = notifTitle(n);
+  const quem = titleCase(p.quem || n.remetente || d.remetente || ""), prazo = p.prazo || first(d.datas) || d.prazo, valor = p.valor || n.valor || first(d.valores),
+    cod = n.codigo || first(d.codigo) || first(d.boleto), link = n.link || first(d.reuniao) || first(d.links);
+  const host = l => { try { return new URL(l).hostname.replace(/^www\./, ""); } catch (e) { return ""; } };
+  return [quem && nrm(quem) !== nrm(t) ? (p.tarefa ? "pedido de " : "de ") + quem : "", prazo ? "prazo " + (fmtDia(prazo) || prazo) : "", valor ? (typeof valor === "number" ? fmtMoney(valor) : String(valor)) : "",
+    cod ? "código " + String(cod).slice(0, 24) : "", link ? host(link) || "link" : "", nPri(n) >= 3 ? "urgente" : ""].filter(Boolean).join(" · "); }
 const SRC_NAME = {google: "Gmail", microsoft: "Outlook", whatsapp: "WhatsApp", gemini: "Gemini", local: "Djorge", notifications: "Notificação"};
 function notifRowHTML(n, compact) {
   const app = titleCase(n.app || n.fonte || "Windows"), d = parseD(n.t || n.data || n.recebida || n.created), sug = asList(n.acoes_sugeridas || n.sugestoes), done = asList(n.acoes_tomadas || n.acoes);
@@ -880,8 +897,8 @@ function notifRowHTML(n, compact) {
   return `<div class="nrow ${n.lida ? "" : "unread"} ${NSEL.has(String(n.id)) ? "selc" : ""}" data-nid="${esc(n.id)}" data-ctx="notif"${hlAttr(hl)} tabindex="0">
     ${compact ? "" : `<button type="button" class="cbx" role="checkbox" aria-checked="${NSEL.has(String(n.id))}" data-nsel="${esc(n.id)}" aria-label="Selecionar">${ico("check")}</button>`}
     <span class="av app" aria-hidden="true">${esc((app[0] || "?").toUpperCase())}</span>
-    <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${hlSelo(hl)}${(n.contagem || 1) > 1 ? `<span class="tag rep" data-tip="Chegou ${n.contagem} vezes">×${n.contagem}</span>` : ""}${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${(n.prioridade || 0) >= 2 ? `<span class="pri p${Math.min(3, n.prioridade)}"><i></i>${esc(PRI[Math.min(3, n.prioridade)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
-      <span class="msubj">${/^\s*[⚠✅❗❌]/.test(n.titulo || n.title || "") ? ico("warn", "xs") + " " : ""}${esc(stripEmo(n.titulo || n.title || ""))}</span>${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
+    <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${hlSelo(hl)}${(n.contagem || 1) > 1 ? `<span class="tag rep" data-tip="Chegou ${n.contagem} vezes">×${n.contagem}</span>` : ""}${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${nPri(n) >= 2 ? `<span class="pri p${nPri(n)}"><i></i>${esc(PRI[nPri(n)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
+      <span class="msubj">${/^\s*[⚠✅❗❌]/.test(n.titulo || n.title || "") ? ico("warn", "xs") + " " : ""}${esc(notifTitle(n))}</span>${notifInfo(n) ? `<span class="ninfo">${esc(notifInfo(n))}</span>` : ""}${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
       ${pedidoHTML(n)}${n.card_id ? askHTML(S.cards.find(c => c.id === n.card_id)) : ""}
       ${compact ? "" : `${(n.regra || asList(n.regras).length) ? `<span class="nrule">${ico("tree", "sm")} Regra: ${esc([].concat(n.regra || n.regras).map(x => typeof x === "object" ? (x.nome || x.name || "") : x).join(", "))}</span>` : ""}
       ${done.length && !it.fez ? `<span class="nacts">${done.map(a => `<span class="chip ok">${ico("check", "sm")}${esc(actLabel(a))}</span>`).join("")}</span>` : ""}
@@ -944,7 +961,7 @@ function viewHome() {
   const frase = I.resumo_frase || (S.cardsLoaded ? `${today ? `${today} coisa${today > 1 ? "s" : ""} para hoje` : "Nada marcado para hoje"}${late ? ` · ${late} atrasada${late > 1 ? "s" : ""}` : ""}${evs.length ? ` · próximo: ${cardTitle(byCardId(evs[0]))}` : ""}.` : "");
   v.innerHTML = `<div class="view-inner dash">
     ${S.thread.length ? `<div class="backconv"><span>${ico("msg", "sm")} Você tem uma conversa em andamento.</span><button class="btn sm" id="bconv">Voltar à conversa</button></div>` : ""}
-    <div class="dhero"><img src="/static/icon.svg" alt=""><div><h1>${greet()}${USER() ? `, ${esc(USER())}` : ""}, <em>o que vamos organizar?</em></h1><p>${esc(frase)}</p></div></div>
+    <div class="dhero"><img src="/static/icon.svg" alt=""><div><h1>${greet()}${USER() ? `, ${esc(USER())}` : ""}, <em>o que vamos organizar?</em></h1><p>${esc(frase)}</p>${dispChip(I.dispositivo)}</div></div>
     ${noModel ? inviteHTML() : ""}
     <div class="dtop">${clockHTML()}${weatherHTML(S.wx)}</div>
     ${hlBlock}${askBlock}
@@ -1325,16 +1342,45 @@ let treeEditorLoaded = null;
 function loadScript(src) { return new Promise(res => { if ($(`script[src="${src}"]`)) return res(true); const s = document.createElement("script"); s.src = src; s.onload = () => res(true); s.onerror = () => { s.remove(); res(false); }; document.head.appendChild(s); }); }
 const FONTES = [["notifications", "Notificações do Windows"], ["email", "E-mail"], ["whatsapp", "WhatsApp"], ["mensagem", "Mensagens coladas"]];
 const FONTE_ALIAS = {notificacoes: "notifications", "notificações": "notifications", mensagens: "mensagem", imap: "email"};
-const ACOES = [["criar_card", "Criar um card"], ["alerta", "Criar um alerta"], ["tarefa", "Criar uma tarefa"], ["notificar", "Me avisar"], ["etiquetar", "Pôr uma etiqueta"], ["arquivar", "Arquivar"], ["abrir_app", "Abrir um app"], ["responder_sugestao", "Sugerir uma resposta"]];
+const ACOES = [["criar_card", "Criar um card"], ["alerta", "Criar um alerta"], ["tarefa", "Criar uma tarefa"], ["lembrete", "Criar um lembrete"], ["nota", "Criar uma nota"], ["notificar", "Me avisar"], ["etiquetar", "Pôr uma etiqueta"], ["prioridade", "Mudar a prioridade"], ["destacar", "Pôr em destaque"],
+  ["mover_card", "Mover o card"], ["concluir_card", "Concluir o card"], ["atualizar_card", "Atualizar o card"], ["adicionar_lista", "Adicionar a uma lista"], ["responder_sugestao", "Responder com rascunho"], ["abrir_app", "Abrir um app"], ["abrir_site", "Abrir um site"],
+  ["arquivar", "Arquivar"], ["ignorar", "Ignorar"], ["encadear", "Rodar outra automação"], ["registrar", "Registrar no histórico"]];
+/* v2.5: entradas, condições extras e tratamentos do construtor */
+const GATS = [["mensagem", "Chegar uma mensagem"], ["card_criado", "Um card for criado"], ["card_alterado", "Um card mudar"], ["card_concluido", "Um card for concluído"], ["card_atrasado", "Um card atrasar"], ["prazo_chegando", "O prazo de um card chegar perto"],
+  ["horario", "For um horário"], ["alerta", "Um alerta disparar"], ["nota_criada", "Uma nota for criada"], ["nota_alterada", "Uma nota mudar"], ["manual", "Eu mandar rodar"]];
+const GAT_PT = {mensagem: "chegar", card_criado: "um card for criado", card_alterado: "um card mudar", card_concluido: "um card for concluído", card_atrasado: "um card atrasar", alerta: "um alerta disparar", nota_criada: "uma nota for criada", nota_alterada: "uma nota mudar", manual: "eu mandar rodar"};
+const DIAS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
+const CONDS = [["contem", "Contém", "lista"], ["nao_contem", "Não contém", "lista"], ["remetente", "Remetente é", "texto"], ["app", "App é", "lista"], ["categoria", "Categoria é", "cat"], ["prioridade_min", "Prioridade pelo menos", "pri"],
+  ["valor_acima", "Valor maior que (R$)", "texto"], ["valor_abaixo", "Valor menor que (R$)", "texto"], ["valor_entre", "Valor entre (R$)", "texto"], ["regex", "Padrão (avançado)", "texto"], ["tem_anexo", "Tem anexo", "nada"], ["tem_link", "Tem link", "nada"],
+  ["tem_codigo", "Tem código", "nada"], ["horario", "Horário entre", "texto"], ["dias", "Dias da semana", "dias"], ["vip", "É de alguém VIP", "nada"], ["etiqueta", "Card tem a etiqueta", "lista"], ["coluna", "Card está na coluna", "col"]];
+const COND_PH = {valor_entre: "100 e 500", horario: "09:00-18:00", regex: "pedido \\d+", remetente: "Carlos"};
+const CATS = ["pessoal", "trabalho", "financeiro", "compras e entregas", "agenda", "promoções", "notificações", "segurança"].map(x => [x, x]);
+const PRIS = [["baixa", "baixa"], ["normal", "normal"], ["alta", "alta"], ["urgente", "urgente"]];
+const TRATS = [["extrair", "Extrair campos"], ["classificar", "Classificar"], ["resumir", "Resumir (frase central)"], ["formatar", "Formatar"], ["agrupar", "Juntar várias em um resumo"]];
+const FORMATOS = [["maiusculas", "MAIÚSCULAS"], ["minusculas", "minúsculas"], ["titulo", "Iniciais Maiúsculas"], ["data", "data (dd/mm/aaaa)"], ["moeda", "moeda (R$)"]];
+const TOMS = [["info", "Normal"], ["aviso", "Aviso"], ["urgente", "Urgente"], ["sucesso", "Boa notícia"]];
 const CAMPOS = [["valor", "Valor"], ["prazo", "Prazo"], ["remetente", "Quem mandou"], ["empresa", "Empresa"], ["data", "Data"], ["hora", "Hora"], ["codigo", "Código"], ["link", "Link"]];
 const joinPt = a => a.length <= 1 ? (a[0] || "") : a.slice(0, -1).join(", ") + " e " + a[a.length - 1];
 function autoPhrase(a) {
   const w = a.quando || {}, fs = (w.fontes || []).map(f => (FONTES.find(x => x[0] === f) || [, f])[1].toLowerCase());
   const se = [fs.length ? `chegar ${joinPt(fs)}` : "chegar algo", (w.apps || []).length ? `de ${joinPt(w.apps.map(titleCase))}` : "", w.remetente ? `de ${titleCase(w.remetente)}` : "",
-    (w.palavras || []).length ? `com ${joinPt(w.palavras.map(x => `“${x}”`))}` : "", w.assunto ? `sobre ${w.assunto}` : "", w.categoria ? `da categoria ${w.categoria}` : ""].filter(Boolean).join(" ");
+    (w.palavras || []).length ? `com ${joinPt(w.palavras.map(x => `“${x}”`))}` : "", w.assunto ? `sobre ${w.assunto}` : "", w.categoria ? `da categoria ${w.categoria}` : ""].filter(Boolean);
+  const g = a.gatilho || {tipo: "mensagem"};
+  if (g.tipo && g.tipo !== "mensagem") { se.splice(0, 1 + (fs.length ? 0 : 0)); se.unshift(g.tipo === "horario" ? `for ${g.hora || "09:00"}${(g.dias || []).length ? " (" + ((g.dias || []).join() === "0,1,2,3,4" ? "dias úteis" : g.dias.map(d => DIAS[d]).join(", ")) + ")" : ", todo dia"}`
+    : g.tipo === "prazo_chegando" ? `faltar ${g.horas || 24} h para o prazo de um card` : GAT_PT[g.tipo] || g.tipo); }
+  const extra = []; (w.grupos || []).forEach(gr => { const its = (gr.itens || []).map(condPt).filter(Boolean); if (its.length) extra.push(its.join(gr.modo === "ou" ? " ou " : " e ")); });
+  if (w.modelo_acha) extra.push(`o ${AG()} achar que “${w.modelo_acha}”`);
+  if (w.quantidade && w.quantidade.n) extra.push(`vier mais de ${w.quantidade.n} em ${w.quantidade.minutos || 10} min`);
+  const trat = (a.tratar || []).map(t => t.tipo === "classificar" ? `classificar em ${(t.opcoes || []).filter(Boolean).join(" / ")}` : t.tipo === "agrupar" ? `juntar a cada ${t.minutos || 30} min` : t.tipo === "extrair" ? `extrair ${joinPt((t.campos || []).map(c => (CAMPOS.find(y => y[0] === c) || [, c])[1].toLowerCase()))}` : (TRATS.find(x => x[0] === t.tipo) || [, t.tipo])[1].toLowerCase());
   const en = (a.entao || []).map(x => { const pa = x.params || {}, l = (ACOES.find(y => y[0] === x.acao) || [, actLabel(x.acao || "")])[1].toLowerCase();
-    return l + (pa.titulo ? ` “${pa.titulo}”` : "") + ((pa.campos || []).length ? ` com ${joinPt(pa.campos.map(c => (CAMPOS.find(y => y[0] === c) || [, c])[1].toLowerCase()))}` : "") + (pa.etiqueta ? ` (${pa.etiqueta})` : ""); });
-  return {se: "Se " + se, entao: "Então " + (en.length ? joinPt(en) : "nada ainda")};
+    return l + (pa.titulo ? ` “${pa.titulo}”` : "") + ((pa.campos || []).length ? ` com ${joinPt(pa.campos.map(c => (CAMPOS.find(y => y[0] === c) || [, c])[1].toLowerCase()))}` : "") + (pa.etiqueta ? ` (${pa.etiqueta})` : "")
+      + (pa.coluna && /card/.test(x.acao) ? ` para ${pa.coluna}` : "") + (pa.lista ? ` “${pa.lista}”` : "") + (x.acao === "prioridade" && pa.prioridade ? ` para ${pa.prioridade}` : "") + (pa.automacao ? ` “${pa.automacao}”` : ""); });
+  return {se: "Se " + se.join(" ") + (extra.length ? " e se " + extra.join(" e ") : ""), trat: trat.length ? "Tratar: " + joinPt(trat) : "", entao: "Então " + (en.length ? joinPt(en) : "nada ainda")};
+}
+function condPt(it) {
+  const c = CONDS.find(x => x[0] === it.tipo); if (!c) return "";
+  const v = Array.isArray(it.valor) ? (it.tipo === "dias" ? it.valor.map(d => DIAS[d] || d).join(", ") : it.valor.join(it.tipo === "valor_entre" ? " e " : it.tipo === "horario" ? "–" : " ou ")) : (it.valor === true || it.valor == null ? "" : String(it.valor));
+  return (it.negar ? "não " : "") + c[1].toLowerCase() + (v ? " " + v : "");
 }
 let AUTOS = [], MODELOS = [], SEC = null;
 async function viewAutos(openGraph) {
@@ -1434,19 +1480,82 @@ function autoBuilder(a0, notes = [], focusTest) {
   const m = modal({title: a0 && a0.id ? "Editar automação" : "Nova automação", cls: "builder", body: `<div class="bbody">
     ${notes.length ? `<div class="leave">${ico("spark", "sm")}<div>${notes.map(esc).join("<br>")}</div></div>` : ""}
     <div class="field"><label for="b-nome">Nome</label><input class="inp" id="b-nome" value="${esc(a.nome || "")}" placeholder="ex.: Alerta de orçamento"></div>
-    <section class="bsec"><h4><span class="kw">Se…</span> acontecer isto</h4>
-      <div class="field"><span class="lbl">Quando chegar</span><div class="row" id="b-fontes" style="gap:6px">${FONTES.map(([k, l]) => `<button type="button" class="chip ${(w.fontes || []).includes(k) ? "on" : ""}" aria-pressed="${(w.fontes || []).includes(k)}" data-f="${k}">${esc(l)}</button>`).join("")}</div></div>
-      <div class="grid2"><div class="field"><label for="b-appi">De qual app <small>(opcional)</small></label><div class="tagin" id="b-apps"></div></div>
+    <section class="bsec"><h4><span class="kw">Quando…</span> isto acontecer</h4>
+      <div class="field"><span class="lbl">Entrada</span><div style="max-width:340px">${selHTML("b-gat", GATS, (a.gatilho || {}).tipo || "mensagem", "Quando")}</div></div><div class="field" id="b-gatx"></div>
+    </section>
+    <section class="bsec"><h4><span class="kw">Se…</span> estas condições valerem</h4>
+      <div class="field b-msg"><span class="lbl">Vindo de</span><div class="row" id="b-fontes" style="gap:6px">${FONTES.map(([k, l]) => `<button type="button" class="chip ${(w.fontes || []).includes(k) ? "on" : ""}" aria-pressed="${(w.fontes || []).includes(k)}" data-f="${k}">${esc(l)}</button>`).join("")}</div></div>
+      <div class="grid2 b-msg"><div class="field"><label for="b-appi">De qual app <small>(opcional)</small></label><div class="tagin" id="b-apps"></div></div>
         <div class="field"><label for="b-rem">De quem <small>(opcional)</small></label><input class="inp" id="b-rem" value="${esc(w.remetente || "")}" placeholder="ex.: Carlos, @empresa.com" list="b-cont"><datalist id="b-cont"></datalist></div></div>
       <div class="field"><label for="b-pali">Com alguma destas palavras <small>(opcional)</small></label><div class="tagin" id="b-pal"></div></div>
       <div class="field"><label for="b-ass">Sobre o assunto <small>(descreva do seu jeito; o ${AG()} julga)</small></label><input class="inp" id="b-ass" value="${esc(w.assunto || "")}" placeholder="ex.: mensagem sobre orçamento ou proposta de preço"></div>
+      <div class="field"><div class="row" style="gap:8px;align-items:center"><span class="lbl" style="margin:0">Mais condições</span><div class="seg" role="radiogroup" aria-label="Como juntar as condições" id="b-modo"><button type="button" role="radio" data-m="e">Todas (E)</button><button type="button" role="radio" data-m="ou">Qualquer uma (OU)</button></div></div>
+        <div id="b-conds"></div><button type="button" class="addc" id="b-addc">${ico("plus", "sm")} Adicionar condição</button></div>
+      <div class="grid2"><div class="field"><label for="b-acha">O ${AG()} acha que… <small>(opcional, precisa do modelo)</small></label><input class="inp" id="b-acha" value="${esc(w.modelo_acha || "")}" placeholder="ex.: é um pedido de orçamento"></div>
+        <div class="field"><span class="lbl">Só se vierem mais de <small>(opcional)</small></span><div class="row" style="gap:6px;align-items:center"><input class="inp" id="b-qn" type="number" min="1" style="width:76px" value="${esc((w.quantidade || {}).n || "")}" placeholder="3"><span class="hint">em</span><input class="inp" id="b-qm" type="number" min="1" style="width:76px" value="${esc((w.quantidade || {}).minutos || "")}" placeholder="10"><span class="hint">min</span></div></div></div>
     </section>
+    <section class="bsec"><h4><span class="kw">Tratar…</span> antes de agir <small class="hint">(opcional)</small></h4><div id="b-trats"></div><button type="button" class="addc" id="b-addt">${ico("plus", "sm")} Adicionar tratamento</button></section>
     <section class="bsec"><h4><span class="kw">Então…</span> faça isto</h4><div id="b-acts"></div><button type="button" class="addc" id="b-add">${ico("plus", "sm")} Adicionar outra ação</button></section>
     <section class="bsec test"><h4>Testar com um exemplo</h4><div class="ftrow"><textarea class="ta" id="b-tt" rows="2" placeholder="Cole uma mensagem de exemplo: “Oi, segue o orçamento de R$ 3.200, válido até sexta. — Carlos”"></textarea><button class="btn" id="b-test">${ico("spark", "sm")} Testar</button></div><div id="b-tr" aria-live="polite"></div></section>
     <p class="bphrase" id="b-ph"></p></div>`,
-    foot: `${a0 && a0.id ? `<button class="btn ghost danger" id="b-del">${ico("trash", "sm")} Apagar</button>` : ""}${a0 && a0.id ? `<button class="btn ghost" id="b-tree">${ico("tree", "sm")} Editor visual</button>` : ""}<span style="flex:1"></span>${swHTML("b-on", a.ativa !== false, "Ligada")}<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="b-save">${ico("check", "sm")} Salvar automação</button>`});
+    foot: `${a0 && a0.id ? `<button class="btn ghost danger" id="b-del">${ico("trash", "sm")} Apagar</button>` : ""}${a0 && a0.id ? `<button class="btn ghost sm" id="b-tree">${ico("tree", "sm")} Editor visual</button><button class="btn ghost sm" id="b-run" data-tip="Roda já, com o texto do teste ou o resumo do dia">${ico("play", "sm")} Rodar agora</button>` : ""}<span style="flex:1"></span>${swHTML("b-on", a.ativa !== false, "Ligada")}<button class="btn ghost" data-close>Cancelar</button><button class="btn primary" id="b-save">${ico("check", "sm")} Salvar automação</button>`});
   const B = m.box;
-  const phrase = () => { const ph = autoPhrase(a); $("#b-ph", B).innerHTML = `<span class="kw">Se</span> ${esc(ph.se.slice(3))} <span class="kw">Então</span> ${esc(ph.entao.slice(6))}`; };
+  const phrase = () => { const ph = autoPhrase(a); $("#b-ph", B).innerHTML = `<span class="kw">Se</span> ${esc(ph.se.slice(3))}${ph.trat ? ` <span class="kw">Tratar</span> ${esc(ph.trat.slice(8))}` : ""} <span class="kw">Então</span> ${esc(ph.entao.slice(6))}`; };
+  /* Quando… (entrada) */
+  a.gatilho = a.gatilho || {tipo: "mensagem"}; a.tratar = a.tratar || []; w.grupos = w.grupos && w.grupos.length ? w.grupos : [{modo: w.modo === "ou" ? "ou" : "e", itens: []}];
+  const gatx = () => { const g = a.gatilho, box = $("#b-gatx", B);
+    box.innerHTML = g.tipo === "horario" ? `<span class="lbl">Às</span><div class="row" style="gap:6px;align-items:center"><input class="inp" id="b-gh" type="time" style="width:120px" value="${esc(g.hora || "09:00")}"><div class="row" style="gap:4px">${DIAS.map((d, i) => `<button type="button" class="chip ${(g.dias || []).includes(i) ? "on" : ""}" aria-pressed="${(g.dias || []).includes(i)}" data-d="${i}">${d}</button>`).join("")}</div></div><small class="hint">Sem dias marcados: todo dia.</small>`
+      : g.tipo === "prazo_chegando" ? `<label for="b-gp">Quantas horas antes</label><input class="inp" id="b-gp" type="number" min="1" style="width:110px" value="${esc(g.horas || 24)}">`
+      : g.tipo === "manual" ? `<p class="hint" style="margin-top:22px">Roda quando você clicar em “Rodar agora”.</p>` : g.tipo === "mensagem" ? "" : `<p class="hint" style="margin-top:22px">Use as condições abaixo para filtrar (etiqueta, coluna, palavras…).</p>`;
+    const gh = $("#b-gh", box); if (gh) gh.onchange = () => { g.hora = gh.value; phrase(); };
+    const gp = $("#b-gp", box); if (gp) gp.oninput = () => { g.horas = +gp.value || 24; phrase(); };
+    $$("[data-d]", box).forEach(b => b.onclick = () => { const s = new Set(g.dias || []), d = +b.dataset.d; s.has(d) ? s.delete(d) : s.add(d); g.dias = [...s].sort(); b.classList.toggle("on"); b.setAttribute("aria-pressed", s.has(d)); phrase(); });
+    $$(".b-msg", B).forEach(el => el.hidden = g.tipo !== "mensagem"); };
+  wireSel(B, "b-gat", GATS, v => { a.gatilho = {tipo: v}; if (v === "horario") Object.assign(a.gatilho, {hora: "09:00", dias: [0, 1, 2, 3, 4]}); if (v === "prazo_chegando") a.gatilho.horas = 24; gatx(); phrase(); });
+  /* Se… (condições extras, E/OU) */
+  const G = w.grupos[0];
+  const modo = () => $$("#b-modo [data-m]", B).forEach(b => b.setAttribute("aria-checked", String(b.dataset.m === (G.modo || "e"))));
+  $$("#b-modo [data-m]", B).forEach(b => b.onclick = () => { G.modo = b.dataset.m; modo(); phrase(); });
+  const parseV = (tp, s) => { const k = (CONDS.find(c => c[0] === tp) || [])[2]; s = String(s ?? "");
+    if (k === "lista") return s.split(",").map(x => x.trim()).filter(Boolean);
+    if (tp === "valor_entre") return s.split(/\s*(?:e|,|-)\s*/).filter(Boolean); if (tp === "horario") return s.split(/\s*(?:-|–|a|até)\s*/).filter(Boolean); return s; };
+  const showV = it => Array.isArray(it.valor) ? it.valor.join(it.tipo === "valor_entre" ? " e " : it.tipo === "horario" ? "-" : ", ") : (it.valor ?? "");
+  const conds = () => { const box = $("#b-conds", B);
+    box.innerHTML = G.itens.map((it, i) => { const k = (CONDS.find(c => c[0] === it.tipo) || [, , "texto"])[2];
+      return `<div class="bact bcond" data-ci="${i}"><div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><button type="button" class="chip ${it.negar ? "on" : ""}" data-neg aria-pressed="${!!it.negar}" data-tip="Inverter a condição">não</button>${selHTML("bct" + i, CONDS.map(c => [c[0], c[1]]), it.tipo, "Condição")}
+        ${k === "nada" ? "" : k === "cat" ? selHTML("bcv" + i, CATS, it.valor || "financeiro", "Categoria") : k === "pri" ? selHTML("bcv" + i, PRIS, it.valor || "alta", "Prioridade") : k === "col" ? selHTML("bcv" + i, COLS.map(c => [c.id, c.label]), (it.valor || [])[0] || "hoje", "Coluna")
+          : k === "dias" ? `<div class="row" style="gap:4px">${DIAS.map((d, j) => `<button type="button" class="chip ${(it.valor || []).includes(j) ? "on" : ""}" data-cd="${j}">${d}</button>`).join("")}</div>`
+          : `<input class="inp" data-cv style="flex:1;min-width:140px" value="${esc(showV(it))}" placeholder="${esc(COND_PH[it.tipo] || (k === "lista" ? "separe por vírgula" : ""))}">`}
+        <span style="flex:1"></span><button type="button" class="iconbtn" data-crm aria-label="Remover condição" data-tip="Remover">${ico("x", "sm")}</button></div></div>`; }).join("");
+    G.itens.forEach((it, i) => { const el = $(`[data-ci="${i}"]`, box);
+      wireSel(el, "bct" + i, CONDS.map(c => [c[0], c[1]]), v => { it.tipo = v; const k = CONDS.find(c => c[0] === v)[2]; it.valor = k === "nada" ? true : k === "dias" ? [0, 1, 2, 3, 4] : k === "cat" ? "financeiro" : k === "pri" ? "alta" : k === "col" ? ["hoje"] : (k === "lista" ? [] : ""); conds(); phrase(); });
+      wireSel(el, "bcv" + i, it.tipo === "categoria" ? CATS : it.tipo === "coluna" ? COLS.map(c => [c.id, c.label]) : PRIS, v => { it.valor = it.tipo === "coluna" ? [v] : v; phrase(); });
+      const iv = $("[data-cv]", el); if (iv) iv.oninput = () => { it.valor = parseV(it.tipo, iv.value); phrase(); };
+      $$("[data-cd]", el).forEach(b => b.onclick = () => { const s = new Set(it.valor || []), d = +b.dataset.cd; s.has(d) ? s.delete(d) : s.add(d); it.valor = [...s].sort(); b.classList.toggle("on"); phrase(); });
+      $("[data-neg]", el).onclick = e => { it.negar = !it.negar; e.currentTarget.classList.toggle("on", it.negar); e.currentTarget.setAttribute("aria-pressed", it.negar); phrase(); };
+      $("[data-crm]", el).onclick = () => { G.itens.splice(i, 1); conds(); phrase(); }; }); };
+  /* Tratar… */
+  const trats = () => { const box = $("#b-trats", B);
+    box.innerHTML = a.tratar.map((t, i) => `<div class="bact" data-ti="${i}"><div class="row"><span class="num">${i + 1}</span>${selHTML("btt" + i, TRATS, t.tipo, "Tratamento")}<span style="flex:1"></span><button type="button" class="iconbtn" data-trm aria-label="Remover tratamento" data-tip="Remover">${ico("x", "sm")}</button></div>
+      ${t.tipo === "extrair" ? `<div class="field"><span class="lbl">Pegar do texto</span><div class="row" style="gap:6px">${CAMPOS.concat([["pessoa", "Pessoa"]]).map(([k, l]) => `<button type="button" class="chip ${(t.campos || []).includes(k) ? "on" : ""}" data-tc="${k}" aria-pressed="${(t.campos || []).includes(k)}">${esc(l)}</button>`).join("")}</div></div>` : ""}
+      ${t.tipo === "classificar" ? `<div class="field"><label>Opções <small>(o resultado vai para {classe})</small></label><input class="inp" data-to value="${esc((t.opcoes || []).join(", "))}" placeholder="orçamento, reclamação, dúvida"></div>` : ""}
+      ${t.tipo === "formatar" ? `<div class="grid2"><div class="field"><span class="lbl">Campo</span>${selHTML("btf" + i, [["title", "Título"], ["text", "Texto"], ["valor", "Valor"], ["prazo", "Prazo"], ["remetente", "Quem mandou"]], t.campo || "title", "Campo")}</div><div class="field"><span class="lbl">Como</span>${selHTML("btc" + i, FORMATOS, t.como || "maiusculas", "Formato")}</div></div>` : ""}
+      ${t.tipo === "agrupar" ? `<div class="field"><label>Juntar tudo em um resumo a cada (min)</label><input class="inp" data-tm type="number" min="1" style="width:110px" value="${esc(t.minutos || 30)}"></div>` : ""}
+      ${t.tipo === "resumir" ? `<p class="hint">Guarda a frase central em {resumo} (sem inventar nada).</p>` : ""}</div>`).join("");
+    a.tratar.forEach((t, i) => { const el = $(`[data-ti="${i}"]`, box);
+      wireSel(el, "btt" + i, TRATS, v => { a.tratar[i] = {tipo: v, ...(v === "extrair" ? {campos: ["valor", "prazo"]} : v === "classificar" ? {opcoes: []} : v === "agrupar" ? {minutos: 30} : v === "formatar" ? {campo: "title", como: "maiusculas"} : {})}; trats(); phrase(); });
+      wireSel(el, "btf" + i, [["title"], ["text"], ["valor"], ["prazo"], ["remetente"]].map(x => [x[0], x[0]]), v => t.campo = v); wireSel(el, "btc" + i, FORMATOS, v => { t.como = v; phrase(); });
+      $$("[data-tc]", el).forEach(b => b.onclick = () => { const s = new Set(t.campos || []); s.has(b.dataset.tc) ? s.delete(b.dataset.tc) : s.add(b.dataset.tc); t.campos = [...s]; b.classList.toggle("on"); b.setAttribute("aria-pressed", s.has(b.dataset.tc)); phrase(); });
+      const to = $("[data-to]", el); if (to) to.oninput = () => { t.opcoes = to.value.split(",").map(x => x.trim()).filter(Boolean); phrase(); };
+      const tm = $("[data-tm]", el); if (tm) tm.oninput = () => { t.minutos = +tm.value || 30; phrase(); };
+      $("[data-trm]", el).onclick = () => { a.tratar.splice(i, 1); trats(); phrase(); }; }); };
+  setTimeout(() => { gatx(); modo(); conds(); trats(); phrase();
+    $("#b-addc", B).onclick = () => { G.itens.push({tipo: "contem", valor: [], negar: false}); conds(); const ins = $$("#b-conds [data-cv]", B); if (ins.length) ins[ins.length - 1].focus(); };
+    $("#b-addt", B).onclick = () => { a.tratar.push({tipo: "extrair", campos: ["valor", "prazo"]}); trats(); phrase(); };
+    $("#b-acha", B).oninput = e => { w.modelo_acha = e.target.value; phrase(); };
+    const qq = () => { const n = +$("#b-qn", B).value; w.quantidade = n > 0 ? {n, minutos: +$("#b-qm", B).value || 10} : {}; phrase(); }; $("#b-qn", B).oninput = qq; $("#b-qm", B).oninput = qq;
+    const run = $("#b-run", B); if (run) run.onclick = async e => { const bt = e.currentTarget; bt.setAttribute("aria-busy", "true"); const r = await tryApi(`/api/automacoes/${encodeURIComponent(a.id)}/rodar`, {texto: $("#b-tt", B).value.trim()}); bt.removeAttribute("aria-busy");
+      if (r) toast(r.casou ? `Rodou: ${(r.acoes || []).length} aç${(r.acoes || []).length > 1 ? "ões" : "ão"}` : "Rodou, mas as condições não casaram", r.casou ? "" : "warn"); }; }, 0);
   $$("#b-fontes [data-f]", B).forEach(b => b.onclick = () => { const s = new Set(w.fontes || []); s.has(b.dataset.f) ? s.delete(b.dataset.f) : s.add(b.dataset.f); w.fontes = [...s]; b.classList.toggle("on"); b.setAttribute("aria-pressed", s.has(b.dataset.f)); phrase(); });
   tagInput($("#b-apps", B), w.apps || [], "b-appi", "ex.: WhatsApp, Outlook", x => { w.apps = x; phrase(); });
   tagInput($("#b-pal", B), w.palavras || [], "b-pali", "palavra + Enter", x => { w.palavras = x; phrase(); });
@@ -1456,15 +1565,31 @@ function autoBuilder(a0, notes = [], focusTest) {
   const acts = () => { const box = $("#b-acts", B);
     box.innerHTML = a.entao.map((x, i) => { const pa = x.params = x.params || {};
       return `<div class="bact" data-i="${i}"><div class="row"><span class="num">${i + 1}</span>${selHTML("ba" + i, ACOES, x.acao || "criar_card", "Ação")}<span class="sp" style="flex:1"></span>${a.entao.length > 1 ? `<button type="button" class="iconbtn" data-rm="${i}" aria-label="Remover ação" data-tip="Remover">${ico("x", "sm")}</button>` : ""}</div>
-        ${["criar_card", "alerta", "tarefa", "notificar"].includes(x.acao || "criar_card") ? `<div class="field"><label>Título</label><input class="inp" data-pk="titulo" value="${esc(pa.titulo || "")}" placeholder="ex.: Alerta de orçamento — {remetente}">
-          <div class="te-phs">${["{remetente}", "{assunto}", "{valor}", "{prazo}", "{app}"].map(t => `<button type="button" data-ins="${t}">${t}</button>`).join("")}</div></div>
+        ${["criar_card", "alerta", "tarefa", "lembrete", "notificar"].includes(x.acao || "criar_card") ? `<div class="field"><label>Título</label><input class="inp" data-pk="titulo" value="${esc(pa.titulo || "")}" placeholder="ex.: Alerta de orçamento — {remetente}">
+          <div class="te-phs">${["{remetente}", "{assunto}", "{valor}", "{prazo}", "{app}", "{classe}", "{resumo}"].map(t => `<button type="button" data-ins="${t}">${t}</button>`).join("")}</div></div>
           <div class="field"><span class="lbl">Incluir no card</span><div class="row" style="gap:6px">${CAMPOS.map(([k, l]) => `<button type="button" class="chip ${(pa.campos || []).includes(k) ? "on" : ""}" data-c="${k}" aria-pressed="${(pa.campos || []).includes(k)}">${esc(l)}</button>`).join("")}</div></div>
           ${x.acao === "notificar" ? "" : `<div class="grid2"><div class="field"><span class="lbl">Coluna</span>${selHTML("bc" + i, COLS.map(c => [c.id, c.label]), pa.coluna || "entrada", "Coluna")}</div><div class="field"><span class="lbl">Prioridade</span>${selHTML("bp" + i, PRI.map((l, k) => [String(k), l]), String(pa.prioridade ?? (x.acao === "alerta" ? 3 : 0)), "Prioridade")}</div></div>`}` : ""}
         ${x.acao === "etiquetar" ? `<div class="field"><label>Etiqueta</label><input class="inp" data-pk="etiqueta" value="${esc(pa.etiqueta || "")}" placeholder="ex.: financeiro"></div>` : ""}
-        ${x.acao === "abrir_app" ? `<div class="field"><label>App ou endereço</label><input class="inp" data-pk="app" value="${esc(pa.app || pa.url || "")}" placeholder="ex.: whatsapp, https://…"></div>` : ""}</div>`; }).join("");
+        ${x.acao === "abrir_app" ? `<div class="field"><label>App ou endereço</label><input class="inp" data-pk="app" value="${esc(pa.app || pa.url || "")}" placeholder="ex.: whatsapp, https://…"></div>` : ""}
+        ${x.acao === "notificar" ? `<div class="field"><span class="lbl">Tom</span>${selHTML("bto" + i, TOMS, pa.tom || "info", "Tom")}</div>` : ""}
+        ${x.acao === "nota" ? `<div class="field"><label>Título da nota</label><input class="inp" data-pk="titulo" value="${esc(pa.titulo || "")}" placeholder="{title}"></div><div class="field"><label>Texto</label><input class="inp" data-pk="texto" value="${esc(pa.texto || "")}" placeholder="{resumo}"></div>` : ""}
+        ${["mover_card", "atualizar_card"].includes(x.acao) ? `<div class="field"><span class="lbl">Para a coluna</span>${selHTML("bc" + i, COLS.map(c => [c.id, c.label]), pa.coluna || "hoje", "Coluna")}</div>` : ""}
+        ${["prioridade", "atualizar_card"].includes(x.acao) ? `<div class="field"><span class="lbl">Prioridade</span>${selHTML("bpr" + i, PRIS, pa.prioridade || "alta", "Prioridade")}</div>` : ""}
+        ${x.acao === "atualizar_card" ? `<div class="field"><label>Pôr a etiqueta <small>(opcional)</small></label><input class="inp" data-pk="etiqueta" value="${esc(pa.etiqueta || "")}"></div>` : ""}
+        ${/card$/.test(x.acao) && x.acao !== "criar_card" ? `<p class="hint">Vale para o card da entrada (ou o card criado antes nesta automação).</p>` : ""}
+        ${x.acao === "adicionar_lista" ? `<div class="grid2"><div class="field"><label>Lista</label><input class="inp" data-pk="lista" value="${esc(pa.lista || "")}" placeholder="ex.: Compras"></div><div class="field"><label>Item</label><input class="inp" data-pk="texto" value="${esc(pa.texto || "")}" placeholder="{title}"></div></div>` : ""}
+        ${x.acao === "abrir_site" ? `<div class="field"><label>Endereço</label><input class="inp" data-pk="url" value="${esc(pa.url || "")}" placeholder="https://…"></div>` : ""}
+        ${x.acao === "encadear" ? `<div class="field"><span class="lbl">Qual automação</span>${selHTML("ben" + i, [["", "— escolha —"]].concat((AUTOS || []).filter(o => o.id !== a.id).map(o => [o.nome, o.nome])), pa.automacao || "", "Automação")}</div>` : ""}
+        ${x.acao === "registrar" ? `<div class="field"><label>O que anotar</label><input class="inp" data-pk="mensagem" value="${esc(pa.mensagem || "")}" placeholder="{title}"></div>` : ""}
+        ${x.acao === "responder_sugestao" ? `<div class="field"><label>Rascunho <small>(opcional)</small></label><input class="inp" data-pk="texto" value="${esc(pa.texto || "")}" placeholder="Olá! Recebi sua mensagem e já respondo."></div><label class="row" style="gap:8px;align-items:center"><input type="checkbox" data-ab ${pa.abrir ? "checked" : ""}> Abrir o app com o rascunho <small class="hint">(nunca envia sozinho)</small></label>` : ""}
+        ${x.acao === "ignorar" ? `<p class="hint">Arquiva sem aviso nenhum.</p>` : ""}</div>`; }).join("");
     a.entao.forEach((x, i) => { const el = $(`.bact[data-i="${i}"]`, box), pa = x.params;
       wireSel(el, "ba" + i, ACOES, val => { x.acao = val; acts(); phrase(); });
       wireSel(el, "bc" + i, COLS.map(c => [c.id, c.label]), val => pa.coluna = val); wireSel(el, "bp" + i, PRI.map((l, k) => [String(k), l]), val => pa.prioridade = +val);
+      wireSel(el, "bto" + i, TOMS, val => { pa.tom = val; phrase(); }); wireSel(el, "bpr" + i, PRIS, val => { pa.prioridade = val; phrase(); });
+      wireSel(el, "ben" + i, [["", "— escolha —"]].concat((AUTOS || []).map(o => [o.nome, o.nome])), val => { pa.automacao = val; phrase(); });
+      const ab = $("[data-ab]", el); if (ab) ab.onchange = () => { pa.abrir = ab.checked; phrase(); };
+      if (["mover_card", "atualizar_card"].includes(x.acao) && !pa.coluna) pa.coluna = "hoje"; if (x.acao === "prioridade" && !pa.prioridade) pa.prioridade = "alta";
       $$("[data-pk]", el).forEach(inp => inp.oninput = () => { pa[inp.dataset.pk] = inp.value; phrase(); });
       $$("[data-ins]", el).forEach(b => b.onclick = () => { const t = $("[data-pk=titulo]", el); const p0 = t.selectionStart ?? t.value.length; t.value = t.value.slice(0, p0) + b.dataset.ins + t.value.slice(t.selectionEnd ?? p0); pa.titulo = t.value; t.focus(); phrase(); });
       $$("[data-c]", el).forEach(b => b.onclick = () => { const s = new Set(pa.campos || []); s.has(b.dataset.c) ? s.delete(b.dataset.c) : s.add(b.dataset.c); pa.campos = CAMPOS.map(c => c[0]).filter(k => s.has(k)); b.classList.toggle("on"); b.setAttribute("aria-pressed", s.has(b.dataset.c)); phrase(); });
@@ -1482,7 +1607,8 @@ function autoBuilder(a0, notes = [], focusTest) {
     btn.removeAttribute("aria-busy"); };
   if (focusTest) setTimeout(() => $("#b-tt", B).focus(), 60);
   $("#b-save", B).onclick = async e => { a.nome = $("#b-nome", B).value.trim() || autoPhrase(a).se.slice(0, 60); a.ativa = $("#b-on", B).checked;
-    if (!(w.fontes || []).length && !(w.palavras || []).length && !w.assunto && !w.remetente && !(w.apps || []).length) { toast("Diga pelo menos quando a automação deve rodar (o “Se…”).", "warn"); return; }
+    w.grupos = (w.grupos || []).map(g => ({...g, itens: (g.itens || []).filter(it => it.valor === true || (Array.isArray(it.valor) ? it.valor.length : String(it.valor ?? "").trim()))})); w.modo = "e";
+    if ((a.gatilho || {}).tipo === "mensagem" && !(w.fontes || []).length && !(w.palavras || []).length && !w.assunto && !w.remetente && !(w.apps || []).length && !w.grupos.some(g => g.itens.length) && !w.modelo_acha) { toast("Diga pelo menos quando a automação deve rodar (o “Se…”).", "warn"); return; }
     const sb = e.currentTarget; sb.setAttribute("aria-busy", "true"); const r = await tryApi("/api/automacoes", a); sb.removeAttribute("aria-busy");
     if (r) { m.close(); toast("Automação salva", "", {title: a.nome}); if (S.view === "automacoes") drawAutos(viewEl()); } };
   const bt = $("#b-tree", B); if (bt) bt.onclick = () => { m.close(); openAutoTree(a0); };
@@ -2452,8 +2578,9 @@ function openSettings(start = "geral") {
   return m;
 }
 async function setDesempenho(el) {
-  el.innerHTML = `<div id="sd-mo"></div><h3>Leveza</h3><div id="sd-lv"></div><h3>API local</h3><div id="sd-api"></div>`;
+  el.innerHTML = `<div id="sd-dv"></div><div id="sd-mo"></div><h3>Leveza</h3><div id="sd-lv"></div><h3>API local</h3><div id="sd-api"></div>`;
   setModel($("#sd-mo", el)); setLeve($("#sd-lv", el)); setLocalApi($("#sd-api", el));
+  api("/api/dispositivo").then(d => { const b = $("#sd-dv", el); if (b && d && d.disponivel) b.innerHTML = `<p class="hint" style="margin-bottom:8px">${dispChip(d)}</p>`; }).catch(() => {});
 }
 const NP_CAMPO = {prazo: "o prazo", horario: "o horário", local: "o local", valor: "o valor", responsavel: "o responsável"};
 const NP_ORIG = {notificacao: "notificações", automacao: "automações", comando: "pedidos", "*": "tudo"};
@@ -2540,9 +2667,19 @@ async function setVoice(el) {
 async function setModel(el) {
   const m = S.model || {}, s = modelUiState();
   el.innerHTML = `<p class="lead">O DOFL só decide (escolher, conferir, pontuar) — nunca inventa texto. Roda só neste computador.</p>
-    ${setRow("DOFL V2", {ausente: "Não instalado", baixando: `Baixando ${Math.round((m.progress || 0) * 100)}%`, pronto: "Instalado e carregado", carregando: "Carregando", verificando: "Verificando", erro: "Erro"}[s], `<button class="btn sm" id="mo-open">Detalhes</button>`)}
+    ${setRow("DOFL V2", {ausente: "Não instalado", baixando: `Baixando ${Math.round((m.progress || 0) * 100)}%`, pronto: "Instalado e carregado", carregando: "Carregando", verificando: "Verificando", erro: "Erro"}[s], `<div class="row" style="gap:6px"><button class="btn sm" id="mo-pick">Escolher modelo</button><button class="btn sm" id="mo-file">Instalar de um arquivo…</button><button class="btn sm" id="mo-open">Detalhes</button></div>`)}
+    <div id="mo-cat"></div>
     <h3>Outros modelos</h3><div id="mo-list"><div class="sk"></div></div>`;
   $("#mo-open", el).onclick = openModel;
+  /* catálogo (agente MO): rotas preparadas; se ainda não existirem, avisa sem erro */
+  $("#mo-pick", el).onclick = async () => { const box = $("#mo-cat", el); box.innerHTML = `<div class="sk"></div>`;
+    let r = null; try { r = await api("/api/model/catalogo"); } catch (e) { box.innerHTML = `<p class="hint">A escolha de modelos chega na próxima atualização.</p>`; return; }
+    const ms = asList(r, "modelos", "catalogo", "items");
+    box.innerHTML = ms.length ? ms.map(x => setRow(esc(x.nome || x.name || x.id), esc([x.descricao || x.role || "", x.tamanho_mb ? mb(x.tamanho_mb) : ""].filter(Boolean).join(" · ")),
+      x.ativo || x.atual ? `<span class="chip on">em uso</span>` : `<button class="btn sm" data-esc="${esc(x.id || x.nome)}">${x.instalado === false ? "Baixar e usar" : "Usar"}</button>`)).join("") : `<p class="hint">Nenhum outro modelo no catálogo.</p>`;
+    $$("[data-esc]", box).forEach(b => b.onclick = async () => { b.setAttribute("aria-busy", "true"); if (await tryApi("/api/model/escolher", {id: b.dataset.esc})) { toast("Modelo escolhido"); pollModel(); setModel(el); } else b.removeAttribute("aria-busy"); }); };
+  $("#mo-file", el).onclick = () => askText("Instalar modelo de um arquivo", "Caminho do arquivo (.zip ou pasta do modelo)", "C:\\Users\\voce\\Downloads\\modelo.zip", async v => {
+    if (!v) return; try { await api("/api/model/instalar_arquivo", {caminho: v}); toast("Instalando o modelo…"); pollModel(); } catch (e) { toast(e && e.status === 404 ? "Instalar de arquivo chega na próxima atualização." : human(e), "warn"); } });
   try { const r = await api("/api/models"); const ms = (r && r.models) || [];
     const arr = Array.isArray(ms) ? ms : Object.entries(ms).map(([k, v]) => ({name: k, ...v}));
     $("#mo-list", el).innerHTML = arr.length ? arr.map(x => setRow(esc(x.name), esc(x.role || x.path || ""), `<span class="chip ${x.loaded ? "on" : ""}">${x.loaded ? "carregado" : x.enabled === false ? "desligado" : "parado"}</span>

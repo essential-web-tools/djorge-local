@@ -25,7 +25,7 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           grep -viE "directml|pywin|comtypes|webview|pystray|winotify|faster" requirements.txt > req-linux.txt && pip install -r req-linux.txt
-          pip install onnx onnxscript onnxruntime transformers safetensors gdown
+          pip install onnx onnxscript "onnxruntime>=1.20" transformers safetensors gdown
       - name: Baixar o artefato de treino
         run: |
           mkdir -p art && gdown "${{ inputs.fonte || '1rt4URY9EAlNkdINoi11mSxCh0QZ2Shdo' }}" -O art/modelo.zip
@@ -40,8 +40,19 @@ jobs:
           from pathlib import Path
           from djorge_local.otimizar import converter
           art = Path("art") / open("art_dir.txt").read().strip()
+          # escada: int8 completo / int8 só pesos (wo8) / estático calibrado -> sem blocos sensíveis ->
+          # mlp/atenção -> só vocabulário + fp16 -> fp32; publica o MENOR que passa (>= 99 % e dif. < 0,03,
+          # medido em lote E linha a linha). LoRA fundida nos pesos antes de exportar.
           rep = converter(art, "flash_onnx", progresso=lambda f, e: print(f"{f:.0%} {e}", flush=True))
           print(json.dumps(rep, indent=1, ensure_ascii=False))
+          for m in rep["ladder"]:
+              print("degrau", m.get("mode"), m.get("mb"), "MB", m.get("agreement"), m.get("mean_abs_prob_diff"),
+                    "lote_dp", m.get("lote_dp"), "ok" if m.get("passou") else "-")
+          info = json.load(open("flash_onnx/onnx/encoder.json"))
+          open("notas.txt", "w").write(
+              f"Pacote ONNX escolhido: {rep['chosen']} · {rep['size_mb']} MB · paridade {rep['variants']['int8']['agreement']:.2%} "
+              f"(dif. média {rep['variants']['int8']['mean_abs_prob_diff']}) · {rep['variants']['int8']['ms_per_row_cpu']} ms/linha no runner · "
+              f"respostas independentes do lote: {'sim' if info.get('lote_invariante') else 'não (o app roda linha a linha)'}.")
           EOF
       - name: Conferir sem PyTorch
         run: |
@@ -56,5 +67,6 @@ jobs:
         run: |
           cd flash_onnx && zip -qr ../dofl_v2_onnx.zip . && cd ..
           ls -la dofl_v2_onnx.zip
-          gh release view "${{ inputs.tag || 'dofl-v2-onnx' }}" >/dev/null 2>&1 || gh release create "${{ inputs.tag || 'dofl-v2-onnx' }}" --target "${{ github.ref_name }}" -t "DOFL V2 — pacote ONNX int8" -n "Modelo DOFL V2 convertido para ONNX int8 (CPU), com teste de paridade."
+          gh release view "${{ inputs.tag || 'dofl-v2-onnx' }}" >/dev/null 2>&1 || gh release create "${{ inputs.tag || 'dofl-v2-onnx' }}" --target "${{ github.ref_name }}" -t "DOFL V2 — pacote ONNX int8" -F notas.txt
           gh release upload "${{ inputs.tag || 'dofl-v2-onnx' }}" dofl_v2_onnx.zip --clobber
+          gh release edit "${{ inputs.tag || 'dofl-v2-onnx' }}" -F notas.txt || true

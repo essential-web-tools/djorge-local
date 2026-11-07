@@ -44,20 +44,42 @@
     etiquetar: {name: 'Pôr uma etiqueta', icon: 'tag', make: () => ({action: 'etiquetar', etiqueta: ''})},
     arquivar: {name: 'Arquivar', icon: 'archive', make: () => ({action: 'arquivar'})},
     abrir_app: {name: 'Abrir um app', icon: 'open', make: () => ({action: 'abrir_app', app: 'whatsapp'})},
-    responder_sugestao: {name: 'Sugerir uma resposta', icon: 'reply', make: () => ({action: 'responder_sugestao'})}
+    responder_sugestao: {name: 'Sugerir uma resposta', icon: 'reply', make: () => ({action: 'responder_sugestao'})},
+    destacar: {name: 'Pôr em destaque', icon: 'star', make: () => ({action: 'destacar', cor: 'rosa', icone: 'estrela'})},
+    // v2.5: tratamentos (antes das ações) e ações novas
+    tratar: {name: 'Tratar a mensagem', icon: 'filter', make: () => ({action: 'tratar', tipo: 'extrair', campos: ['valor', 'prazo']})},
+    lembrete: {name: 'Criar um lembrete', icon: 'clock', fields: 'card', make: () => ({action: 'lembrete', titulo: '{title}', campos: []})},
+    nota: {name: 'Criar uma nota', icon: 'note', make: () => ({action: 'nota', titulo: '{title}'})},
+    atualizar_card: {name: 'Atualizar o card', icon: 'edit', make: () => ({action: 'atualizar_card'})},
+    mover_card: {name: 'Mover o card', icon: 'arrow', make: () => ({action: 'mover_card', coluna: 'hoje'})},
+    concluir_card: {name: 'Concluir o card', icon: 'boxok', make: () => ({action: 'concluir_card'})},
+    prioridade: {name: 'Mudar a prioridade', icon: 'flame', make: () => ({action: 'prioridade', prioridade: 'alta'})},
+    abrir_site: {name: 'Abrir um site', icon: 'globe', make: () => ({action: 'abrir_site', url: 'https://'})},
+    ignorar: {name: 'Ignorar', icon: 'eye', make: () => ({action: 'ignorar'})},
+    encadear: {name: 'Rodar outra automação', icon: 'branch', make: () => ({action: 'encadear', automacao: ''})},
+    adicionar_lista: {name: 'Adicionar a uma lista', icon: 'list', make: () => ({action: 'adicionar_lista', lista: 'Compras', texto: '{title}'})},
+    registrar: {name: 'Registrar no histórico', icon: 'file', make: () => ({action: 'registrar', mensagem: '{title}'})}
   };
-  const NEW_ACTIONS = ['criar_card', 'alerta', 'tarefa', 'notificar', 'etiquetar', 'arquivar', 'abrir_app', 'responder_sugestao'];
+  const NEW_ACTIONS = ['criar_card', 'alerta', 'tarefa', 'notificar', 'etiquetar', 'arquivar', 'abrir_app', 'responder_sugestao',
+    'destacar', 'tratar', 'lembrete', 'nota', 'atualizar_card', 'mover_card', 'concluir_card', 'prioridade', 'abrir_site', 'ignorar',
+    'encadear', 'adicionar_lista', 'registrar'];
+  const TRATS = [['extrair', 'Extrair campos'], ['classificar', 'Classificar entre opções'], ['resumir', 'Resumir (frase central)'],
+    ['formatar', 'Formatar um campo'], ['agrupar', 'Juntar várias em um resumo']];
   // ícone do conjunto do app (<symbol id="i-…"> em ui.html); fora do app cai num ponto
   const ico = (name) => { const sp = document.createElement('span'); sp.className = 'te-svg-i'; sp.setAttribute('aria-hidden', 'true');
     sp.innerHTML = document.getElementById('i-' + name) ? `<svg class="i sm" aria-hidden="true"><use href="#i-${name}"/></svg>` : '•'; return sp; };
-  const PALETTE = ['choice', 'check', 'score', 'multi', 'if', 'select', 'action:criar_card', 'action:alerta', 'action:notificar',
-    'action:etiquetar', 'action:arquivar', 'action:notify', 'action:log', 'action:write_file', 'action:webhook', 'action:command', 'action:stop'];
+  const PALETTE = ['choice', 'check', 'score', 'multi', 'if', 'select', 'action:tratar', 'action:criar_card', 'action:alerta', 'action:notificar',
+    'action:lembrete', 'action:nota', 'action:mover_card', 'action:concluir_card', 'action:adicionar_lista', 'action:responder_sugestao',
+    'action:encadear', 'action:etiquetar', 'action:arquivar', 'action:notify', 'action:log', 'action:write_file', 'action:webhook', 'action:command', 'action:stop'];
   const PORT_NAMES = {'true': 'sim', 'false': 'não', abstain: 'não tenho certeza', 'default': 'qualquer outro caso', none: 'nenhum', then: 'e depois'};
   const COND = [['contains_any', 'Contém alguma destas palavras', 'chips'], ['contains_all', 'Contém todas estas palavras', 'chips'],
     ['sender_has', 'Remetente contém', 'chips'], ['app_in', 'Aplicativo', 'chips'], ['source_in', 'De onde veio (email, notifications, folder, clipboard, http)', 'chips'],
     ['seguranca_in', 'Parece (seguro, spam, golpe, phishing, malware)', 'chips'], ['categoria_in', 'Categoria da triagem', 'chips'],
-    ['prioridade_min', 'Prioridade mínima (baixa, normal, alta, urgente)', 'text'], ['vip', 'Só de pessoas VIP', 'bool'], ['regex', 'Padrão avançado (expressão regular)', 'text']];
-  const PLACEHOLDERS = ['{text}', '{title}', '{sender}', '{source}', '{app}', '{time}', '{text:100}'];
+    ['prioridade_min', 'Prioridade mínima (baixa, normal, alta, urgente)', 'text'], ['vip', 'Só de pessoas VIP', 'bool'], ['regex', 'Padrão avançado (expressão regular)', 'text'],
+    ['not_contains', 'Não contém nenhuma destas palavras', 'chips'], ['has_attachment', 'Tem anexo', 'bool'], ['has_link', 'Tem link', 'bool'],
+    ['has_code', 'Tem código', 'bool'], ['valor_gt', 'Valor maior que (R$)', 'num'], ['valor_lt', 'Valor menor que (R$)', 'num'],
+    ['tag_in', 'Etiqueta do card', 'chips'], ['column_in', 'Coluna do card', 'chips']];
+  const PLACEHOLDERS = ['{text}', '{title}', '{sender}', '{source}', '{app}', '{time}', '{text:100}', '{valor}', '{prazo}', '{classe}', '{resumo}'];
 
   const CSS = `
 .te-root{--te-bg:var(--bg,#f6f3ee);--te-bg2:var(--bg2,#efe9e0);--te-surface:var(--surface,#fdfcf9);--te-ink:var(--ink,#26221e);
@@ -188,6 +210,8 @@
 
   function labelOf(n) {
     const p = n.props || {};
+    if (n.kind === 'action' && p.action === 'tratar') { const t = (TRATS.find((x) => x[0] === p.tipo) || [, 'Tratar'])[1]; return p.tipo === 'classificar' && (p.opcoes || []).length ? `${t}: ${p.opcoes.join(' / ')}` : p.tipo === 'agrupar' ? `${t} a cada ${p.minutos || 30} min` : t; }
+    if (n.kind === 'if' && p.if && p.if.count_min) return `Mais de ${p.if.count_min.n} em ${p.if.count_min.minutos} min`;
     if (n.kind === 'action') { const d = [p.title, p.titulo, p.etiqueta, p.file, p.url, p.folder, p.message, (p.argv || []).join(' ')].find((v) => typeof v === 'string' && v.trim()); return d || (ACTIONS[p.action] || {}).name || String(p.action); }
     if (p.ask) return String(p.ask);
     if (['check', 'select', 'query'].includes(n.kind) && typeof p[n.kind] === 'string' && p[n.kind].trim()) return p[n.kind];
@@ -277,7 +301,7 @@
         if (!String(p[n.kind] || '').trim()) add(n.id, {check: 'escreva a afirmação a verificar', select: 'escreva o seletor (ex.: TOTAL TYPE money)', query: 'escreva a consulta'}[n.kind]);
       } else if (n.kind === 'if') {
         const c = p.if || {};
-        if (!COND.some(([k]) => (Array.isArray(c[k]) ? c[k].length : c[k]))) add(n.id, 'a condição está vazia: diga o que procurar no texto, remetente, app ou origem');
+        if (!COND.some(([k]) => (Array.isArray(c[k]) ? c[k].length : c[k] || c[k] === 0)) && !['all', 'any', 'not', 'count_min', 'hora_entre', 'dias_semana'].some((k) => c[k])) add(n.id, 'a condição está vazia: diga o que procurar no texto, remetente, app ou origem');
         else if (c.regex) { try { new RegExp(c.regex); } catch (e) { add(n.id, 'expressão regular inválida'); } }
       } else if (n.kind === 'action') {
         const a = p.action;
@@ -868,6 +892,8 @@
         ? (() => { const cb = h('input', {type: 'checkbox', checked: !!c[k], disabled: this.ro, id: 'te-c' + this.uidc()});
             cb.addEventListener('change', (e) => { e.stopPropagation(); this.commit(() => { if (cb.checked) c[k] = true; else delete c[k]; }); });
             return h('div', {class: 'te-f te-row'}, cb, h('label', {for: cb.id, text: label})); })()
+        : type === 'num'
+        ? this.field(label, this.text(c[k] == null ? '' : String(c[k]), (v) => { const x = parseFloat(String(v).replace(/\./g, '').replace(',', '.')); if (v && !isNaN(x)) c[k] = x; else delete c[k]; this.liveEdit(); }, 'ex.: 500', false, true))
         : type === 'chips'
         ? this.field(label, this.chips(c[k] || [], (arr) => this.commit(() => { if (arr.length) c[k] = arr; else delete c[k]; }), 'adicionar + Enter'))
         : this.field(label, this.text(c[k] || '', (v) => { if (v) c[k] = v; else delete c[k]; this.liveEdit(); }, '', false, true)));
@@ -895,6 +921,29 @@
           out.push(this.field('Prioridade', pr)); }
       }
       if (p.action === 'etiquetar') txt('etiqueta', 'Etiqueta', 'financeiro', 'noph');
+      if (p.action === 'tratar') {
+        const ts = h('select', {disabled: this.ro, 'aria-label': 'Tratamento'}, TRATS.map(([v, t]) => h('option', {value: v, selected: p.tipo === v, text: t})));
+        ts.addEventListener('change', (e) => { e.stopPropagation(); this.commit(() => { n.props = {action: 'tratar', tipo: ts.value};
+          if (ts.value === 'classificar') n.props.opcoes = ['', '']; if (ts.value === 'agrupar') n.props.minutos = 30; if (ts.value === 'extrair') n.props.campos = ['valor', 'prazo']; }); });
+        out.push(this.field('Tratamento', ts));
+        if (p.tipo === 'extrair') out.push(this.field('Campos (valor, prazo, pessoa, empresa, link, codigo)', this.chips(p.campos || [], (arr) => this.commit(() => (p.campos = arr)), 'campo + Enter')));
+        if (p.tipo === 'classificar') { out.push(this.field('Opções (o resultado vai para {classe})', this.chips((p.opcoes || []).filter(Boolean), (arr) => this.commit(() => (p.opcoes = arr)), 'opção + Enter'))); }
+        if (p.tipo === 'formatar') { txt('campo', 'Campo', 'title', 'noph'); txt('como', 'Como (maiusculas, minusculas, titulo, data, moeda)', 'maiusculas', 'noph'); }
+        if (p.tipo === 'agrupar') out.push(this.field('Juntar a cada (minutos)', this.text(String(p.minutos ?? 30), (v) => { if (+v > 0) p.minutos = +v; this.liveEdit(); }, '30')));
+      }
+      if (p.action === 'nota') { txt('titulo', 'Título', '{title}'); txt('texto', 'Texto', '{resumo}', true); }
+      if (['mover_card', 'atualizar_card'].includes(p.action)) txt('coluna', 'Coluna (entrada, hoje, fazendo, aguardando, feito)', 'hoje', 'noph');
+      if (['prioridade', 'atualizar_card'].includes(p.action)) txt('prioridade', 'Prioridade (baixa, normal, alta, urgente)', 'alta', 'noph');
+      if (p.action === 'atualizar_card') txt('etiqueta', 'Etiqueta a pôr', '', 'noph');
+      if (p.action === 'abrir_site') txt('url', 'Endereço', 'https://…', 'noph', true);
+      if (p.action === 'encadear') txt('automacao', 'Nome da automação', 'Boletos e contas', 'noph');
+      if (p.action === 'adicionar_lista') { txt('lista', 'Lista', 'Compras', 'noph'); txt('texto', 'Item', '{title}'); }
+      if (p.action === 'registrar') txt('mensagem', 'O que anotar', '{title}', true);
+      if (p.action === 'notificar') txt('tom', 'Tom (info, aviso, urgente, sucesso)', 'info', 'noph');
+      if (p.action === 'responder_sugestao') { txt('texto', 'Rascunho', 'Olá! Recebi sua mensagem.', true);
+        const ab = h('input', {type: 'checkbox', checked: !!p.abrir, disabled: this.ro, id: 'te-ab' + this.uidc()});
+        ab.addEventListener('change', (e) => { e.stopPropagation(); this.commit(() => { if (ab.checked) p.abrir = true; else delete p.abrir; }); });
+        out.push(h('div', {class: 'te-f te-row'}, ab, h('label', {for: ab.id, text: 'Abrir o app com o rascunho (você é quem envia)'}))); }
       if (p.action === 'abrir_app') { txt('app', 'App', 'whatsapp', 'noph'); txt('texto', 'Texto pronto', '{text}', true); }
       if (p.action === 'webhook') {
         txt('url', 'URL', 'https://…', false, true);

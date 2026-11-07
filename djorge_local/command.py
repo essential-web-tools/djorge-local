@@ -405,11 +405,13 @@ class Command:
                 self._fecha_etapas(cid, None, "Não deu certo")
                 raise
             self._fecha_etapas(cid, None)
+            self._aviso_dispositivo(out, text)
             return out
 
         def trabalho():
             try:
                 out = self._run(text, context, cid)
+                self._aviso_dispositivo(out, text)
                 self._fecha_etapas(cid, out)
             except ModeloAusente as e:
                 self._fecha_etapas(cid, {"error": "modelo_ausente", "tool": str(e),
@@ -1203,6 +1205,19 @@ class Command:
         q = dict(p)
         q.update(e)
         return q
+
+    def _aviso_dispositivo(self, out: Dict, text: str):
+        """Bateria baixa etc. (dispositivo.py): sugere adiar coisas pesadas quando o pedido for sobre baixar."""
+        if not re.search(r"(?i)\b(baix\w*|download|instal\w*|modelo|atualiz\w*)\b", text or ""):
+            return
+        try:
+            from .app import dispositivo
+            av = dispositivo(self.app).get("aviso")
+        except Exception:
+            av = None
+        if av:
+            out["aviso_dispositivo"] = av
+            out["reply"] = (out.get("reply") or "").rstrip() + f" ({av[:1].upper() + av[1:]} — quer que eu adie o download?)"
 
     def _com_ressalvas(self, res: Dict, c: Dict) -> Dict:
         """Conflitos de data (feriado, véspera, banco fechado) e o que falta perguntar, para a resposta."""

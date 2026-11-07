@@ -191,3 +191,28 @@ def test_busca_notas_notificacoes(srv, app):
     app.notas.criar({"titulo": "Receita de bolo", "corpo": "farinha e ovos"})
     st, r = srv("/api/search?q=bolo")
     assert any(x.get("scope") == "notas" and x["title"] == "Receita de bolo" for x in r["results"])
+
+
+# ------------------------------------------------------------------ notificações: título + informações; dispositivo --
+def test_linha_info_toast():
+    from djorge_local.secretario import linha_info
+    s = linha_info({"pedido": {"quem": "Maria", "prazo": "2026-11-10", "valor": "R$ 50,00"}, "app": "WhatsApp",
+                    "codigo": "1234", "link": "https://www.meet.google.com/x"})
+    assert s.startswith("de Maria · WhatsApp · prazo") and "R$ 50,00" in s and "código 1234" in s and "meet.google.com" in s
+    assert linha_info({}) == ""
+
+
+def test_dispositivo_opcional(srv, app, monkeypatch):
+    import sys as _s, types
+    st, d = srv("/api/dispositivo")
+    assert st == 200 and "disponivel" in d
+    m = types.ModuleType("djorge_local.dispositivo")
+    m.resumo = lambda: {"bateria": {"percentual": 12, "carregando": False}, "texto": "bateria 12%"}
+    monkeypatch.setitem(_s.modules, "djorge_local.dispositivo", m)
+    import djorge_local
+    monkeypatch.setattr(djorge_local, "dispositivo", m, raising=False)
+    from djorge_local.app import dispositivo
+    assert dispositivo(app)["aviso"] == "bateria em 12%"
+    out = {"reply": "Ok."}
+    app.command._aviso_dispositivo(out, "baixa o modelo")
+    assert "adie o download" in out["reply"]

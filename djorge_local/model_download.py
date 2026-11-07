@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import sys
@@ -568,3 +569,228 @@ class ModelDownloader:
                 self.models.preload([self.name])
         except Exception as e:
             log.warning("modelo instalado, mas não carregou agora: %s", e)
+
+
+# ------------------------------------------------------------------------------ catálogo de modelos --
+class _CatalogoDownloader(ModelDownloader):
+    """Baixa um modelo do catálogo para modelos/<id> SEM mexer em cfg.models (não vira um segundo modelo
+    carregado): só registra o caminho no catálogo."""
+
+    def __init__(self, cat, ident, fonte):
+        super().__init__(cat.cfg, None, None, name=ident)
+        self.cat, self.fonte = cat, fonte
+
+    def start(self) -> dict:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return self.info()
+            self._cancel.clear()
+            self._st.update(state="baixando", progress=0.0, bytes=0, total=0, error=None)
+            self._thread = threading.Thread(target=self._run, args=(self.fonte,), daemon=True,
+                                            name=f"baixar-{self.name}")
+            self._thread.start()
+        return self.info()
+
+    def _install(self, art: Path):
+        self._check()
+        t = models_root() / self.name
+        shutil.rmtree(t, ignore_errors=True)
+        t.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(art), str(t))
+        self.cat._atualizar(self.name, path=str(t))
+
+    def _load(self):
+        pass
+
+    def _persist(self):
+        pass
+
+
+class Catalogo:
+    """Modelos que a pessoa pode escolher. O DOFL V2 int8 (fonte padrão: modelo-fonte.txt) é sempre o
+    primeiro; outros entram por URL (https:, hf:, gdrive:), arquivo .zip ou pasta local. Um só é usado por vez
+    como o modelo `flash` do app; trocar não exige reiniciar (descarrega e recarrega em segundo plano).
+    Guardado em <dados>/modelos/catalogo.json.
+
+        listar() -> [{id, nome, fonte, tipo, path, tamanho_mb, estado, em_uso, padrao, progresso, erro}]
+        adicionar(fonte, nome=None) -> item      (URL: começa a baixar; .zip: extrai; pasta: só registra)
+        usar(id) -> item                         remover(id) -> {"removido": id}
+        cancelar(id) -> item
+    """
+    PADRAO_ID = "dofl-v2-int8"
+    ID = re.compile(r"[^a-z0-9_-]+")
+
+    def __init__(self, cfg, models=None, save=None, alvo=NAME):
+        self.cfg, self.models, self.save, self.alvo = cfg, models, save, alvo
+        self._lock = threading.Lock()
+        self._baixando = {}
+
+    # ---------------------------------------------------------------------------- arquivo --
+    def _arq(self) -> Path:
+        return models_root() / "catalogo.json"
+
+    def _ler(self) -> list:
+        try:
+            v = json.load(open(self._arq(), encoding="utf-8"))
+            return v if isinstance(v, list) else []
+        except Exception:
+            return []
+
+    def _gravar(self, itens):
+        p = self._arq()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(itens, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, p)
+
+    def _atualizar(self, ident, **kw):
+        with self._lock:
+            itens = self._ler()
+            for it in itens:
+                if it["id"] == ident:
+                    it.update(kw)
+            self._gravar(itens)
+
+    # ----------------------------------------------------------------------------- leitura --
+    def _caminho_em_uso(self):
+        p = ((self.cfg.get("models") or {}).get(self.alvo) or {}).get("path") or ""
+        if not p:
+            return None
+        try:
+            from .models import model_path
+            return str(model_path(self.cfg, p).resolve())
+        except Exception:
+            return str(Path(p).resolve())
+
+    def _padrao(self) -> dict:
+        alvo = models_root() / self.alvo
+        return {"id": self.PADRAO_ID, "nome": f"{PRODUCT} V2 (int8)", "fonte": read_source(self.cfg, self.alvo),
+                "tipo": "padrao", "path": str(alvo), "padrao": True}
+
+    def listar(self) -> list:
+        uso = self._caminho_em_uso()
+        out = []
+        for it in [self._padrao()] + self._ler():
+            p = Path(it.get("path") or "")
+            ok = bool(it.get("path")) and (p / "metadata" / "djorge.json").is_file()
+            d = self._baixando.get(it["id"])
+            st = d.info() if d is not None else {}
+            estado = "instalado" if ok else "ausente"
+            if st.get("state") in ("baixando", "verificando", "erro"):
+                estado = st["state"]
+            tam = None
+            if ok:
+                try:
+                    tam = summarize(json.load(open(p / "metadata" / "djorge.json", encoding="utf-8")), p).get("tamanho_mb")
+                except Exception:
+                    tam = round(_dir_size(p) / 1e6, 1)
+            out.append(dict(it, estado=estado, tamanho_mb=tam, em_uso=bool(ok and uso and str(p.resolve()) == uso),
+                            padrao=bool(it.get("padrao")), progresso=st.get("progress"), erro=st.get("error")))
+        return out
+
+    def item(self, ident) -> dict:
+        for it in self.listar():
+            if it["id"] == ident:
+                return it
+        raise KeyError(f"modelo não está no catálogo: {ident}")
+
+    # ------------------------------------------------------------------------------ escrita --
+    def _novo_id(self, nome):
+        base = self.ID.sub("-", str(nome or "modelo").lower()).strip("-")[:28] or "modelo"
+        ids = {i["id"] for i in self._ler()} | {self.PADRAO_ID, self.alvo}
+        k, n = base, 2
+        while k in ids:
+            k, n = f"{base}-{n}", n + 1
+        return k
+
+    def adicionar(self, fonte: str, nome: str = None) -> dict:
+        fonte = str(fonte or "").strip()
+        if not fonte:
+            raise ValueError("informe uma URL, um arquivo .zip ou uma pasta de modelo")
+        p = Path(fonte).expanduser()
+        if p.is_dir():
+            art = find_artifact(p)
+            if art is None:
+                raise ValueError("essa pasta não é um modelo DJORGE (falta metadata/djorge.json)")
+            tipo, path = "pasta", str(art)
+        elif p.is_file():
+            if not zipfile.is_zipfile(p):
+                raise ValueError("o arquivo precisa ser um .zip com o modelo")
+            tipo, path = "zip", ""
+        elif fonte.split(":", 1)[0] in ("http", "https", "hf", "gdrive", "gdrive-folder"):
+            tipo, path = "url", ""
+        else:
+            raise ValueError("fonte não reconhecida: use https://…, hf:dono/repo, gdrive:<id>, um .zip ou uma pasta")
+        if not nome:
+            nome = p.stem if tipo in ("zip", "pasta") else fonte.rstrip("/").rsplit("/", 1)[-1].split("?")[0]
+            nome = re.sub(r"\.zip$", "", nome) or "modelo"
+        ident = self._novo_id(nome)
+        with self._lock:
+            itens = self._ler()
+            itens.append({"id": ident, "nome": str(nome)[:60], "fonte": fonte, "tipo": tipo, "path": path,
+                          "adicionado": time.strftime("%Y-%m-%d %H:%M")})
+            self._gravar(itens)
+        if tipo == "zip":
+            d = _CatalogoDownloader(self, ident, fonte)
+            self._baixando[ident] = d
+            try:
+                d.instalar_de_arquivo(p)
+            except Exception:
+                self.remover(ident, apagar=True)
+                raise
+        elif tipo == "url":
+            d = _CatalogoDownloader(self, ident, fonte)
+            self._baixando[ident] = d
+            d.start()
+        return self.item(ident)
+
+    def baixar_padrao(self) -> dict:
+        """O padrão é baixado pelo ModelDownloader do card (fonte modelo-fonte.txt)."""
+        d = ModelDownloader(self.cfg, self.models, self.save, name=self.alvo)
+        d.start()
+        return self.item(self.PADRAO_ID)
+
+    def usar(self, ident) -> dict:
+        """Passa a usar este modelo como o `flash` do app, sem reiniciar."""
+        it = self.item(ident)
+        if it["estado"] != "instalado":
+            raise ValueError(f"o modelo {it['nome']} ainda não está instalado ({it['estado']})")
+        m = self.cfg.setdefault("models", {}).setdefault(self.alvo, {"enabled": True, "role": ""})
+        m["path"], m["enabled"] = it["path"], True
+        if self.models is not None:
+            try:
+                self.models.unload(self.alvo)
+                mo = (getattr(self.models, "motores", {}) or {}).get(self.alvo)
+                if mo is not None:
+                    mo.limpar()                       # respostas do modelo anterior não valem mais
+                self.models.state.pop(self.alvo, None)
+                self.models.preload([self.alvo])
+            except Exception as e:
+                log.warning("trocar de modelo: %s", e)
+        ModelDownloader(self.cfg, self.models, self.save, name=self.alvo)._persist()
+        return self.item(ident)
+
+    def cancelar(self, ident) -> dict:
+        d = self._baixando.get(ident)
+        if d is not None:
+            d.cancel()
+        return self.item(ident)
+
+    def remover(self, ident, apagar: bool = True) -> dict:
+        """Tira do catálogo (e apaga a pasta se foi o app que baixou/extraiu). O modelo em uso não pode ser
+        removido: escolha outro antes. O padrão não sai do catálogo (só a pasta baixada, pelo card)."""
+        if ident == self.PADRAO_ID:
+            raise ValueError("o modelo padrão não sai do catálogo (use Remover no card do modelo)")
+        it = next((i for i in self.listar() if i["id"] == ident), None)
+        if it is None:
+            raise KeyError(f"modelo não está no catálogo: {ident}")
+        if it["em_uso"]:
+            raise ValueError("este modelo está em uso: escolha outro antes de remover")
+        self.cancelar(ident) if ident in self._baixando else None
+        self._baixando.pop(ident, None)
+        p = Path(it.get("path") or "")
+        if apagar and it.get("path") and models_root().resolve() in p.resolve().parents:
+            shutil.rmtree(p, ignore_errors=True)       # pasta local escolhida pela pessoa nunca é apagada
+        with self._lock:
+            self._gravar([i for i in self._ler() if i["id"] != ident])
+        return {"removido": ident}

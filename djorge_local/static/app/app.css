@@ -966,3 +966,4 @@ svg.i.xs{width:13px;height:13px;vertical-align:-2px}
 .askbox{margin-bottom:var(--gap)}
 .iconbtn.on{color:var(--rose-deep);background:var(--rose-soft)}
 .pfabout{margin:10px 0 6px}.pfabout .hint{margin-top:6px}
+.ninfo{display:block;margin-top:2px;font-size:.8em;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

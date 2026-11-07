@@ -164,6 +164,31 @@ def pedido_no_card(card: Dict, ped: Dict) -> Dict:
     return c
 
 
+def _aviso_disp(app) -> str:
+    try:
+        from .app import dispositivo
+        av = dispositivo(app).get("aviso")
+        return f" Atenção: {av}." if av else ""
+    except Exception:
+        return ""
+
+
+def linha_info(ev: Dict) -> str:
+    """Uma linha com o que importa da notificação (toast do Windows): quem · app · prazo · valor · código · link."""
+    import urllib.parse as _u
+    ped = ev.get("pedido") if isinstance(ev.get("pedido"), dict) else {}
+    quem = ped.get("quem") or ev.get("remetente") or ev.get("sender") or ""
+    prazo = ped.get("prazo") or ev.get("data") or ""
+    valor = ped.get("valor") or ev.get("valor") or ""
+    link = ev.get("link") or ""
+    host = (_u.urlparse(link).hostname or "").replace("www.", "") if link else ""
+    partes = [f"de {quem}" if quem else "", str(ev.get("app") or ""),
+              f"prazo {data_fmt(prazo) if len(str(prazo)) == 10 and str(prazo)[4] == '-' else prazo}" if prazo else "",
+              valor_fmt(valor) if valor and not isinstance(valor, str) else str(valor or ""),
+              f"código {str(ev.get('codigo'))[:24]}" if ev.get("codigo") else "", host]
+    return " · ".join(x for x in partes if x)[:180]
+
+
 class Secretario:
     def __init__(self, app):
         from .automacoes import Automacoes
@@ -533,7 +558,7 @@ class Secretario:
             except Exception:
                 pass
         if spec["action"] == "alerta":
-            r["toast"] = self._toast(c["title"], (card.get("body") or "")[:200])
+            r["toast"] = self._toast(c["title"], linha_info(ev) or (card.get("body") or "")[:200])
         return r
 
     def _h_etiquetar(self, spec, ctx, prep):
@@ -560,7 +585,11 @@ class Secretario:
         return {"status": "ok", "desfazer": {"tipo": "destaque", "id": nid, "antes": antes}}
 
     def _h_notificar(self, spec, ctx, prep):
-        return {"status": self._toast(prep["titulo"], prep["mensagem"])}
+        info = linha_info(ctx.get("event") or {})
+        msg = prep["mensagem"] or info
+        if info and prep["mensagem"] and len(prep["mensagem"]) < 60 and info not in prep["mensagem"]:
+            msg = f"{prep['mensagem']}\n{info}"
+        return {"status": self._toast(prep["titulo"], msg)}
 
     # --------------------------------------------------------------------------- aprovar / desfazer --
     def _ev_de(self, n: Dict) -> Dict:
@@ -696,7 +725,7 @@ class Secretario:
                     self._ultimo_resumo = now.date()
                     r = self.resumo_diario(now.date())
                     if r["total"]:
-                        self._toast("Resumo do dia", r["frase"])
+                        self._toast("Resumo do dia", r["frase"] + _aviso_disp(self.app))
             except Exception:
                 pass
 

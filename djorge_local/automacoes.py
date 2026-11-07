@@ -772,8 +772,9 @@ def classificar(runner, ev: Dict, opcoes: List[str]) -> Dict:
     ft = fold(txt)
     pontos = [(sum(1 for s in stems(o) if s in ft), -i, o) for i, o in enumerate(opcoes)]
     melhor = max(pontos)
-    if melhor[0] == 0:
-        return {"answer": "", "probability": 0.0, "engine": "regra"}
+    if melhor[0] == 0:                                   # nada casou: "outro(s)"/"outra(s)" se for uma das opções
+        resto = next((o for o in opcoes if fold(o).strip() in ("outro", "outros", "outra", "outras", "outro assunto")), "")
+        return {"answer": resto, "probability": 0.0, "engine": "regra"}
     return {"answer": melhor[2], "probability": 0.7, "engine": "regra"}
 
 
@@ -1610,22 +1611,25 @@ def _ligar_cards(A: "Automacoes", app):
         except Exception:
             pass
 
-    def create(data):
-        c = o_create(data)
-        depois(None, c)
-        return c
+    loc = threading.local()                          # move() pode chamar update() por dentro: um evento só
 
-    def update(cid, data):
-        antes = cards.get(cid)
-        c = o_update(cid, data)
-        depois(antes, c)
-        return c
+    def _emb(fn, antes_de):
+        def w(*a, **k):
+            if getattr(loc, "dentro", False):
+                return fn(*a, **k)
+            antes = antes_de(*a)
+            loc.dentro = True
+            try:
+                c = fn(*a, **k)
+            finally:
+                loc.dentro = False
+            depois(antes, c)
+            return c
+        return w
 
-    def move(cid, column, order=None, start=None):
-        antes = cards.get(cid)
-        c = o_move(cid, column, order, start)
-        depois(antes, c)
-        return c
+    create = _emb(o_create, lambda *a: None)
+    update = _emb(o_update, lambda cid, *a: cards.get(cid))
+    move = _emb(o_move, lambda cid, *a: cards.get(cid))
 
     cards.create, cards.update, cards.move = create, update, move
     cards._automacoes = True

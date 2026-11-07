@@ -640,7 +640,7 @@ class App:
         if eventos:
             e = eventos[0]
             ini = str(e.get("start") or e.get("due") or "")
-            frase += f" Próximo compromisso: {e['title']}, {data_fmt(ini[:10], ini[11:16] or None)}."
+            frase += f" Próximo compromisso: {e['title']}, {data_fmt(ini[:10], ini[11:16] or None).rstrip('.')}."
         destaques = []
         try:
             from .uiprefs import destaques_ativos
@@ -672,7 +672,7 @@ class App:
         conflitos = [{"card_id": c["id"], "titulo": c.get("title"), **o} for c in cards for o in c.get("conflitos") or []][:6]
         return {"proximas_datas": [d for d in pd["datas"] if d["tipo"] != "comemorativa" or d["alerta"]][:6],
                 "aniversarios": pd["aniversarios"][:6], "uf": pd.get("uf", ""), "perguntas": perguntas,
-                "conflitos": conflitos,
+                "conflitos": conflitos, "dispositivo": dispositivo(self),
                 "tarefas_relevantes": relevantes[:6], "destaques": destaques, "mensagens_importantes": importantes,
                 "mensagens_cards": msgs, "notificacoes_recentes": recentes, "proximos_eventos": eventos,
                 "automacoes": n_auto, "resumo_frase": frase,
@@ -871,6 +871,35 @@ def busca_extra(app, q: str, limit: int = 6) -> list:
     return out
 
 
+def dispositivo(app) -> dict:
+    """Status do dispositivo (dispositivo.py do agente MO, quando existir): resumo + um aviso curto se importar."""
+    try:
+        from . import dispositivo as _d
+        r = _d.resumo()
+    except Exception:
+        return {"disponivel": False}
+    r = dict(r) if isinstance(r, dict) else {"texto": str(r)}
+    r["disponivel"] = True
+    if not r.get("aviso") and r.get("avisos"):
+        av = r["avisos"][0]
+        r["aviso"] = str(av.get("texto") or av.get("msg") or "") if isinstance(av, dict) else str(av)
+    st = r.get("status") if isinstance(r.get("status"), dict) else {}
+    if not r.get("curto"):                                 # chip: "bateria 80% · online · 6,3 GB livres"
+        b, rd, me = st.get("bateria") or {}, st.get("rede") or {}, st.get("memoria") or {}
+        r["curto"] = " · ".join(x for x in [f"bateria {b['percentual']}%" if b.get("percentual") is not None else "",
+                                              ("online" if rd.get("online") else "sem internet") if rd.get("online") is not None else "",
+                                              f"{me['livre_mb'] / 1024:.1f} GB livres".replace(".", ",") if me.get("livre_mb") else ""] if x)
+    if not r.get("aviso"):
+        b = st.get("bateria") or (r.get("bateria") if isinstance(r.get("bateria"), dict) else {"percentual": r.get("bateria")})
+        pc = b.get("percentual", b.get("pct"))
+        try:
+            if pc is not None and float(pc) <= 20 and not b.get("carregando"):
+                r["aviso"] = f"bateria em {int(float(pc))}%"
+        except (TypeError, ValueError):
+            pass
+    return r
+
+
 def or_rotas(app, metodo: str, path: str, b: dict):
     """Rotas do agente OR. Devolve (código, objeto) ou None."""
     from . import prioridade as pr
@@ -888,6 +917,8 @@ def or_rotas(app, metodo: str, path: str, b: dict):
         cur[ch] = bool(b.get("ativo"))
         app.ui.set({"alertas_datas": cur})
         return 200, {"ok": True, "chave": ch, "ativo": cur[ch]}
+    if metodo == "GET" and path == "/api/dispositivo":
+        return 200, dispositivo(app)
     if metodo == "GET" and path == "/api/contexto":
         return 200, dict(entendi(contexto_txt(app)), uf=uf_de(app))
     if metodo == "POST" and path.startswith("/api/cards/") and path.count("/") == 4:
@@ -1175,7 +1206,7 @@ def _testar_automacao(app: App, a: dict, b: dict) -> dict:
         "Com esse texto, esta automação não faria nada (a condição não casou)."
     e = r.get("event") or e                              # já com os tratamentos (extrair, classificar, resumir...)
     campos = {k: e.get(k) for k in list(sec.CAMPOS_EV) + ["pessoa", "classe", "resumo"]
-              if e.get(k) not in (None, "", False)}
+              if e.get(k) not in (None, "", False) and not k.endswith("_iso") and not isinstance(e.get(k), (dict, list))}
     return {"casou": bool(acoes), "acoes": acoes, "frase": frase, "campos": campos, "resumo": resumo(a),
             "triagem": {k: tri.get(k) for k in ("categoria", "prioridade", "nota", "motivos", "acoes")},
             "trilha": [{k: v for k, v in s.items() if k in ("node", "answer", "probability", "engine", "action",

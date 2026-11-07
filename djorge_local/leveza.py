@@ -36,7 +36,10 @@ PADRAO = {
     "prioridade_baixa_ocioso": True,
     "ocioso_apos_s": 90,                # sem uso por este tempo -> prioridade baixa
     "otimizar_modelo": True,            # converter artefato de treino para ONNX int8 (uma vez)
+    "inicio_adiar_integracoes_s": 90,   # início com o Windows: conectores/integrações/secretário depois disso
+    "inicio_adiar_modelo_s": 300,       # início com o Windows: modelo só no 1º uso ou depois disso (0 = só no uso)
 }
+_INICIO = {"silencioso": False, "t": time.time()}
 _ULTIMA = {"t": time.time()}
 _PRIORIDADE = {"baixa": False}
 _LOCK = threading.Lock()
@@ -201,6 +204,10 @@ def definir_prioridade(baixa: bool) -> bool:
 
 def atividade():
     _ULTIMA["t"] = time.time()
+    ad = _INICIO.get("adiado")
+    if ad is not None:                     # primeiro uso depois de um início silencioso: liga o resto
+        _INICIO["adiado"] = None
+        threading.Thread(target=ad.ja, daemon=True, name="inicio-primeiro-uso").start()
     if _PRIORIDADE["baixa"]:
         definir_prioridade(False)
 
@@ -330,11 +337,23 @@ def liberar_memoria(app, ociosos_min: float = None) -> dict:
             fora = models.unload_all(keep_api=True) if mins == 0 else models.unload_idle(mins)
         except Exception as e:
             log.warning("liberar memória: %s", e)
+    for mo in list((getattr(models, "motores", None) or {}).values()) if models is not None else []:
+        try:
+            mo.limpar()
+        except Exception:
+            pass
     gc.collect()
     _esvaziar_working_set()
     depois = memoria_mb()
     return {"antes_mb": antes, "depois_mb": depois, "liberado_mb": round(max(0.0, antes - depois), 1),
             "descarregados": fora}
+
+
+def _motor_info(models):
+    try:
+        return models.motor_info("flash") or None
+    except Exception:
+        return None
 
 
 def recursos(app) -> dict:
@@ -387,6 +406,7 @@ def recursos(app) -> dict:
             "modelo": {"carregado": bool(carregados), "motor": motor, "nome": carregados[0] if carregados else None,
                        "estado": estado},
             "prioridade": "baixa" if _PRIORIDADE["baixa"] else "normal", "ocioso_s": round(ocioso_ha_s()),
+            "motor_desempenho": _motor_info(models), "inicio_silencioso": inicio_silencioso(),
             "config": ler_config()}
 
 
@@ -415,6 +435,76 @@ def encerrar(app=None, codigo: int = 0):
         logging.shutdown()
     finally:
         os._exit(codigo)
+
+
+# ------------------------------------------------------------------------------ início silencioso --
+def marcar_inicio(minimizado: bool):
+    """Início com o Windows (--minimizado): sem janela, sem popups/toasts de boas-vindas, prioridade baixa.
+    Outros módulos (toasts, notificações) consultam inicio_silencioso() / DJORGE_INICIO_SILENCIOSO."""
+    _INICIO.update(silencioso=bool(minimizado), t=time.time())
+    if minimizado:
+        os.environ["DJORGE_INICIO_SILENCIOSO"] = "1"
+        definir_prioridade(True)
+
+
+def inicio_silencioso() -> bool:
+    """True desde um início minimizado até a pessoa abrir a janela (ou usar o app)."""
+    return bool(_INICIO["silencioso"])
+
+
+def fim_do_silencio():
+    _INICIO["silencioso"] = False
+    os.environ.pop("DJORGE_INICIO_SILENCIOSO", None)
+
+
+class InicioAdiado:
+    """Início preguiçoso: `iniciar()` (conectores, integrações, secretário) roda depois de `adiar_s` ou assim
+    que `ja()` for chamado (janela aberta / primeiro uso); `carregar()` (modelo) depois de `modelo_s` (0 =
+    nunca sozinho: só no primeiro pedido, que Models.get já faz) ou em `ja()`. Cada um roda uma vez."""
+
+    def __init__(self, iniciar, carregar=None, adiar_s: float = 90, modelo_s: float = 300):
+        self._f = {"iniciar": iniciar, "carregar": carregar}
+        self._feito = set()
+        self._lock = threading.Lock()
+        self._timers = []
+        _INICIO["adiado"] = self
+        for nome, s in (("iniciar", adiar_s), ("carregar", modelo_s)):
+            if self._f[nome] is None:
+                continue
+            if s is not None and float(s) <= 0 and nome == "iniciar":
+                self._rodar(nome)
+            elif s and float(s) > 0:
+                t = threading.Timer(float(s), self._rodar, args=(nome,))
+                t.daemon = True
+                t.start()
+                self._timers.append(t)
+
+    def _rodar(self, nome):
+        with self._lock:
+            if nome in self._feito or self._f.get(nome) is None:
+                return False
+            self._feito.add(nome)
+        try:
+            self._f[nome]()
+        except Exception:
+            log.exception("início adiado (%s)", nome)
+        return True
+
+    def ja(self, modelo: bool = False):
+        if _INICIO.get("adiado") is self:
+            _INICIO["adiado"] = None
+        self._rodar("iniciar")
+        if modelo:
+            self._rodar("carregar")
+        fim_do_silencio()
+        definir_prioridade(False)
+
+    def feitos(self):
+        return sorted(self._feito)
+
+    def cancelar(self):
+        for t in self._timers:
+            t.cancel()
 
 
 # ------------------------------------------------------------------------------------------ vigia --
