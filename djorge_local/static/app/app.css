@@ -967,3 +967,9 @@ svg.i.xs{width:13px;height:13px;vertical-align:-2px}
 .iconbtn.on{color:var(--rose-deep);background:var(--rose-soft)}
 .pfabout{margin:10px 0 6px}.pfabout .hint{margin-top:6px}
 .ninfo{display:block;margin-top:2px;font-size:.8em;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* telas estreitas (≤600px): nada espremido nem cortado */
+@media (max-width:600px){.view{padding:14px 12px}.composer-wrap{padding:0 10px 10px}
+  .secc{flex-wrap:wrap}.secc>div:nth-child(2){min-width:0;flex:1 1 200px}
+  .modal footer,.modal .mfoot{flex-wrap:wrap;gap:8px}
+  .grid2{grid-template-columns:1fr}.dhero{padding-right:0}.topright{transform:scale(.85);transform-origin:top right}
+  .askf .inp{max-width:none;flex:1 1 140px}.setrow{flex-wrap:wrap}}
