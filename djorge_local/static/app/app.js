@@ -93,7 +93,7 @@ const VIEWS = [
   {id: "inicio", label: "Início", icon: "home"}, {id: "quadro", label: "Quadro", icon: "board"},
   {id: "agenda", label: "Agenda", icon: "cal"}, {id: "tarefas", label: "Tarefas", icon: "list"},
   {id: "mensagens", label: "Mensagens", icon: "msg"}, {id: "notificacoes", label: "Notificações", icon: "bell"}, {id: "automacoes", label: "Automações", icon: "tree"},
-  {id: "notas", label: "Notas", icon: "note"}, {id: "historico", label: "Histórico", icon: "clock"}];
+  {id: "notas", label: "Notas", icon: "note"}, {id: "historico", label: "Histórico", icon: "clock", side: false}];   /* histórico: pela “Atividade” da barra lateral e pela busca */
 const VIEW_ALIAS = {notificações: "notificacoes", notificacao: "notificacoes", kanban: "quadro", lista: "tarefas", regras: "automacoes", nota: "notas", "histórico": "historico", "início": "inicio", home: "inicio", board: "quadro", list: "tarefas"};
 const COLS = [{id: "entrada", label: "Entrada", c: "var(--ink3)"}, {id: "hoje", label: "Hoje", c: "var(--rose)"},
   {id: "fazendo", label: "Fazendo", c: "var(--info)"}, {id: "aguardando", label: "Aguardando", c: "var(--warn)"}, {id: "feito", label: "Feito", c: "var(--ok)"}];
@@ -335,7 +335,9 @@ function normPrefs(resp) {
     saved_filters: (p.saved_filters || []).map(f => f.filters && !f._c ? {name: f.name, ...filtFromServer(f.filters), _raw: f.filters} : f),
     voice: p.voice_enabled ?? p.voice ?? true, speak: p.speak_replies ?? p.speak ?? false,
     font_size: P_FONT[p.font_size] || p.font_size || "md", sidebar_order: p.sidebar_order || null,
-    nome_usuario: p.nome_usuario || "", nome_agente: p.nome_agente || "Djorge", prioridade: p.prioridade || "modelo", _server: p};
+    nome_usuario: p.nome_usuario || "", nome_agente: p.nome_agente || "Djorge", prioridade: p.prioridade || "modelo",
+    sobre: p.sobre || "", uf: p.uf || "", floreios: p.floreios !== false, parabenizar: p.parabenizar !== false, nao_perguntar: p.nao_perguntar || [],
+    _ctx: (resp && resp.contexto) || (S.prefs && S.prefs._ctx) || null, _server: p};
 }
 function toServer(patch) {
   const o = {};
@@ -370,7 +372,7 @@ function applyPrefs(p) {
 async function savePrefs(patch, quiet) {
   S.prefs = {...S.prefs, ...patch}; applyPrefs(S.prefs);
   if (["quadro", "inicio", "tarefas"].includes(S.view)) render();
-  try { const r = await api("/api/ui", toServer(patch)); if (r && r.prefs) { const keep = S.choices; S.prefs = normPrefs({prefs: r.prefs, choices: keep}); applyPrefs(S.prefs); }
+  try { const r = await api("/api/ui", toServer(patch)); if (r && r.prefs) { const keep = S.choices; S.prefs = normPrefs({prefs: r.prefs, contexto: r.contexto, choices: keep}); applyPrefs(S.prefs); }
     if (!quiet) toast("Preferência salva"); } catch (e) { toast(human(e), "bad"); }
 }
 
@@ -379,15 +381,22 @@ function renderNav() {
   const order = (S.prefs.sidebar_order || []).map(x => VIEW_ALIAS[x] || x);
   const vs = [...VIEWS].sort((a, b) => { const ia = order.indexOf(a.id), ib = order.indexOf(b.id); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
   const pend = S.status ? S.status.pending : 0;
-  $("#nav").innerHTML = vs.map(v => `<button class="navitem" data-v="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ""} data-tip="${v.label}" data-tip-pos="right">${ico(v.icon)}<span>${v.label}</span>${v.id === "mensagens" && pend ? `<span class="badge" aria-label="${pend} pendências">${pend}</span>` : ""}${v.id === "notificacoes" && S.notifUnread ? `<span class="badge soft" aria-label="${S.notifUnread} não lidas">${S.notifUnread > 99 ? "99+" : S.notifUnread}</span>` : ""}</button>`).join("");
+  $("#nav").innerHTML = vs.filter(v => v.side !== false || S.view === v.id).map(v => `<button class="navitem" data-v="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ""} data-tip="${v.label}" data-tip-pos="right">${ico(v.icon)}<span>${v.label}</span>${v.id === "mensagens" && pend ? `<span class="badge" aria-label="${pend} pendências">${pend}</span>` : ""}${v.id === "notificacoes" && S.notifUnread ? `<span class="badge soft" aria-label="${S.notifUnread} não lidas">${S.notifUnread > 99 ? "99+" : S.notifUnread}</span>` : ""}</button>`).join("");
   $$("#nav .navitem").forEach(b => b.onclick = () => go(b.dataset.v));
+}
+/* ação feita pela interface: “Pela interface · ok” não diz nada; mostra o que mudou */
+const UI_ACT = {criar_card: "Card criado", editar_card: "Card editado", mover_card: "Card movido", apagar_card: "Card apagado", responder_card: "Resposta anotada", mover_dia_util: "Movido para dia útil"};
+function recentTxt(x) {
+  if (x.pedido !== "Pela interface") return [x.pedido || actTitle(x), x.resultado || ""];
+  const a = asList(x.alteracoes)[0], c = x.alvo && x.alvo.id && (S.cards || []).find(k => k.id === x.alvo.id);
+  return [UI_ACT[x.acao] || titleCase(String(x.acao || "Ação").replace(/_/g, " ")), (c && cardTitle(c)) || (a && typeof a.para === "string" ? a.para : "") || "pela interface"];
 }
 /* Barra lateral: “Atividade” = ações recentes do histórico (a conversa não é salva) */
 async function renderRecents() {
   const box = $("#recents"); if (!box) return;
   try { S.activity = asList(await api("/api/history?n=8"), "items", "history"); } catch (e) { S.activity = S.activity || []; }
   const r = S.activity.filter(x => x.pedido || x.resultado || x.acao).slice(0, 8);
-  box.innerHTML = r.length ? r.map((x, i) => `<button class="recent act" data-i="${i}" title="${esc((x.pedido || "") + (x.resultado ? " → " + x.resultado : ""))}"><span>${esc(x.pedido || actTitle(x))}</span>${x.resultado ? `<small>${esc(x.resultado)}</small>` : ""}</button>`).join("") :
+  box.innerHTML = r.length ? r.map((x, i) => `<button class="recent act" data-i="${i}" title="${esc(recentTxt(x).join(" → "))}"><span>${esc(recentTxt(x)[0])}</span>${recentTxt(x)[1] ? `<small>${esc(recentTxt(x)[1])}</small>` : ""}</button>`).join("") :
     `<p class="recent" style="cursor:default;opacity:.7">O que o ${esc(AG())} fizer aparece aqui.</p>`;
   $$("#recents button", box.parentNode).forEach(b => { const x = r[+b.dataset.i];
     b.onclick = () => go("historico");
@@ -422,11 +431,12 @@ async function refreshCards() { await loadCards(true); if (["quadro", "agenda", 
 async function saveCard(id, patch, quiet) {
   const c = S.cards.find(x => x.id === id); if (c) Object.assign(c, patch);
   try { const r = await api("/api/cards/" + encodeURIComponent(id), patch); if (r && r.id) { const i = S.cards.findIndex(x => x.id === id); if (i >= 0) S.cards[i] = r; }
-    if (!quiet) toast("Card salvo"); return r; }
+    if (!quiet) { const cf = r && asList(r.conflitos)[0]; cf ? toast(`Card salvo · atenção: ${cf.motivo}`, "warn", cf.sugestao ? {action: `Mover para ${fmtDia(cf.sugestao)}`, onAction: () => moverDia(r.id, cf.sugestao), ms: 9000} : {ms: 7000}) : toast("Card salvo"); } return r; }
   catch (e) { toast(human(e), "bad"); refreshCards(); }
 }
 async function createCard(data, quiet) {
-  try { const r = await api("/api/cards", data); if (r && r.id) S.cards.push(r); if (!quiet) toast("Card criado", "", {action: "Abrir", onAction: () => openCard(r.id)}); return r; }
+  try { const r = await api("/api/cards", data); if (r && r.id) S.cards.push(r); const cf = r && asList(r.conflitos)[0];
+    if (!quiet) cf ? toast(`Card criado · atenção: ${cf.motivo}`, "warn", cf.sugestao ? {action: `Mover para ${fmtDia(cf.sugestao)}`, onAction: () => moverDia(r.id, cf.sugestao), ms: 9000} : {ms: 7000}) : toast("Card criado", "", {action: "Abrir", onAction: () => openCard(r.id)}); return r; }
   catch (e) { toast(human(e), "bad"); }
 }
 async function moveCard(id, column, order, start) {
@@ -548,6 +558,7 @@ function kcardHTML(c) {
 }
 let dragId = null;
 function wireCards(root) {
+  wireAsk(root);
   $$(".kc, .mini[data-id], .trow[data-id]", root).forEach(el => {
     const id = el.dataset.id;
     if (el.draggable || el.classList.contains("mini")) {
@@ -650,6 +661,7 @@ function openCard(id, draft) {
     ${draft ? "" : `<div class="seg drtabs" role="tablist" aria-label="Seções do card"><button role="tab" aria-selected="true" data-drt="det">Detalhes</button><button role="tab" aria-selected="false" data-drt="alt">Alterações</button></div>`}
     <div id="dr-altp" class="altp" hidden></div><div id="dr-det">
     <label class="sr" for="dr-title">Título</label><input class="ttl" id="dr-title" value="${esc(x.title || "")}" placeholder="Título do card">
+    ${draft || x.done ? "" : `<div class="drinfo">${motivoHTML(x)}${prioAuto(x) && prioAuto(x).origem === "manual" && x.due ? `<button type="button" class="btn xs ghost" id="dr-pauto" data-tip="Deixar o ${esc(AG())} ajustar a prioridade pela data">Prioridade automática</button>` : ""}${conflitoHTML(x, true)}${askHTML(x)}</div>`}
     <div class="field dobj" style="margin-top:12px"><label for="dr-obj">${ico("target", "sm")} Objetivo</label><input class="inp" id="dr-obj" maxlength="300" value="${esc(x.objetivo || "")}" placeholder="Para que serve esta tarefa?"></div>
     <div class="field"><label for="dr-body">${ico("note", "sm")} Descrição</label><textarea class="ta" id="dr-body" rows="4" placeholder="Detalhes, links, observações… (aceita **negrito**, listas com -)">${esc(x.body || "")}</textarea></div>
     <div class="grid2"><div class="field"><span class="lbl">Tipo</span>${selHTML("kind", Object.entries(KINDS), x.kind || "tarefa", "Tipo")}</div>
@@ -679,6 +691,8 @@ function openCard(id, draft) {
     $$("#dr-ck [data-rm]", d).forEach(b => b.onclick = () => { x.checklist.splice(+b.dataset.rm, 1); ckr(); }); };
   ckr();
   x.alertas = Array.isArray(x.alertas) ? x.alertas : []; alertEditor($("#dr-al", d), x);
+  if (!draft) { wireAsk(d, () => openCard(x.id)); $$("[data-mover]", d).forEach(b => b.onclick = async () => { await moverDia(b.dataset.mover, b.dataset.dia); openCard(x.id); });
+    const pa = $("#dr-pauto", d); if (pa) pa.onclick = async () => { if (await tryApi(`/api/cards/${encodeURIComponent(x.id)}/prioridade_auto`, {})) { toast("Prioridade automática"); await loadCards(true); render(); openCard(x.id); } }; }
   $$("[data-drt]", d).forEach(b => b.onclick = () => { const alt = b.dataset.drt === "alt"; $$("[data-drt]", d).forEach(z => z.setAttribute("aria-selected", z === b));
     $("#dr-det", d).hidden = alt; $("#dr-altp", d).hidden = !alt; if (alt) cardChanges($("#dr-altp", d), x.id); });
   $("#dr-cka", d).onclick = () => { (x.checklist = x.checklist || []).push({text: "", done: false}); ckr(); const all = $$("#dr-ck input", d); all[all.length - 1].focus(); };
@@ -842,6 +856,14 @@ const byCardId = x => (x && x.id && S.cards.find(c => c.id === x.id)) || x;
 function evRowHTML(c) { c = byCardId(c); const d = cardDate(c) || parseD(c.start || c.quando);
   return `<div class="erow" ${c.id ? `data-id="${esc(c.id)}" data-ctx="card"` : ""} tabindex="0" role="button"><span class="edate">${d ? `<b>${d.getDate()}</b><small>${MONTHS[d.getMonth()].slice(0, 3)}</small>` : "—"}</span>
     <span class="tt"><b>${esc(c.titulo || cardTitle(c))}</b><small>${esc(c.quando_fmt || (d ? fmtDT(d, {rel: true}) : ""))}${(c.people || []).length ? " · " + esc(c.people.map(p => titleCase(p.nome || p.email)).join(", ")) : ""}</small></span></div>`; }
+const DATA_TIPO = {feriado: "Feriado", facultativo: "Ponto facultativo", comemorativa: "Data comemorativa"};
+function dataRowHTML(d) { const dt = parseD(d.data);
+  const quando = d.dias === 0 ? "hoje" : d.dias === 1 ? "amanhã" : d.dias != null ? `em ${d.dias} dias` : "";
+  if (d.aniv) return `<div class="erow" data-aniv="${esc(d.card_id || "")}" tabindex="0" role="button"><span class="edate">${dt ? `<b>${dt.getDate()}</b><small>${MONTHS[dt.getMonth()].slice(0, 3)}</small>` : ico("heart", "sm")}</span>
+    <span class="tt"><b>${ico("heart", "xs")} Aniversário de ${esc(titleCase(d.nome))}</b><small>${esc(d.dias === 0 ? "hoje · que tal mandar os parabéns?" : quando)}${d.idade ? ` · ${d.idade} anos` : ""}</small></span></div>`;
+  return `<div class="erow" style="cursor:default"><span class="edate">${dt ? `<b>${dt.getDate()}</b><small>${MONTHS[dt.getMonth()].slice(0, 3)}</small>` : "—"}</span>
+    <span class="tt"><b>${esc(d.nome)}</b><small>${esc(DATA_TIPO[d.tipo] || "")}${d.uf ? " · " + esc(d.uf) : ""}${quando ? " · " + esc(quando) : ""}</small></span>
+    <button type="button" class="iconbtn sm ${d.alerta ? "on" : ""}" data-dal="${esc(d.chave)}" aria-pressed="${!!d.alerta}" aria-label="Avisar nessa data" data-tip="${d.alerta ? "Vou avisar nesse dia" : "Sem aviso"}">${ico("bell", "sm")}</button></div>`; }
 function msgPerson(m) { return titleCase(m.remetente || m.de || (m.people && m.people[0] && (m.people[0].nome || m.people[0].email)) || (m.source && m.source.integration) || "Alguém"); }
 function msgRowHTML(m) {
   m = byCardId(m); const who = msgPerson(m), d = parseD(m.t || m.data || m.updated || m.created), src = (m.source && m.source.integration) || m.canal || m.app || "";
@@ -860,7 +882,7 @@ function notifRowHTML(n, compact) {
     <span class="av app" aria-hidden="true">${esc((app[0] || "?").toUpperCase())}</span>
     <span class="mbody"><span class="mtop"><b>${esc(app)}</b>${hlSelo(hl)}${(n.contagem || 1) > 1 ? `<span class="tag rep" data-tip="Chegou ${n.contagem} vezes">×${n.contagem}</span>` : ""}${n.etiqueta ? `<span class="tag et" style="--tc:${tagColor(n.etiqueta)}">${esc(titleCase(n.etiqueta))}</span>` : ""}${(n.prioridade || 0) >= 2 ? `<span class="pri p${Math.min(3, n.prioridade)}"><i></i>${esc(PRI[Math.min(3, n.prioridade)])}</span>` : ""}<time>${esc(d ? ago(d) : "")}</time></span>
       <span class="msubj">${/^\s*[⚠✅❗❌]/.test(n.titulo || n.title || "") ? ico("warn", "xs") + " " : ""}${esc(stripEmo(n.titulo || n.title || ""))}</span>${n.texto || n.text ? `<span class="mtext">${esc(String(n.texto || n.text).slice(0, compact ? 110 : 260))}</span>` : ""}
-      ${pedidoHTML(n)}
+      ${pedidoHTML(n)}${n.card_id ? askHTML(S.cards.find(c => c.id === n.card_id)) : ""}
       ${compact ? "" : `${(n.regra || asList(n.regras).length) ? `<span class="nrule">${ico("tree", "sm")} Regra: ${esc([].concat(n.regra || n.regras).map(x => typeof x === "object" ? (x.nome || x.name || "") : x).join(", "))}</span>` : ""}
       ${done.length && !it.fez ? `<span class="nacts">${done.map(a => `<span class="chip ok">${ico("check", "sm")}${esc(actLabel(a))}</span>`).join("")}</span>` : ""}
       ${it.fez ? `<span class="nint fez">${ico("check", "sm")}<span>${esc(it.fez)}</span>${it.pode_desfazer ? `<button type="button" class="btn xs ghost" data-nundo="${esc(n.id)}">${ico("undo", "xs")} Desfazer</button>` : ""}</span>` : ""}
@@ -902,13 +924,21 @@ function viewHome() {
     tarefas: () => wrapHl("tarefas", dlist("Tarefas mais relevantes", "check", tasks.slice(0, 5), c => trowHTML(byCardId(c)), "Nada urgente. Peça “pagar a luz dia 10” no campo abaixo.", "tarefas", tasks.length)),
     eventos: () => wrapHl("eventos", dlist("Próximos eventos", "cal", evs.slice(0, 5), evRowHTML, "Agenda livre nos próximos dias.", "agenda")),
     mensagens: () => wrapHl("mensagens", dlist("Mensagens importantes", "msg", msgs.slice(0, 4), msgRowHTML, "Nenhuma mensagem importante agora.", "mensagens")),
-    notificacoes: () => wrapHl("notificacoes", dlist("Notificações recentes", "bell", notes.slice(0, 5), n => notifRowHTML(n, true), S.inicioOk ? "Sem notificações novas." : "As notificações do Windows aparecem aqui quando o secretário estiver ligado.", "notificacoes"))};
+    notificacoes: () => wrapHl("notificacoes", dlist("Notificações recentes", "bell", notes.slice(0, 5), n => notifRowHTML(n, true), S.inicioOk ? "Sem notificações novas." : "As notificações do Windows aparecem aqui quando o secretário estiver ligado.", "notificacoes")),
+    datas: () => wrapHl("datas", dlist("Próximas datas", "star", asList(I.aniversarios).map(a => ({aniv: 1, ...a})).concat(asList(I.proximas_datas)).slice(0, 6), dataRowHTML,
+      I.uf ? "Nenhum feriado nos próximos 30 dias." : "Diga seu estado em Configurações › Perfil para ver os feriados de lá.", "", ""))};
   // "Em destaque": o que o agente (ou você) pôs em destaque — notificações, mensagens e cards
   const hlItems = []; const seen = new Set();
   asList(I.destaques).forEach(n => { if (!seen.has("n" + n.id)) { seen.add("n" + n.id); hlItems.push({t: "n", x: n, h: hlNotif(n) || n.destaque}); } });
   S.cards.forEach(c => { const h = hlCard(c); if (h && !c.done && !seen.has("c" + c.id)) { seen.add("c" + c.id); hlItems.push({t: "c", x: c, h}); } });
   hlItems.sort((a, b) => (!!(b.h && b.h.fixar) - !!(a.h && a.h.fixar)));
-  const secs = ordem.filter(k => k !== "destaques" && !ocultas.includes(k)).sort((a, b) => (b === hlSec) - (a === hlSec));
+  const secs = ordem.concat(ordem.includes("datas") ? [] : ["datas"]).filter(k => k !== "destaques" && k !== "perguntas" && !ocultas.includes(k)).sort((a, b) => (b === hlSec) - (a === hlSec));
+  const pergs = asList(I.perguntas), confs = asList(I.conflitos);
+  const porCard = {}; const grp = (x, k) => ((porCard[x.card_id] = porCard[x.card_id] || {id: x.card_id, titulo: x.titulo, cs: [], fs: []})[k].push(x));
+  confs.forEach(o => grp(o, "cs")); pergs.forEach(p => grp(p, "fs"));
+  const grupos = Object.values(porCard).slice(0, 6);
+  const askBlock = ocultas.includes("perguntas") || !grupos.length ? "" : `<section class="dcard dl askbox"><header>${ico("spark", "sm")}<h3>Falta pouco</h3><span class="cnt">${grupos.length}</span></header><div class="dlist">
+    ${grupos.map(g => `<div class="arow" data-id="${esc(g.id)}"><span class="tt"><b>${esc(g.titulo || "Card")}</b>${g.cs.length ? conflitoHTML({id: g.id, conflitos: g.cs}) : ""}${askHTML({id: g.id}, g.fs)}</span></div>`).join("")}</div></section>`;
   const hlBlock = ocultas.includes("destaques") || !hlItems.length ? "" : `<section class="dcard dl hlbox"><header>${ico("star", "sm")}<h3>Em destaque</h3><span class="cnt">${hlItems.length}</span><span class="sp"></span><button class="btn sm ghost" id="hlclr" data-tip="Tirar todos os destaques da interface">Tirar destaques</button></header>
       <div class="dlist">${hlItems.slice(0, 8).map(i => i.t === "n" ? notifRowHTML(i.x, true) : i.x.kind === "mensagem" ? msgRowHTML(i.x) : trowHTML(i.x)).join("")}</div></section>`;
   const frase = I.resumo_frase || (S.cardsLoaded ? `${today ? `${today} coisa${today > 1 ? "s" : ""} para hoje` : "Nada marcado para hoje"}${late ? ` · ${late} atrasada${late > 1 ? "s" : ""}` : ""}${evs.length ? ` · próximo: ${cardTitle(byCardId(evs[0]))}` : ""}.` : "");
@@ -917,7 +947,7 @@ function viewHome() {
     <div class="dhero"><img src="/static/icon.svg" alt=""><div><h1>${greet()}${USER() ? `, ${esc(USER())}` : ""}, <em>o que vamos organizar?</em></h1><p>${esc(frase)}</p></div></div>
     ${noModel ? inviteHTML() : ""}
     <div class="dtop">${clockHTML()}${weatherHTML(S.wx)}</div>
-    ${hlBlock}
+    ${hlBlock}${askBlock}
     <div class="dgrid">${secs.map(k => secHTML[k] ? secHTML[k]() : "").join("")}</div>
     ${I.automacoes ? `<p class="hint dfoot">${ico("tree", "sm")} ${I.automacoes} automaç${I.automacoes > 1 ? "ões" : "ão"} cuidando das coisas para você.</p>` : ""}
   </div>`;
@@ -928,6 +958,11 @@ function viewHome() {
   $$(".mrow[data-id],.erow[data-id]", v).forEach(r => { r.onclick = () => openCard(r.dataset.id); r.onkeydown = e => { if (e.key === "Enter") openCard(r.dataset.id); };
     r.oncontextmenu = e => cardCtx(e, r.dataset.id); });
   wireInvite(v); wireCards(v); wireClock(v);
+  $$(".arow[data-id]", v).forEach(r => r.onclick = e => { if (!e.target.closest("button,input,form")) openCard(r.dataset.id); });
+  $$("[data-dal]", v).forEach(b => b.onclick = async () => { const on = b.getAttribute("aria-pressed") !== "true";
+    if (await tryApi("/api/datas/alerta", {chave: b.dataset.dal, ativo: on})) { const d = asList(I.proximas_datas).find(x => x.chave === b.dataset.dal); if (d) d.alerta = on;
+      b.setAttribute("aria-pressed", on); b.dataset.tip = on ? "Vou avisar nesse dia" : "Sem aviso"; b.classList.toggle("on", on); toast(on ? "Vou avisar nessa data" : "Sem aviso nessa data"); } });
+  $$("[data-aniv]", v).forEach(r => r.onclick = () => r.dataset.aniv && openCard(r.dataset.aniv));
   const wr = $("#wxr", v); if (wr) wr.onclick = async () => { wr.setAttribute("aria-busy", "true"); S.wx = await getWeather(true); if (S.view === "inicio") render(); };
   if (!S._inicioT || Date.now() - S._inicioT > 30000) { S._inicioT = Date.now(); loadInicio().then(() => { if (S.view === "inicio" && (!S.thread.length || S.showPanel)) render(); }); }
   if (S.wx === undefined && !S._wxLoading) { S._wxLoading = true; getWeather().then(w => { S.wx = w; S._wxLoading = false; if (S.view === "inicio" && (!S.thread.length || S.showPanel)) render(); }); }
@@ -1216,6 +1251,7 @@ async function viewNotifs(keepFocus) {
   paintNSel();
 }
 function wireNotifRows(v) {
+  wireAsk(v, () => { if (S.view === "notificacoes") viewNotifs(); });
   $$(".nrow", v).forEach(r => { const id = r.dataset.nid;
     r.onclick = e => { if (e.target.closest("[data-nact],[data-nsel]")) return; if (e.ctrlKey || e.metaKey || NSEL.size) { toggleNSel(id); return; }
       r.classList.toggle("open"); const n = NOTIFS.find(x => String(x.id) === id); if (n && !n.lida) { n.lida = true; r.classList.remove("unread"); tryApi("/api/notificacoes/" + encodeURIComponent(id), {lida: true}, {silent: true}); S.notifUnread = Math.max(0, S.notifUnread - 1); renderNav(); } };
@@ -1684,6 +1720,9 @@ function resultCard(r, text) {
     <div class="ract"></div>
     ${r.timing_ms != null ? `<p class="meta">${Math.round(r.timing_ms)} ms</p>` : ""}`;
   wireDicas(el, text, ds, qs);
+  { const c0 = (r.results || [])[0]; if (c0 && c0.id && (asList(r.conflitos).length || asList(r.faltando).length)) {
+    $(".propbox", el).insertAdjacentHTML("beforebegin", `<div class="drinfo">${asList(r.conflitos)[0] && asList(r.conflitos)[0].sugestao ? conflitoHTML({id: c0.id, conflitos: r.conflitos}) : ""}${askHTML({id: c0.id}, r.faltando)}</div>`);
+    wireAsk(el, () => { const b = $(".drinfo", el); if (b) b.innerHTML = `<span class="hint">${ico("check", "xs")} Anotado</span>`; }); } }
   const pb = $(".propbox", el), ract = $(".ract", el);
   const state = {W: null};
   renderProposal(pb, p, r, state);
@@ -2315,9 +2354,9 @@ function openModel() {
       <div><span class="kicker">Djorge Origo Flash Local</span><h3>${esc(m.name || "DOFL V2")} ${m.version ? `<small class="mono" style="color:var(--ink3)">v${esc(m.version)}</small>` : ""}</h3>
       <p>${{ausente: "Ainda não está neste computador. Sem ele, o " + AG() + " usa só as regras (datas, horas, atalhos) — funciona, mas entende menos.", baixando: "Baixando… você pode continuar usando o app.", verificando: "Conferindo os arquivos baixados…", carregando: "Instalado. Carregando na memória…", pronto: "Pronto e rodando só no seu computador.", erro: "Algo deu errado: " + (m.error || "erro desconhecido")}[s]}</p></div></div>
       <div style="padding:0 24px 18px">
-      ${s === "baixando" || s === "verificando" ? `<div class="pbar" role="progressbar" aria-valuenow="${Math.round(pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do download"><i style="width:${Math.round(pct * 100)}%"></i></div><p class="hint mono">${fmtMB(m.bytes)} de ${m.total ? fmtMB(m.total) : (m.size_mb || 447) + " MB"} · ${Math.round(pct * 100)}%</p>` : ""}
+      ${s === "baixando" || s === "verificando" ? `<div class="pbar" role="progressbar" aria-valuenow="${Math.round(pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do download"><i style="width:${Math.round(pct * 100)}%"></i></div><p class="hint mono">${fmtMB(m.bytes)} de ${m.total ? fmtMB(m.total) : (m.size_mb || 241) + " MB"} · ${Math.round(pct * 100)}%</p>` : ""}
       <div class="kv" style="margin-top:10px">
-        <div><small>Tamanho</small><b>${esc(m.size_mb || 447)} MB</b></div>
+        <div><small>Tamanho</small><b>${esc(m.size_mb || 241)} MB</b></div>
         <div><small>Versão</small><b>${esc(m.version || d.version || "—")}</b></div>
         ${m.path ? `<div style="grid-column:1/-1"><small>Pasta</small><b class="mono" style="font-size:.8em">${esc(m.path)}</b></div>` : ""}
         ${m.source ? `<div style="grid-column:1/-1"><small>Origem</small><b class="mono" style="font-size:.8em">${esc(m.source)}</b></div>` : ""}
@@ -2326,7 +2365,7 @@ function openModel() {
     const want = s === "ausente" || s === "erro" ? "dl" : s === "baixando" || s === "verificando" ? "cancel" : "rm";
     if (f.dataset.w !== want) { f.dataset.w = want;
       f.innerHTML = `<span class="hint" style="flex:1">${ico("shield", "sm")} O download vem só da fonte oficial configurada.</span>` +
-        (want === "dl" ? `<button class="btn primary" data-a="download">${ico("dl", "sm")} Baixar modelo (${esc(m.size_mb || 447)} MB)</button>` :
+        (want === "dl" ? `<button class="btn primary" data-a="download">${ico("dl", "sm")} Baixar modelo (${esc(m.size_mb || 241)} MB)</button>` :
          want === "cancel" ? `<button class="btn" data-a="cancel">Cancelar download</button>` : `<button class="btn danger" data-a="remove">${ico("trash", "sm")} Remover</button>`);
       $$("[data-a]", f).forEach(b => b.onclick = () => modelAction(b.dataset.a, b)); }
   };
@@ -2344,7 +2383,7 @@ async function modelAction(a, btn) {
 function inviteHTML(fromErr) {
   const s = modelUiState();
   return `<div class="invite" role="region" aria-label="Convite para baixar o modelo"><div class="ic">${ico("cpu")}</div><div><h3>${fromErr ? "Esse pedido precisa do modelo" : "Deixe o " + AG() + " mais esperto"}</h3>
-    <p>${fromErr ? "As regras não deram conta sozinhas. Baixe o DOFL (447 MB, roda só no seu computador) e tente de novo." : "Baixe o modelo DOFL (447 MB). Ele roda só no seu computador — nada sai daqui. Enquanto isso, as regras já funcionam."}</p></div>
+    <p>${fromErr ? "As regras não deram conta sozinhas. Baixe o DOFL (241 MB, roda só no seu computador) e tente de novo." : "Baixe o modelo DOFL (241 MB). Ele roda só no seu computador — nada sai daqui. Enquanto isso, as regras já funcionam."}</p></div>
     <div class="row">${s === "baixando" ? `<button class="btn" data-inv="open">Ver progresso</button>` : `<button class="btn primary" data-inv="dl">${ico("dl", "sm")} Baixar</button>`}${fromErr ? "" : `<button class="btn ghost" data-inv="later">Agora não</button>`}</div></div>`;
 }
 function wireInvite(root) {
@@ -2364,8 +2403,9 @@ function openPalette(initial = "") {
     {t: "Tema claro", s: "aparência", i: "spark", run: () => savePrefs({theme: "light"})}, {t: "Recolher barra lateral", s: "layout", i: "side", run: toggleSide},
     {t: "Configurar o secretário", s: "3 passos", i: "spark", run: () => secretaryWizard()}, {t: "Nova automação", s: "Se… então…", i: "tree", run: () => { go("automacoes"); autoBuilder(null); }},
     {t: "Pausar Djorge", s: "leveza", i: "clock", run: () => appAction("pausar")}, {t: "Retomar Djorge", s: "leveza", i: "up", run: () => appAction("retomar")}, {t: "Liberar memória", s: "leveza", i: "sync", run: () => appAction("liberar_memoria")},
-    {t: "API local", s: "configurações", i: "plug", run: () => openSettings("api")}];
-  const m = modal({raw: true, cls: "palette", label: "Busca e comandos", body: `<div class="pin">${ico("search")}<input id="pq" placeholder="Busque cards, histórico, e-mails… ou digite um comando" aria-label="Buscar" role="combobox" aria-expanded="true" aria-controls="pl" aria-autocomplete="list" value="${esc(initial)}" autofocus><kbd>Esc</kbd></div>
+    {t: "API local", s: "configurações", i: "plug", run: () => openSettings("desempenho")}, {t: "Sobre você", s: "perfil", i: "user", run: () => openSettings("perfil")},
+    {t: "Avisos, feriados e datas", s: "configurações", i: "bell", run: () => openSettings("avisos")}];
+  const m = modal({raw: true, cls: "palette", label: "Busca e comandos", body: `<div class="pin">${ico("search")}<input id="pq" placeholder="Busque cards, notas, notificações, automações, ações… ou digite um comando" aria-label="Buscar" role="combobox" aria-expanded="true" aria-controls="pl" aria-autocomplete="list" value="${esc(initial)}" autofocus><kbd>Esc</kbd></div>
     <div class="plist" id="pl" role="listbox"></div><div class="pfoot"><span><kbd>↑</kbd><kbd>↓</kbd> navegar</span><span><kbd>Enter</kbd> abrir</span><span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> enviar como pedido</span></div>`});
   const q = $("#pq", m.box), pl = $("#pl", m.box);
   let items = [], ai = 0, seq = 0, tmr;
@@ -2375,10 +2415,15 @@ function openPalette(initial = "") {
     const cm = cmds.filter(c => !ql || c.t.toLowerCase().includes(ql)).slice(0, qq ? 4 : 9).map(c => ({...c, g: "Comandos"}));
     const local = qq ? S.cards.filter(c => (c.title + " " + (c.body || "")).toLowerCase().includes(ql)).slice(0, 6).map(c => ({t: c.title, s: (KINDS[c.kind] || "") + (cardDate(c) ? " · " + whenTxt(c) : ""), i: KIND_ICO[c.kind] || "board", g: "Cards", run: () => openCard(c.id)})) : [];
     const seen = new Set(local.map(x => x.t));
-    const rem = (remote || []).filter(x => !seen.has(x.title || x.titulo)).slice(0, 8).map(x => ({t: x.title || x.titulo || x.text || "resultado", s: [x.snippet || x.trecho, x.fonte || (x.source && (x.source.integration || x.source)) || x.scope].filter(Boolean).join(" · "), i: x.scope === "history" ? "clock" : x.source ? "plug" : "search", g: "Resultados",
-      run: () => { if (x.id && S.cards.find(c => c.id === x.id)) openCard(x.id); else if (x.url) window.open(x.url, "_blank", "noopener"); else setInput(x.title || ""); }}));
+    const SCOPE = {notas: ["Notas", "note", x => { NOTAS.curId = x.id; store.set("notaCur", x.id); go("notas"); }], notificacoes: ["Notificações", "bell", () => go("notificacoes")],
+      automacoes: ["Automações", "tree", () => go("automacoes")], history: ["Ações", "clock", () => go("historico")]};
+    const remAll = (remote || []).filter(x => !seen.has(x.title || x.titulo));
+    const rem = remAll.filter(x => !SCOPE[x.scope] || x.scope === "history").slice(0, 8).map(x => ({t: x.title || x.titulo || x.text || "resultado", s: [x.snippet || x.trecho, x.fonte || (x.source && (x.source.integration || x.source)) || x.scope].filter(Boolean).join(" · "), i: x.scope === "history" || x.source === "history" ? "clock" : x.source && x.source !== "cards" ? "plug" : "search", g: x.scope === "history" || x.source === "history" ? "Ações" : "Resultados",
+      run: () => { if (x.id && S.cards.find(c => c.id === x.id)) openCard(x.id); else if (x.source === "history" || x.scope === "history") go("historico"); else if (x.url) window.open(x.url, "_blank", "noopener"); else setInput(x.title || ""); }}));
+    const ext = remAll.filter(x => SCOPE[x.scope] && x.scope !== "history").slice(0, 9).map(x => ({t: x.title || "Sem título", s: x.snippet || "", i: SCOPE[x.scope][1], g: SCOPE[x.scope][0], run: () => SCOPE[x.scope][2](x)}))
+      .sort((a, b) => a.g.localeCompare(b.g));
     const ask = qq ? [{t: `Pedir ao ${AG()}: “${qq}”`, s: "envia como comando", i: "spark", g: "Pedido", run: () => { setInput(qq); submit(); }}] : [];
-    items = [...ask, ...local, ...rem, ...cm]; ai = 0;
+    items = [...ask, ...local, ...ext, ...rem, ...cm]; ai = 0;
     let g = ""; pl.innerHTML = items.map((it, i) => { const h = it.g !== g ? `<div class="pgroup">${esc(it.g)}</div>` : ""; g = it.g;
       return h + `<button type="button" class="pitem ${i === 0 ? "act" : ""}" role="option" id="po${i}" aria-selected="${i === 0}" data-i="${i}"><span class="pi">${ico(it.i, "sm")}</span><span class="pt"><b>${hi(it.t, qq)}</b>${it.s ? `<small>${esc(it.s)}</small>` : ""}</span></button>`; }).join("") ||
       `<div class="empty" style="padding:24px"><p>Nada encontrado.</p></div>`;
@@ -2398,12 +2443,37 @@ function openPalette(initial = "") {
 function setRow(title, sub, ctrl) { return `<div class="setrow"><div class="st"><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</div>${ctrl}</div>`; }
 function openSettings(start = "geral") {
   if ($(".modal [data-settings]")) return;
+  /* 6 seções (antes 9): ids antigos continuam abrindo a seção nova */
+  start = {modelo: "desempenho", leve: "desempenho", api: "desempenho", seguranca: "avancado", automacoes: "avancado"}[start] || start;
   const m = tabsModal({title: `<span data-settings>Configurações</span>`, start, tabs: [
-    {id: "geral", label: "Geral", icon: "gear"}, {id: "perfil", label: "Perfil", icon: "user"}, {id: "voz", label: "Voz", icon: "mic"}, {id: "modelo", label: "Modelo", icon: "cpu"},
-    {id: "leve", label: "Desempenho", icon: "spark"}, {id: "api", label: "API local", icon: "plug"},
-    {id: "seguranca", label: "Segurança", icon: "shield"}, {id: "automacoes", label: "Automações", icon: "tree"}, {id: "avancado", label: "Avançado", icon: "edit"}],
-    onTab: (id, el) => ({geral: setGeneral, perfil: setProfile, voz: setVoice, modelo: setModel, leve: setLeve, api: setLocalApi, seguranca: setSecurity, automacoes: setAutos, avancado: setAdvanced}[id])(el)});
+    {id: "geral", label: "Aparência", icon: "gear"}, {id: "perfil", label: "Perfil", icon: "user"}, {id: "avisos", label: "Avisos e datas", icon: "bell"}, {id: "voz", label: "Voz", icon: "mic"},
+    {id: "desempenho", label: "Modelo e desempenho", icon: "cpu"}, {id: "avancado", label: "Avançado", icon: "shield"}],
+    onTab: (id, el) => ({geral: setGeneral, perfil: setProfile, avisos: setAvisos, voz: setVoice, desempenho: setDesempenho, avancado: setAdvanced}[id])(el)});
   return m;
+}
+async function setDesempenho(el) {
+  el.innerHTML = `<div id="sd-mo"></div><h3>Leveza</h3><div id="sd-lv"></div><h3>API local</h3><div id="sd-api"></div>`;
+  setModel($("#sd-mo", el)); setLeve($("#sd-lv", el)); setLocalApi($("#sd-api", el));
+}
+const NP_CAMPO = {prazo: "o prazo", horario: "o horário", local: "o local", valor: "o valor", responsavel: "o responsável"};
+const NP_ORIG = {notificacao: "notificações", automacao: "automações", comando: "pedidos", "*": "tudo"};
+async function setAvisos(el) {
+  const p = S.prefs, np = asList(p.nao_perguntar);
+  el.innerHTML = `<p class="lead">Como o ${esc(AG())} avisa e o que ele pergunta.</p>
+    ${setRow("Floreios nos avisos", "Avisos felizes ganham um toque alegre; os sérios ficam diretos (“Atenção: …”).", swHTML("av-fl", p.floreios !== false))}
+    ${setRow("Aniversários", "Avisar no dia para você parabenizar.", swHTML("av-pb", p.parabenizar !== false))}
+    ${setRow("Perguntas que você recusou", np.length ? "Toque para voltar a perguntar." : `Quando um card chega sem prazo, valor ou local, o ${esc(AG())} pergunta discretamente.`,
+      np.length ? `<div class="row" style="gap:6px">${np.map((x, i) => { const [o, c] = x.includes(":") ? x.split(":") : ["*", x]; return `<span class="chip">${esc((NP_CAMPO[c] || c) + " · " + (NP_ORIG[o] || o))}<button type="button" class="x" data-rmnp="${i}" aria-label="Voltar a perguntar">${ico("x", "xs")}</button></span>`; }).join("")}</div>` : "")}
+    <h3>Próximas datas</h3><p class="hint">Feriados ${p.uf || (p._ctx && p._ctx.uf) ? "nacionais e de " + esc(p.uf || p._ctx.uf) : "nacionais"} e datas comemorativas. Ligue o sino para receber um aviso no dia.</p><div id="av-ds"><div class="sk"></div></div>`;
+  $("#av-fl", el).onchange = e => savePrefs({floreios: e.target.checked}, true);
+  $("#av-pb", el).onchange = e => savePrefs({parabenizar: e.target.checked}, true);
+  $$("[data-rmnp]", el).forEach(b => b.onclick = async () => { const l = [...np]; l.splice(+b.dataset.rmnp, 1); await savePrefs({nao_perguntar: l}, true); setAvisos(el); });
+  let r; try { r = await api("/api/datas?dias=90"); } catch (e) { r = null; }
+  const box = $("#av-ds", el); if (!box) return;
+  const ds = r ? asList(r.datas) : [];
+  box.innerHTML = ds.length ? `<div class="dlist">${ds.slice(0, 20).map(dataRowHTML).join("")}</div>` : `<p class="hint">${r ? "Nenhuma data nos próximos 90 dias." : "Não consegui carregar as datas."}</p>`;
+  $$("[data-dal]", box).forEach(b => b.onclick = async () => { const on = b.getAttribute("aria-pressed") !== "true";
+    if (await tryApi("/api/datas/alerta", {chave: b.dataset.dal, ativo: on})) { b.setAttribute("aria-pressed", on); b.classList.toggle("on", on); b.dataset.tip = on ? "Vou avisar nesse dia" : "Sem aviso"; S._inicioT = 0; } });
 }
 function setGeneral(el) {
   const p = S.prefs;
@@ -2423,12 +2493,21 @@ function setGeneral(el) {
     if (!cur.size) return toast("Deixe pelo menos uma coluna."); b.classList.toggle("on"); b.setAttribute("aria-pressed", cur.has(b.dataset.colt)); savePrefs({columns: COLS.map(c => c.id).filter(x => cur.has(x))}, true); });
   $$("[data-rmf]", el).forEach(b => b.onclick = () => { const l = [...(S.prefs.saved_filters || [])]; l.splice(+b.dataset.rmf, 1); savePrefs({saved_filters: l}, true); setGeneral(el); });
 }
+const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
+function ctxEntendi() { const c = S.prefs && S.prefs._ctx; const t = c && c.texto;
+  return t ? `${ico("check", "xs")} Entendi: ${esc(t)}` : `Conte em poucas palavras onde mora, com o que trabalha, se tem filhos… Ajuda o ${esc(AG())} a avisar de feriados e a entender seus pedidos. Fica só neste computador.`; }
 function setProfile(el) {
   const p = S.prefs;
   el.innerHTML = `<p class="lead">Como vocês dois se chamam e quem decide primeiro.</p>
     ${setRow("Como quer ser chamado", "Aparece na saudação do Início.", `<input class="inp" id="pf-user" maxlength="40" value="${esc(p.nome_usuario || "")}" placeholder="você" style="width:220px" aria-label="Como quer ser chamado">`)}
     ${setRow("Nome do assistente", "Como o assistente se apresenta nas mensagens.", `<input class="inp" id="pf-ag" maxlength="40" value="${esc(p.nome_agente || "Djorge")}" placeholder="Djorge" style="width:220px" aria-label="Nome do assistente">`)}
+    <div class="field pfabout"><label for="pf-sobre">Sobre você</label><textarea class="ta" id="pf-sobre" rows="3" maxlength="400" placeholder="Ex.: moro em Campinas, trabalho em banco e tenho dois filhos.">${esc(p.sobre || "")}</textarea>
+      <p class="hint" id="pf-ent">${ctxEntendi()}</p></div>
+    ${setRow("Estado (feriados)", "Vazio: uso o estado do “Sobre você”.", selHTML("pf-uf", [["", "Automático"]].concat(UFS.map(u => [u, u])), p.uf || "", "Estado"))}
     ${setRow("Quem decide primeiro", "Modelo: o DOFL entende o pedido e as regras ajudam. Regras: respostas mais rápidas, o modelo só quando as regras não bastam.", segHTML("pf-pri", [["modelo", "Modelo"], ["equilibrado", "Equilibrado"], ["regras", "Regras (respostas rápidas)"]], p.prioridade || "modelo", "Quem decide primeiro"))}`;
+  const sb = $("#pf-sobre", el), cnt = () => { const n = sb.value.length; $("#pf-ent", el).innerHTML = ctxEntendi() + (n > 320 ? ` · ${400 - n} caracteres restantes` : ""); };
+  sb.oninput = cnt; sb.onchange = async () => { if (sb.value.trim() === (S.prefs.sobre || "")) return; await savePrefs({sobre: sb.value}, true); sb.value = S.prefs.sobre || ""; cnt(); toast("Anotado"); };
+  wireSel(el, "pf-uf", [["", "Automático"]].concat(UFS.map(u => [u, u])), v => { savePrefs({uf: v}, true).then(() => { $("#pf-ent", el).innerHTML = ctxEntendi(); S._inicioT = 0; }); });
   const saveName = (k, inp) => { const v = inp.value.trim(); if (v === (S.prefs[k] || "") ) return; savePrefs({[k]: v}, false).then(() => { paintMe(); if (k === "nome_agente") setMode(S.mode); if (S.view === "inicio") render(); }); };
   [["nome_usuario", "#pf-user"], ["nome_agente", "#pf-ag"]].forEach(([k, id]) => { const i = $(id, el); i.onchange = () => saveName(k, i); i.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); i.blur(); } }; });
   wireSeg(el, "pf-pri", v => savePrefs({prioridade: v}));
@@ -2544,21 +2623,20 @@ async function setAutos(el) {
   $("#au-save", el).onclick = () => { const o = {}; Object.entries(ac).forEach(([k, v]) => { const i = $("#ac-" + CSS.escape(k), el); if (!i) return; o[k] = typeof v === "boolean" ? i.checked : +i.value; }); saveCfg({actions: o}); };
 }
 async function setAdvanced(el) {
-  el.innerHTML = `<p class="lead">Arquivo de configuração, histórico de eventos e confirmações pendentes.</p>
-    <div class="seg" role="tablist" aria-label="Seção" style="margin-bottom:12px"><button role="tab" aria-selected="true" data-s="cfg">config.yaml</button><button role="tab" aria-selected="false" data-s="hist">Histórico</button><button role="tab" aria-selected="false" data-s="pend">Pendências</button></div><div id="adv"></div>`;
+  el.innerHTML = `<p class="lead">Segurança das mensagens, confirmações pendentes e opções técnicas.</p>
+    <div class="seg" role="tablist" aria-label="Seção" style="margin-bottom:12px"><button role="tab" aria-selected="true" data-s="seg">Segurança</button><button role="tab" aria-selected="false" data-s="pend">Pendências</button><button role="tab" aria-selected="false" data-s="acoes">Ações das árvores</button><button role="tab" aria-selected="false" data-s="cfg">config.yaml</button></div><div id="adv"></div>`;
   const box = $("#adv", el);
   const show = async s => { $$("[data-s]", el).forEach(b => b.setAttribute("aria-selected", b.dataset.s === s)); box.innerHTML = `<div class="sk"></div>`;
     if (s === "cfg") { const c = await loadCfg(); box.innerHTML = `<textarea class="ta code" id="cfgj" spellcheck="false" aria-label="Configuração">${esc(JSON.stringify(c || {}, null, 2))}</textarea><p class="hint">Formato JSON das mesmas chaves do config.yaml. Campos desconhecidos são recusados.</p><div class="row" style="margin-top:10px;justify-content:flex-end"><button class="btn primary" id="cfgs">Salvar configuração</button></div>`;
       $("#cfgs", box).onclick = () => { try { saveCfg(JSON.parse($("#cfgj", box).value)); } catch (e) { toast("JSON inválido: " + e.message, "bad"); } }; }
-    if (s === "hist") histInto(box);
+    if (s === "seg") setSecurity(box);
+    if (s === "acoes") setAutos(box);
     if (s === "pend") { try { const p = await api("/api/pending"); const list = Array.isArray(p) ? p : [];
       box.innerHTML = list.length ? `<div class="tlist">${list.map(pendHTML).join("")}</div>` : empty("Nada pendente", "Ações que precisam da sua aprovação aparecem aqui."); wirePend(box, () => show("pend")); }
       catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; } }
-    if (s === "api") { box.innerHTML = `<p>Outros programas podem enviar eventos para <code>POST http://127.0.0.1:8765/api/event</code> com o cabeçalho <code>X-Token</code>.</p><div class="row" style="margin-top:12px"><button class="btn" id="tok">Copiar token</button></div>`;
-      $("#tok", box).onclick = async () => { try { const t = (await api("/api/token")).token; await navigator.clipboard.writeText(t); toast("Token copiado"); } catch (e) { toast("O token está no arquivo token.txt da pasta do Djorge."); } }; }
   };
   $$("[data-s]", el).forEach(b => b.onclick = () => show(b.dataset.s));
-  show("cfg");
+  show(S._adv || "seg"); S._adv = null;
 }
 
 /* ---------------------------------------------------------------- INTEGRAÇÕES */
@@ -2710,7 +2788,7 @@ function helpPop(anchor) {
 let lastSec = null;
 async function pollStatus() {
   try { const s = await api("/api/status"); const prevPend = S.status ? S.status.pending : 0; S.status = s;
-    if (s.pending > prevPend && prevPend !== undefined && lastSec !== null) toast(`${s.pending} ação(ões) aguardando sua confirmação.`, "warn", {action: "Ver", onAction: () => openSettings("avancado")});
+    if (s.pending > prevPend && prevPend !== undefined && lastSec !== null) toast(`${s.pending} ação(ões) aguardando sua confirmação.`, "warn", {action: "Ver", onAction: () => { S._adv = "pend"; openSettings("avancado"); }});
     const sec = s.security || {}; const alerts = sec.alerts || sec.last_alerts || [];
     if (Array.isArray(alerts)) alerts.forEach(a => { const k = a.id || a.t || JSON.stringify(a); if (lastSec && !lastSec.has(k)) toast((a.text || a.title || "").slice(0, 120), "bad", {title: `Alerta de segurança: ${a.label || a.kind || "suspeito"}`}); (lastSec = lastSec || new Set()).add(k); });
     if (!lastSec) lastSec = new Set();

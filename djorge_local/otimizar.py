@@ -432,14 +432,26 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000, parida
     del ref
     report = {"rows": len(reqs), "ladder": [], "paridade": par, "lora_folded": info.get("lora_folded", 0)}
 
+    def _cmp(ra, rb):
+        agree = sum(x.get("answer") == y.get("answer") for x, y in zip(ra, rb)) / max(1, len(reqs))
+        dp = sum(abs(float(x.get("probability") or 0) - float(y.get("probability") or 0))
+                 for x, y in zip(ra, rb)) / max(1, len(reqs))
+        return agree, dp
+
     def measure():
+        """Paridade no lote (16 linhas por chamada) E linha a linha: o int8 dinâmico muda a resposta conforme os
+        vizinhos do lote; as duas formas precisam passar. lote_dp = diferença média entre as duas."""
         eng = SemanticEngine.from_artifact(out, device="cpu", onnx="int8")
         eng.run(reqs[:2])
         t = time.time(); r1 = eng.run(reqs); dt = (time.time() - t) / max(1, len(reqs))
-        agree = sum(x.get("answer") == y.get("answer") for x, y in zip(r0, r1)) / max(1, len(reqs))
-        dp = sum(abs(float(x.get("probability") or 0) - float(y.get("probability") or 0))
-                 for x, y in zip(r0, r1)) / max(1, len(reqs))
-        return {"agreement": round(agree, 4), "mean_abs_prob_diff": round(dp, 4), "ms_per_row_cpu": round(dt * 1000, 2)}
+        eng.batch_size = 1
+        r1s = eng.run(reqs)
+        agree, dp = _cmp(r0, r1)
+        agree_s, dp_s = _cmp(r0, r1s)
+        _, dl = _cmp(r1, r1s)
+        return {"agreement": round(min(agree, agree_s), 4), "mean_abs_prob_diff": round(max(dp, dp_s), 4),
+                "agreement_lote": round(agree, 4), "agreement_linha": round(agree_s, 4), "lote_dp": round(dl, 5),
+                "ms_per_row_cpu": round(dt * 1000, 2)}
 
     passes = lambda m: m["agreement"] >= par["agreement"] and m["mean_abs_prob_diff"] < par["mean_abs_prob_diff"]
     keep_best = os.path.join(out, "onnx", "encoder.best.onnx")
@@ -477,7 +489,7 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000, parida
                 log.info("quantização %s: %s", nome, m)
                 if m["passou"]:
                     aprovados.append(m)
-                    if not chosen or m["mb"] < chosen["mb"]:
+                    if not chosen or _peso(m) < _peso(chosen):
                         chosen = m
                         shutil.copy(q, keep_best)
                     if excl is not None:
@@ -495,6 +507,7 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000, parida
         shutil.rmtree(out, ignore_errors=True)
         raise RuntimeError("a versão ONNX mudaria as respostas do modelo (teste de paridade): seguindo em PyTorch")
     info["quant"] = chosen["mode"]
+    info["lote_invariante"] = bool(chosen.get("lote_dp", 1.0) < 1e-4)   # o Motor só junta linhas se for
     report["variants"] = {"int8": chosen}
     report["chosen"] = chosen["mode"]
     report["passed"] = True
@@ -509,6 +522,12 @@ def converter(artifact, out, progresso=None, ladder=LADDER, cjk_top=6000, parida
     report.update(size_mb=round(_size(out) / 1e6, 2), source_mb=round(before / 1e6, 1),
                   minutes=round((time.time() - t0) / 60, 1))
     return report
+
+
+def _peso(m):
+    """Tamanho para escolher o menor; quem depende do lote (int8 dinâmico: o Motor roda linha a linha, ~1,3x
+    mais lento) só ganha se for mais de 15 % menor."""
+    return m["mb"] * (1.0 if m.get("lote_dp", 1.0) < 1e-4 else 1.15)
 
 
 def descrever_quant(mode: str) -> str:

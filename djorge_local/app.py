@@ -1167,9 +1167,15 @@ def _testar_automacao(app: App, a: dict, b: dict) -> dict:
             frases.append("arquivaria a mensagem")
         elif x["action"] in ("abrir_app", "responder_sugestao"):
             frases.append(f"prepararia {x.get('app', 'o app')} para você enviar")
+        else:                                            # ações v2.5 (automacoes.ACAO_PT)
+            from .automacoes import ACAO_PT
+            frases.append(ACAO_PT.get(x["action"], x["action"]).replace("criar ", "criaria ", 1)
+                          if x["action"] in ("nota",) else "iria " + ACAO_PT.get(x["action"], x["action"]))
     frase = ("Com esse texto, eu " + ", ".join(frases) + ".") if frases else \
         "Com esse texto, esta automação não faria nada (a condição não casou)."
-    campos = {k: e.get(k) for k in sec.CAMPOS_EV if e.get(k) not in (None, "", False)}
+    e = r.get("event") or e                              # já com os tratamentos (extrair, classificar, resumir...)
+    campos = {k: e.get(k) for k in list(sec.CAMPOS_EV) + ["pessoa", "classe", "resumo"]
+              if e.get(k) not in (None, "", False)}
     return {"casou": bool(acoes), "acoes": acoes, "frase": frase, "campos": campos, "resumo": resumo(a),
             "triagem": {k: tri.get(k) for k in ("categoria", "prioridade", "nota", "motivos", "acoes")},
             "trilha": [{k: v for k, v in s.items() if k in ("node", "answer", "probability", "engine", "action",
@@ -1257,6 +1263,10 @@ def v21_post(app: App, path: str, b: dict):
             if a is None:
                 return 404, {"error": "automação não encontrada"}
             return 200, _testar_automacao(app, a, b)
+        if act == "rodar":                               # "rodar agora" (gatilho manual ou qualquer outro)
+            ev = {k: str(b[k]) for k in ("texto", "titulo") if b.get(k)}
+            ev = {"text": ev.get("texto", ""), "title": ev.get("titulo", "")} if ev else None
+            return 200, A.rodar(aid, ev)
         if act in ("ativar", "desativar"):
             a = A.get(aid)
             if a is None:
@@ -1397,7 +1407,8 @@ def v2_post(app: App, path: str, b: dict):
     if path == "/api/triage":
         return 200, app.command.triage(b.get("text", ""), b.get("remetente"), b.get("assunto"))
     if path == "/api/ui":
-        return 200, {"prefs": app.ui.set(b.get("patch", b) if isinstance(b.get("patch"), dict) else b)}
+        pr_ = app.ui.set(b.get("patch", b) if isinstance(b.get("patch"), dict) else b)
+        return 200, {"prefs": pr_, "contexto": dict(entendi(pr_.get("sobre") or ""), uf=uf_de(app, pr_))}
     if path.startswith("/api/model/"):
         act = path.rsplit("/", 1)[1]
         md = app.service("model")

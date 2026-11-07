@@ -254,7 +254,8 @@ class Actions:
         prep = self.preparar(spec, ctx)
         if mode == "testar":
             return dict(prep, status="simulado")
-        if mode == "sugerir" and spec["action"] not in ("etiquetar", "destacar", "registrar", "prioridade"):   # etiquetar é só organização: sempre vale
+        if mode == "sugerir" and spec["action"] not in ("etiquetar", "destacar", "registrar", "prioridade",
+                                                                 "encadear"):   # etiquetar é só organização: sempre vale
             return dict(prep, status="sugerido", spec=spec)
         return self.executar_nova(spec, ctx, prep)
 

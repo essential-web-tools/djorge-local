@@ -155,8 +155,8 @@ def export_encoder(artifact: str, out_dir: str, opset: int = 17, int8: bool = Tr
 
 def session_options(threads: int = 0, arena: Optional[bool] = None):
     """Light ONNX Runtime session for a desktop app: graph optimisation ALL, intra-op = `threads` (0 = ORT
-    default), ONE inter-op thread (the encoder graph is a chain: parallel branches gain nothing), no busy-wait
-    spinning between calls (an idle app must not burn CPU), and the memory arena off by default
+    default), ONE inter-op thread (the encoder graph is a chain: parallel branches gain nothing), optional
+    no-spinning (DJORGE_ORT_SPIN=0: less idle CPU, ~10 % slower), and the memory arena off by default
     (DJORGE_ORT_ARENA=1 turns it back on): the arena keeps the largest batch's buffers forever."""
     import onnxruntime as ort
     so = ort.SessionOptions()
@@ -169,11 +169,12 @@ def session_options(threads: int = 0, arena: Optional[bool] = None):
         arena = os.environ.get("DJORGE_ORT_ARENA", "0") == "1"
     so.enable_cpu_mem_arena = bool(arena)
     so.enable_mem_pattern = bool(arena)
-    for k, v in (("session.intra_op.allow_spinning", "0"), ("session.inter_op.allow_spinning", "0")):
-        try:
-            so.add_session_config_entry(k, v)
-        except Exception:
-            pass
+    if os.environ.get("DJORGE_ORT_SPIN", "1") == "0":       # medido: sem spinning ~10 % mais lento por linha
+        for k in ("session.intra_op.allow_spinning", "session.inter_op.allow_spinning"):
+            try:
+                so.add_session_config_entry(k, "0")
+            except Exception:
+                pass
     return so
 
 

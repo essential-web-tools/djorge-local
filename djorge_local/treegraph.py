@@ -20,10 +20,10 @@ import copy
 from collections import deque
 from typing import Any, Dict, List
 
-from .tree import NOVAS_ACOES, TreeError, validate
+from .tree import COND_KEYS, NOVAS_ACOES, TRATAMENTOS, TreeError, regex_segura, validate
 
 KINDS = ("choice", "check", "score", "multi", "select", "query", "if", "action")
-ACTIONS = ("notify", "log", "write_file", "webhook", "command", "stop", "email_move") + tuple(NOVAS_ACOES)
+ACTIONS = ("notify", "log", "write_file", "webhook", "command", "stop", "email_move", "tratar") + tuple(NOVAS_ACOES)
 KIND_NAMES = {"choice": "Pergunta de escolha", "check": "Verificação sim/não", "score": "Escala",
               "multi": "Múltipla escolha", "select": "Seleção/quantidade", "query": "Consulta avançada",
               "if": "Condição (se)", "action": "Ação"}
@@ -31,7 +31,13 @@ ACTION_NAMES = {"notify": "Notificar", "log": "Registrar no histórico", "write_
                 "webhook": "Webhook", "command": "Comando", "stop": "Parar", "email_move": "Mover e-mail",
                 "criar_card": "Criar card", "tarefa": "Criar tarefa", "alerta": "Criar alerta", "notificar": "Avisar",
                 "etiquetar": "Etiquetar", "arquivar": "Arquivar", "abrir_app": "Abrir app",
-                "responder_sugestao": "Sugerir resposta"}
+                "responder_sugestao": "Sugerir resposta", "destacar": "Destacar", "lembrete": "Criar lembrete",
+                "nota": "Criar nota", "atualizar_card": "Atualizar card", "mover_card": "Mover card",
+                "concluir_card": "Concluir card", "prioridade": "Mudar prioridade", "abrir_site": "Abrir site",
+                "ignorar": "Ignorar", "encadear": "Rodar outra automação", "adicionar_lista": "Adicionar à lista",
+                "registrar": "Registrar no histórico", "tratar": "Tratar"}
+TRAT_NAMES = {"extrair": "Extrair campos", "classificar": "Classificar", "resumir": "Resumir (frase central)",
+              "formatar": "Formatar", "agrupar": "Agrupar e resumir"}
 TREE_KEYS = ("name", "enabled", "when", "start", "nodes")
 
 NODE_W, NODE_H, PORT_H, GAP_X, GAP_Y = 240, 64, 26, 90, 40
@@ -45,6 +51,18 @@ def node_kind(n: dict) -> str:
 
 
 def _label(nid: str, kind: str, n: dict) -> str:
+    if kind == "action" and n.get("action") == "tratar":
+        base = TRAT_NAMES.get(n.get("tipo"), "Tratar")
+        if n.get("tipo") == "classificar" and n.get("opcoes"):
+            return f"{base}: {' / '.join(map(str, n['opcoes']))}"
+        if n.get("tipo") == "extrair" and n.get("campos"):
+            return f"{base}: {', '.join(map(str, n['campos']))}"
+        if n.get("tipo") == "agrupar":
+            return f"{base} a cada {n.get('minutos', 30)} min"
+        return base
+    if kind == "if" and isinstance(n.get("if"), dict) and n["if"].get("count_min"):
+        c = n["if"]["count_min"]
+        return f"Mais de {c.get('n')} em {c.get('minutos')} min"
     if kind == "action":
         for v in (n.get("title"), n.get("titulo"), n.get("etiqueta"), n.get("file"), n.get("url"), n.get("folder"), n.get("message"),
                   " ".join(map(str, n.get("argv") or []))):
@@ -295,17 +313,15 @@ def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
                           "query": "escreva a consulta"}[kind])
         elif kind == "if":
             c = p.get("if")
-            if not isinstance(c, dict) or not any(c.get(k) for k in ("contains_any", "contains_all", "regex",
-                                                                      "source_in", "app_in", "sender_has",
-                                                                      "seguranca_in", "categoria_in",
-                                                                      "prioridade_min", "vip")):
+            if not isinstance(c, dict) or not any(c.get(k) not in (None, "", [], {}, False) for k in COND_KEYS):
                 add(nid, "a condição está vazia: diga o que procurar no texto, remetente, app ou origem")
             elif c.get("regex"):
-                import re
                 try:
-                    re.compile(c["regex"])
-                except re.error as e:
-                    add(nid, f"expressão regular inválida: {e}")
+                    regex_segura(c["regex"])
+                except TreeError as e:
+                    m = str(e)
+                    add(nid, ("expressão regular inválida: " + m.split(": ", 1)[1]) if m.startswith("regex inválida")
+                        else m)
         elif kind == "action":
             a = p.get("action")
             if a not in ACTIONS:
@@ -320,6 +336,17 @@ def validate_graph(graph: dict, tree: dict = None) -> List[dict]:
                 add(nid, "diga para qual pasta mover o e-mail")
             elif a == "etiquetar" and not str(p.get("etiqueta") or "").strip():
                 add(nid, "diga qual etiqueta pôr")
+            elif a == "tratar" and p.get("tipo") not in TRATAMENTOS:
+                add(nid, "escolha o tratamento: extrair, classificar, resumir, formatar ou agrupar")
+            elif a == "tratar" and p.get("tipo") == "classificar" and len([o for o in p.get("opcoes") or []
+                                                                         if str(o).strip()]) < 2:
+                add(nid, "classificar precisa de pelo menos duas opções")
+            elif a == "abrir_site" and not str(p.get("url") or "").startswith(("https://", "http://")):
+                add(nid, "diga o endereço do site (https://…)")
+            elif a == "encadear" and not str(p.get("automacao") or "").strip():
+                add(nid, "diga qual automação rodar")
+            elif a == "adicionar_lista" and not str(p.get("lista") or "").strip():
+                add(nid, "diga em qual lista adicionar")
         mp = p.get("min_probability")
         if mp is not None and not (isinstance(mp, (int, float)) and 0 <= mp <= 1):
             add(nid, "a confiança mínima deve estar entre 0 e 1")

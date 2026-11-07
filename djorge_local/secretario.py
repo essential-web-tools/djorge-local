@@ -193,6 +193,7 @@ class Secretario:
         a.hooks["arquivar"] = self._h_arquivar
         a.hooks["notificar"] = self._h_notificar
         a.hooks["destacar"] = self._h_destacar
+        self.automacoes.ligar(app)                       # entradas além de mensagens + ações novas (automacoes.py)
 
     # ------------------------------------------------------------------------------------ configuração --
     def config(self) -> Dict:

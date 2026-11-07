@@ -85,6 +85,8 @@ class Models:
         self.last_used = {}                 # name -> time.time() do último uso (descarregar ocioso)
         self._dormindo = set()              # descarregados por ociosidade: recarregam sozinhos no próximo uso
         self._api_on = {}                   # name -> True/False: API local ligada/desligada pela interface
+        self.motores = {}                   # name -> Motor (fachada: lote, cache, aquecimento); sobrevive ao
+                                            # descarregar ocioso e recarrega o modelo sozinho no próximo pedido
 
     def get(self, name="flash"):
         if name not in self.cfg["models"] or not self.cfg["models"][name].get("enabled", True):
@@ -145,10 +147,45 @@ class Models:
                 self.engine[name] = "ONNX int8" if prof.get("onnx") == "int8" else (
                     "ONNX fp16" if prof["engine"] == "onnx" else "PyTorch")
                 z.config.sentinel_endpoint = bool(m.get("service"))     # /v1/sentinel only on the Sentinel
+                self._ligar_motor(name, z)
                 self._z[name] = z
                 self.state[name] = "pronto"
                 self._start_api(name, z)
             return self._z[name]
+
+    # ------------------------------------------------------------------------------------ motor --
+    def motor(self, name="flash"):
+        """O Motor do modelo (cria se preciso; carrega o modelo só no primeiro pedido que não estiver no cache)."""
+        mo = self.motores.get(name)
+        if mo is None:
+            from .motor import Motor
+            conf = dict(self.cfg.get("motor") or {})
+            mo = Motor(carregar=lambda n=name: self.get(n).semantic, ao_usar=lambda n=name: self._usou(n), **conf)
+            self.motores[name] = mo
+        return mo
+
+    def _usou(self, name):
+        self.last_used[name] = time.time()
+        _atividade()
+
+    def _ligar_motor(self, name, z):
+        if (self.cfg.get("motor") or {}).get("ativo", True) is False or z.semantic is None:
+            return
+        from .motor import Motor
+        if isinstance(z.semantic, Motor):
+            return
+        mo = self.motor(name)
+        mo.trocar(z.semantic)
+        z.semantic = mo
+        try:
+            z.executor.sem = mo
+        except Exception:
+            pass
+        mo.aquecer()
+
+    def motor_info(self, name="flash") -> dict:
+        mo = self.motores.get(name)
+        return mo.metricas() if mo is not None else {}
 
     # ------------------------------------------------------------ conversão para ONNX (uma vez) --
     def _maybe_optimize(self, name, art):
@@ -354,6 +391,8 @@ class Models:
             threading.Thread(target=_close, daemon=True).start()
         self.apis.pop(name, None)
         self.engine.pop(name, None)
+        if name in self.motores:
+            self.motores[name].soltar()
         self._dormindo.discard(name)
         self.state[name] = "não carregado"
         del z

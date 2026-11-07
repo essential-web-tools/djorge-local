@@ -425,7 +425,7 @@ def compilar(a: Dict) -> Dict:
         first = nid
     if q.get("modelo_acha"):
         frase = q["modelo_acha"].rstrip(".") + "."
-        nodes["modelo"] = {"check": frase[:1].upper() + frase[1:], "keywords": [], "min_probability": 0.6,
+        nodes["modelo"] = {"check": frase, "keywords": [], "min_probability": 0.6,
                            "branches": {"true": first}}
         first = "modelo"
     if q.get("assunto"):
@@ -681,6 +681,8 @@ def resumo(a: Dict) -> str:
             t = f"adicionar à lista “{p['lista']}”"
         if e["acao"] == "encadear" and p.get("automacao"):
             t += f" (“{p['automacao']}”)"
+        if e["acao"] == "responder_sugestao" and p.get("abrir"):
+            t += " e abrir o app com o rascunho (você envia)"
         if e["acao"] == "notificar" and p.get("tom") in ("aviso", "urgente"):
             t += f" ({p['tom']})"
         if p.get("campos"):
@@ -980,6 +982,8 @@ def resumo_curto(a: Dict, artigo: str = "") -> str:
         gat += f" sobre {q['assunto']}"
     if q["palavras"]:
         gat += " com " + " ou ".join(f"“{p}”" for p in q["palavras"])
+    if (a.get("gatilho") or {}).get("tipo", "mensagem") != "mensagem":
+        gat = _gatilho_pt(a["gatilho"])
     dono = {"a": "dela", "o": "dele"}.get(artigo, "")
     faz = []
     for e in a["entao"]:
@@ -998,6 +1002,173 @@ def resumo_curto(a: Dict, artigo: str = "") -> str:
         else:
             faz.append(ACAO_PT[ac])
     return gat + " → " + (", ".join(faz[:-1]) + " e " + faz[-1] if len(faz) > 1 else faz[0])
+
+
+_COLS_RX = [(r"\bfeito|conclu", "feito"), (r"\bhoje\b", "hoje"), (r"\bfazendo|andamento", "fazendo"),
+            (r"\baguardando|esperando", "aguardando"), (r"\bentrada\b", "entrada")]
+_NUM = r"(\d+(?:[.,]\d+)*)"
+
+
+def _v25(texto: str, cond: str, faz: str, quando: Dict, entao: List[Dict], notas: List[str]):
+    """Frases das entradas, condições, tratamentos e ações novas (v2.5). Mexe em quando/entao; devolve
+    (gatilho, tratar)."""
+    t, sc, sf = fold(texto), fold(cond), fold(faz)
+    g: Dict = {"tipo": "mensagem"}
+    m = re.search(r"\b(todo dia|todos os dias|diariamente|dias uteis|toda (?:segunda|terca|quarta|quinta|sexta)|"
+                  r"de segunda a sexta|toda manha)\b[^,]*?(?:\b(?:as|a)\s+(\d{1,2})(?:[:h](\d{2}))?\s*h?)?", t)
+    if m:
+        hm = re.search(r"\b(?:as|a)\s+(\d{1,2})(?:[:h](\d{2}))?\s*h?\b", t[m.start():])
+        g = {"tipo": "horario", "hora": f"{int(hm.group(1)) if hm else 9:02d}:{int((hm.group(2) if hm else 0) or 0):02d}"}
+        if re.search(r"dias uteis|de segunda a sexta", t):
+            g["dias"] = "uteis"
+        else:
+            d = re.findall(r"toda (segunda|terca|quarta|quinta|sexta)", t)
+            if d:
+                g["dias"] = [["seg", "ter", "qua", "qui", "sex"].index(x[:3]) for x in d]
+    elif re.search(r"\b(card|cartao|tarefa)s?\b[^,]{0,30}\b(atrasad|atrasar|atrasou|vencid|venceu|passar do prazo)", t):
+        g = {"tipo": "card_atrasado"}
+    elif re.search(r"\bprazo\b[^,]{0,40}\b(chegando|vencer|perto|proximo)|\bantes do prazo\b", t):
+        h = re.search(r"\b(\d{1,3})\s*(h|horas?|dias?)\b", t)
+        g = {"tipo": "prazo_chegando", "horas": (int(h.group(1)) * (24 if h.group(2).startswith("d") else 1)) if h else 24}
+    elif re.search(r"\b(card|cartao|tarefa)s?\b[^,]{0,30}\b(concluid|terminad|finalizad|feit[oa])", sc):
+        g = {"tipo": "card_concluido"}
+    elif re.search(r"\b(card|cartao|tarefa)s?\b[^,]{0,30}\b(criad|nov[oa]|adicionad)|\b(criar|crio|adicionar) (um )?(card|cartao|tarefa)", sc):
+        g = {"tipo": "card_criado"}
+    elif re.search(r"\b(card|cartao|tarefa)s?\b[^,]{0,30}\b(mudar|alterad|mudad|editad|mover|movid)", sc):
+        g = {"tipo": "card_alterado"}
+    elif re.search(r"\bnotas?\b[^,]{0,30}\b(criad|nova|escrev)|\b(criar|crio|escrever) uma nota\b", sc):
+        g = {"tipo": "nota_criada"}
+    elif re.search(r"\bnotas?\b[^,]{0,30}\b(mudar|alterad|editad)", sc):
+        g = {"tipo": "nota_alterada"}
+    elif re.search(r"\balertas?\b[^,]{0,20}\b(dispar|tocar|soar)", sc):
+        g = {"tipo": "alerta"}
+    elif re.search(r"\b(quando eu (mandar|pedir)|manualmente|rodar agora|quando eu clicar)\b", t):
+        g = {"tipo": "manual"}
+    if g["tipo"] != "mensagem":                         # as fontes e o remetente do "Se…" não valem aqui
+        quando["fontes"], quando["apps"] = [], []
+        quando.pop("remetente", None); quando.pop("categoria", None)
+        if g["tipo"].startswith("card") or g["tipo"] == "prazo_chegando":
+            et = re.search(r"\betiqueta\s+[\"“']?([\wÀ-ÿ]{2,30})", cond, re.I)
+            if et:
+                quando["etiquetas_card"] = [et.group(1).casefold()]
+    # condições
+    nc = re.findall(r"\b(?:sem|nao tiver|que nao tenha|nao contiver|exceto se tiver)\s+[\"“']([^\"”']{2,40})[\"”']", sc)
+    if nc:
+        quando["nao_contem"] = nc
+        quando["palavras"] = [p for p in quando.get("palavras") or [] if fold(p) not in nc]
+    if re.search(r"\b(com|tiver|tenha)\s+(um\s+)?anexo", sc):
+        quando["tem_anexo"] = True
+    if re.search(r"\b(com|tiver|tenha)\s+(um\s+)?link", sc):
+        quando["tem_link"] = True
+    if re.search(r"\b(com|tiver|tenha)\s+(um\s+)?codigo", sc):
+        quando["tem_codigo"] = True
+    m = re.search(r"\bvalor\D{0,20}\bentre\s+(?:r\$\s*)?" + _NUM + r"\s+e\s+(?:r\$\s*)?" + _NUM, sc)
+    if m:
+        quando["valor_min"], quando["valor_max"] = m.group(1), m.group(2)
+    else:
+        m = re.search(r"\b(?:valor|custar|custo|total)?\s*(?:acima de|maior que|mais de|passar de|superior a)\s+r\$\s*" + _NUM, sc) \
+            or re.search(r"\bvalor\s+(?:acima de|maior que|mais de|passar de|superior a)\s+(?:r\$\s*)?" + _NUM, sc)
+        if m:
+            quando["valor_min"] = m.group(1)
+        m = re.search(r"\b(?:abaixo de|menor que|menos de|inferior a)\s+(?:r\$\s*)?" + _NUM, sc)
+        if m and re.search(r"valor|r\$|custa", sc):
+            quando["valor_max"] = m.group(1)
+    m = re.search(r"\bentre\s+(?:as\s+)?(\d{1,2})(?:[:h](\d{2}))?\s*h?\s+e\s+(?:as\s+)?(\d{1,2})(?:[:h](\d{2}))?\s*h", sc)
+    if m:
+        quando["hora_de"] = f"{int(m.group(1)):02d}:{int(m.group(2) or 0):02d}"
+        quando["hora_ate"] = f"{int(m.group(3)):02d}:{int(m.group(4) or 0):02d}"
+    elif re.search(r"\bfora do (horario|expediente)\b", sc):
+        quando["hora_de"], quando["hora_ate"] = "18:00", "08:00"
+    if g["tipo"] != "horario" and re.search(r"\b(em dias uteis|nos dias uteis|de segunda a sexta)\b", sc):
+        quando["dias"] = [0, 1, 2, 3, 4]
+    elif re.search(r"\b(no fim de semana|nos fins de semana|sabado ou domingo)\b", sc):
+        quando["dias"] = [5, 6]
+    m = re.search(r"\bmais de\s+(\d{1,3})\s+\w*\s*(?:\w+\s+)?em\s+(\d{1,4})\s*(min|minutos?|h|horas?)\b", sc)
+    if m:
+        quando["quantidade"] = {"n": int(m.group(1)), "minutos": int(m.group(2)) * (60 if m.group(3).startswith("h") else 1)}
+    m = re.search(r"\b(?:o modelo|o djorge|voce)\s+(?:achar|acha|julgar|perceber|entender)\s+que\s+(?:e\s+|for\s+)?(.+?)$", fold(cond)) \
+        or re.search(r"\b(?:parecer|parece)\s+(?:ser\s+)?(um[a]?\s+.+?)$", fold(cond))
+    if m:
+        ini = len(cond) - len(m.group(1)) if len(cond) == len(fold(cond)) else None
+        frase = cond[ini:] if ini is not None else m.group(1)
+        quando["modelo_acha"] = "é " + frase.strip(" .,;") if not fold(frase).startswith(("e ", "esta", "tem")) else frase.strip(" .,;")
+        if fold(quando.get("assunto") or "") and fold(quando["assunto"]) in fold(frase):
+            quando["assunto"] = ""
+        notas.append("“O modelo acha que…” só funciona com o modelo carregado.")
+    # tratamentos
+    tratar: List[Dict] = []
+    m = re.search(r"\b(?:classifique|classifica|classificar|separe|separa)\s+(?:em|entre|como)\s+(.+?)(?:[.;]|,?\s+e\s+(?:depois|entao|crie|cria|me|avise|mova|coloque)|,\s*(?:depois|entao|crie|cria|avise)|$)", sf)
+    if m:
+        bruto = faz[m.start(1):m.end(1)] if len(faz) == len(sf) else m.group(1)
+        ops = [x.strip(" \"“”'") for x in re.split(r",\s*|\s+ou\s+|\s+e\s+", bruto) if x.strip(" \"“”'")]
+        if len(ops) >= 2:
+            tratar.append({"tipo": "classificar", "opcoes": ops[:6]})
+    if re.search(r"\b(resuma|resume|resumir|resumo|frase principal)\b", sf):
+        tratar.append({"tipo": "resumir"})
+    m = re.search(r"\b(?:junte|junta|agrupe|agrupa|juntar|agrupar)\b[^,]*?\b(?:a cada|por|de)\s+(\d{1,4})\s*(min|minutos?|h|horas?)", sf)
+    if m:
+        tratar.append({"tipo": "agrupar", "minutos": int(m.group(1)) * (60 if m.group(2).startswith("h") else 1)})
+    if re.search(r"\b(extraia|extrai|extrair|pegue|pega|separe)\b", sf):
+        cs = [c for c, rx in CAMPO_RX.items() if re.search(rx, sf)]
+        if cs:
+            tratar.insert(0, {"tipo": "extrair", "campos": cs})
+    # ações novas
+    novas: List[Dict] = []
+    if re.search(r"\blembrete\b|\bme lembre\b", sf):
+        for e in entao:
+            if e["acao"] in ("criar_card", "notificar") and "lembrete" in sf:
+                e["acao"] = "lembrete"; break
+    if re.search(r"\b(crie|cria|criar|faca|faz|anote|anota)\b[^,]*\bnota\b", sf):
+        for e in entao:
+            if e["acao"] == "criar_card":
+                e["acao"] = "nota"; e["params"] = {"titulo": e["params"].get("titulo") or "{title}"}; break
+    m = re.search(r"\b(?:mova|move|mover|coloque|coloca|passe|passa|jogue|joga)\b[^,]*?\b(?:para|pra|em|na)\s+(?:a\s+)?(?:coluna\s+)?([\w ]{3,20})", sf)
+    if m and (g["tipo"] != "mensagem" or re.search(r"\bcoluna\b", sf)):
+        col = next((c for rx, c in _COLS_RX if re.search(rx, m.group(1))), None)
+        if col:
+            novas.append({"acao": "mover_card", "params": {"coluna": col}})
+    if re.search(r"\b(conclua|conclui|concluir|marque como feit|marca como feit|finalize|finaliza)\w*", sf):
+        novas.append({"acao": "concluir_card", "params": {}})
+    m = re.search(r"\b(?:adicione|adiciona|adicionar|ponha|poe|coloque|coloca|bote)\b[^,]*?\blista\s+(?:de\s+)?[\"“']?([\wÀ-ÿ ]{2,30}?)[\"”']?(?:[,.;]|$|\s+e\s)", faz, re.I)
+    if m:
+        novas.append({"acao": "adicionar_lista", "params": {"lista": "Lista de " + m.group(1).strip() if not
+                                                            fold(m.group(1)).startswith("lista") else m.group(1).strip()}})
+    if re.search(r"\b(registre|registra|registrar|anote no historico|guarde no historico)\b", sf):
+        novas.append({"acao": "registrar", "params": {"mensagem": "{title} — {text:120}"}})
+    m = re.search(r"https?://\S+", faz)
+    if m and re.search(r"\b(abra|abre|abrir)\b", sf):
+        for e in entao:
+            if e["acao"] == "abrir_app":
+                e["acao"], e["params"] = "abrir_site", {"url": m.group(0).rstrip(".,;")}
+                break
+        else:
+            novas.append({"acao": "abrir_site", "params": {"url": m.group(0).rstrip(".,;")}})
+    m = re.search(r"\b(?:rode|roda|rodar|execute|executa|dispare|dispara)\s+(?:tambem\s+)?a\s+automacao\s+[\"“']?([^\"”',.;]{2,60})", sf)
+    if m:
+        novas.append({"acao": "encadear", "params": {"automacao": m.group(1).strip()}})
+    m = re.search(r"\bprioridade\s+(baixa|normal|alta|urgente)\b", sf)
+    if m and re.search(r"\b(mude|muda|mudar|ponha|poe|coloque|coloca|deixe|deixa|marque|marca|suba|sobe)\b", sf):
+        novas.append({"acao": "prioridade", "params": {"prioridade": m.group(1)}})
+    if re.search(r"\b(ignore|ignora|ignorar)\b", sf):
+        for e in entao:
+            if e["acao"] == "arquivar":
+                e["acao"] = "ignorar"
+    if re.search(r"\b(abra|abre|abrir)\b[^,]*\b(rascunho|resposta)\b|\bprepare\b[^,]*\bresposta\b[^,]*\babr", sf):
+        for e in entao:
+            if e["acao"] == "responder_sugestao":
+                e["params"]["abrir"] = True
+    for e in entao:
+        if e["acao"] == "notificar" and re.search(r"\burgente\b", sf):
+            e["params"]["tom"] = "urgente"
+    if novas:
+        so_card = [e for e in entao if e["acao"] == "criar_card"]
+        if so_card and not re.search(r"\b(crie|cria|criar|faca|novo|nova)\b[^,]*\b(card|cartao)\b", sf):
+            entao[:] = [e for e in entao if e["acao"] != "criar_card"]
+        etq = [e for e in entao if e["acao"] == "etiquetar"]
+        if etq and any(n["acao"] in ("prioridade",) for n in novas) and not re.search(r"\betiquet", sf):
+            entao[:] = [e for e in entao if e["acao"] != "etiquetar"]
+        entao += [n for n in novas if n["acao"] not in [e["acao"] for e in entao]]
+    return g, tratar
 
 
 def de_texto(frase: str, marcar=None, vips=()) -> Dict:
@@ -1105,11 +1276,12 @@ def de_texto(frase: str, marcar=None, vips=()) -> Dict:
         elif ac == "abrir_app":
             p["app"] = "email" if re.search(r"e-?mail", sf) else "navegador" if re.search(r"navegador|site", sf) else "whatsapp"
         entao.append({"acao": ac, "params": p})
+    gatilho, tratar_ = _v25(texto, cond, faz, quando, entao, notas)
     nome = (rotulo[:1].upper() + rotulo[1:]) if rotulo else (
         f"Mensagens de {quando['remetente']}" if quando.get("remetente") else "Automação")
-    a = normalizar({"nome": nome, "quando": quando, "entao": entao})
-    if not any(a["quando"][k] for k in ("fontes", "apps", "remetente", "palavras", "assunto", "categoria",
-                                        "prioridade_min", "vip")):
+    a = normalizar({"nome": nome, "quando": quando, "entao": entao, "gatilho": gatilho, "tratar": tratar_})
+    if a["gatilho"]["tipo"] == "mensagem" and not any(_pecas(a["quando"])) and not a["quando"]["assunto"] \
+            and not a["quando"]["modelo_acha"]:
         notas.append("Vale para tudo que chegar. Se não for isso, diga de quem, de qual app ou sobre o quê.")
     a["origem"] = texto
     return {"automacao": a, "resumo": resumo(a), "resumo_curto": resumo_curto(a, artigo), "notas": notas}
@@ -1122,12 +1294,32 @@ class Automacoes:
         self.lock = threading.Lock()
         self._itens: List[Dict] = []
         self._arvores: Dict[str, Dict] = {}
+        self.disparos: Dict[str, str] = {}             # "aid|chave" -> quando (horário/prazo/atraso: uma vez só)
+        self.app = None
+        self._local = threading.local()                # evita laço: ação de automação não dispara automação de card
+        self._stop = threading.Event()
+        self._thread = None
         if self.path.is_file():
             try:
-                self._itens = json.loads(self.path.read_text(encoding="utf-8")).get("automacoes") or []
+                d = json.loads(self.path.read_text(encoding="utf-8"))
+                self._itens = d.get("automacoes") or []
+                self.disparos = dict(d.get("disparos") or {})
             except Exception:
                 self._itens = []
+        self._itens = [self._migrar(a) for a in self._itens]
         self._recompilar()
+
+    @staticmethod
+    def _migrar(a: Dict) -> Dict:
+        """Automações salvas em versões antigas ganham os campos novos (gatilho, tratar, condições v2.5)."""
+        try:
+            m = normalizar(a, a)
+            for k in ("origem", "ultima"):
+                if a.get(k):
+                    m[k] = a[k]
+            return m
+        except Exception:
+            return a
 
     def _recompilar(self):
         arv = {}
@@ -1141,7 +1333,10 @@ class Automacoes:
     def _gravar(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"automacoes": self._itens}, ensure_ascii=False, indent=1), encoding="utf-8")
+        if len(self.disparos) > 4000:
+            self.disparos = dict(sorted(self.disparos.items(), key=lambda kv: kv[1])[-2000:])
+        tmp.write_text(json.dumps({"automacoes": self._itens, "disparos": self.disparos}, ensure_ascii=False,
+                                  indent=1), encoding="utf-8")
         tmp.replace(self.path)
         self._recompilar()
 
@@ -1189,10 +1384,182 @@ class Automacoes:
             except Exception:
                 pass
 
-    def ativas(self) -> List[tuple]:
-        """[(automação, árvore)] das ativas."""
+    def ativas(self, tipo: Optional[str] = "mensagem") -> List[tuple]:
+        """[(automação, árvore)] das ativas com esse gatilho (None = todas). O secretário pede as de mensagem."""
         with self.lock:
-            return [(a, self._arvores[a["id"]]) for a in self._itens if a.get("ativa", True) and a["id"] in self._arvores]
+            return [(a, self._arvores[a["id"]]) for a in self._itens if a.get("ativa", True) and a["id"] in self._arvores
+                    and (tipo is None or (a.get("gatilho") or {}).get("tipo", "mensagem") == tipo)]
+
+    def achar(self, ref: str) -> Optional[Dict]:
+        """Por id ou por nome (sem acento/maiúscula) — para "rodar outra automação"."""
+        with self.lock:
+            r = fold(ref).strip()
+            a = next((x for x in self._itens if x["id"] == ref), None) or \
+                next((x for x in self._itens if fold(x.get("nome")).strip() == r), None)
+            return copy.deepcopy(a)
+
+    # ------------------------------------------------------------------- motor (entradas além de mensagens) --
+    def ligar(self, app, iniciar: bool = True):
+        """Liga as entradas novas: cards (criado/alterado/concluído), notas, alertas e o relógio (horário, prazo
+        chegando, atrasado, grupos). Também liga as ações novas (cards, notas, listas, encadear, registrar)."""
+        if self.app is app:
+            return
+        self.app = app
+        _ligar_acoes(self, app)
+        _ligar_cards(self, app)
+        _ligar_notas(self, app)
+        _ligar_alertas(self, app)
+        if iniciar and not getattr(app, "_sem_relogio_automacoes", False):
+            self._thread = threading.Thread(target=self._laco, name="automacoes", daemon=True)
+            self._thread.start()
+
+    def parar(self):
+        self._stop.set()
+
+    def _laco(self):
+        while not self._stop.wait(30):
+            try:
+                self.tick()
+            except Exception:
+                pass
+
+    def _agora(self):
+        sec = getattr(self.app, "secretario", None) if self.app is not None else None
+        f = getattr(sec, "agora", None)
+        import datetime as _dt
+        try:
+            return f() if callable(f) else _dt.datetime.now()
+        except Exception:
+            return _dt.datetime.now()
+
+    def evento(self, tipo: str, ev: Dict, so: Optional[str] = None, mode: Optional[str] = None) -> List[Dict]:
+        """Roda as automações ativas com esse gatilho para o evento; devolve [{automacao, acoes}]."""
+        if self.app is None or getattr(self._local, "ocupado", False):
+            return []
+        ev = dict(ev)
+        ev.setdefault("time", self._agora().strftime("%Y-%m-%dT%H:%M:%S"))
+        ev.setdefault("gatilho", tipo)
+        out = []
+        self._local.ocupado = True
+        try:
+            for a, tree in self.ativas(tipo):
+                if so and a["id"] != so:
+                    continue
+                try:
+                    r = self.app.runner.run(tree, ev, mode=mode)
+                except Exception as e:
+                    out.append({"automacao": a["id"], "nome": a["nome"], "erro": f"{type(e).__name__}: {e}"})
+                    continue
+                acoes = [{k: v for k, v in s.items() if k not in ("node", "next", "ms", "spec")}
+                         for s in r["trail"] if s.get("action") in NOVAS_ACOES]
+                if acoes:
+                    self.contar(a["id"])
+                out.append({"automacao": a["id"], "nome": a["nome"], "acoes": acoes,
+                            "agrupado": any(s.get("status") == "agrupado" for s in r["trail"])})
+                try:
+                    self.app.hist.add({"type": "automacao", "gatilho": tipo, "automacao": a["id"], "nome": a["nome"],
+                                       "acoes": [x.get("action") for x in acoes]})
+                except Exception:
+                    pass
+        finally:
+            self._local.ocupado = False
+        return out
+
+    def rodar(self, aid: str, ev: Optional[Dict] = None, mode: Optional[str] = None) -> Dict:
+        """"Rodar agora": roda a automação já (qualquer gatilho) com um evento de exemplo ou o resumo do dia."""
+        a = self.get(aid)
+        tree = self._arvores.get(aid)
+        if a is None or tree is None:
+            raise KeyError("automação não encontrada")
+        ev = dict(ev or {})
+        if not ev.get("text") and not ev.get("title"):
+            ev.update(self._evento_agenda(a))
+        ev.setdefault("source", "manual")
+        ev.setdefault("time", self._agora().strftime("%Y-%m-%dT%H:%M:%S"))
+        r = self.app.runner.run(tree, ev, mode=mode)
+        acoes = [{k: v for k, v in s.items() if k not in ("node", "next", "ms", "spec")}
+                 for s in r["trail"] if s.get("action") in NOVAS_ACOES]
+        if acoes and mode != "testar":
+            self.contar(aid)
+        return {"automacao": aid, "casou": bool(acoes), "acoes": acoes,
+                "trilha": [{k: v for k, v in s.items() if k in ("node", "answer", "action", "status", "tipo")}
+                           for s in r["trail"]]}
+
+    def _evento_agenda(self, a: Dict) -> Dict:
+        cards = []
+        try:
+            hoje = self._agora().strftime("%Y-%m-%d")
+            cards = [c for c in self.app.cards.all() if not c.get("done") and c.get("column") != "feito"
+                     and (c.get("column") == "hoje" or str(c.get("due") or "")[:10] <= hoje and c.get("due"))]
+        except Exception:
+            pass
+        linhas = [f"• {c.get('title')}" + (f" (prazo {formatar(c['due'], 'data')})" if c.get("due") else "") for c in cards[:15]]
+        return {"source": "agenda", "title": a.get("nome") or "Automação",
+                "text": ("Pendências de hoje:\n" + "\n".join(linhas)) if linhas else "Nada pendente para hoje."}
+
+    def _uma_vez(self, chave: str, quando: str) -> bool:
+        with self.lock:
+            if chave in self.disparos:
+                return False
+            self.disparos[chave] = quando
+        return True
+
+    def tick(self, agora=None) -> List[Dict]:
+        """Relógio (a cada 30 s): horário, prazo chegando, card atrasado e grupos que venceram."""
+        import datetime as _dt
+        if self.app is None:
+            return []
+        agora = agora or self._agora()
+        out, gravar = [], False
+        for a, tree in self.ativas("horario"):
+            g = a.get("gatilho") or {}
+            if g.get("dias") and agora.weekday() not in g["dias"]:
+                continue
+            if agora.strftime("%H:%M") < g.get("hora", "09:00"):
+                continue
+            hj = agora.strftime("%Y-%m-%d")
+            if agora.strftime("%H:%M") > _soma_min(g.get("hora", "09:00"), 30):   # perdeu a hora (app desligado)
+                continue
+            if self._uma_vez(f"{a['id']}|{hj}", agora.isoformat(timespec="minutes")):
+                gravar = True
+                out += self.evento("horario", dict(self._evento_agenda(a), time=agora.isoformat(timespec="seconds")),
+                                   so=a["id"])
+        prazo, atraso = self.ativas("prazo_chegando"), self.ativas("card_atrasado")
+        if prazo or atraso:
+            try:
+                cards = [c for c in self.app.cards.all() if c.get("due") and not c.get("done")
+                         and c.get("column") != "feito"]
+            except Exception:
+                cards = []
+            for c in cards:
+                try:
+                    due = _dt.datetime.fromisoformat(str(c["due"])[:16] if "T" in str(c["due"]) else str(c["due"])[:10] + "T23:59")
+                except ValueError:
+                    continue
+                for a, _t in prazo:
+                    h = float((a.get("gatilho") or {}).get("horas") or 24)
+                    if agora <= due <= agora + _dt.timedelta(hours=h) and \
+                            self._uma_vez(f"{a['id']}|prazo|{c['id']}|{c['due']}", agora.isoformat(timespec="minutes")):
+                        gravar = True
+                        out += self.evento("prazo_chegando", ev_card(c, "prazo_chegando"), so=a["id"])
+                for a, _t in atraso:
+                    if due < agora and self._uma_vez(f"{a['id']}|atraso|{c['id']}|{c['due']}",
+                                                     agora.isoformat(timespec="minutes")):
+                        gravar = True
+                        out += self.evento("card_atrasado", ev_card(c, "card_atrasado"), so=a["id"])
+        try:
+            arv = {t["name"]: t for _a, t in self.ativas(None)}
+            for r in self.app.runner.esvaziar_grupos(arv):
+                out.append({"grupo": r["tree"], "acoes": [s for s in r["trail"] if s.get("action") in NOVAS_ACOES]})
+        except Exception:
+            pass
+        if gravar:
+            with self.lock:
+                try:
+                    self._gravar()
+                except Exception:
+                    pass
+        return out
 
     def arvore(self, aid: str) -> Optional[Dict]:
         return copy.deepcopy(self._arvores.get(aid))
@@ -1200,3 +1567,224 @@ class Automacoes:
     @staticmethod
     def modelos() -> List[Dict]:
         return [dict(copy.deepcopy(m), resumo=resumo(normalizar(m))) for m in MODELOS]
+
+
+# ---------------------------------------------------------------------------------------- ligações do motor --
+def _soma_min(hm: str, n: int) -> str:
+    h, m = map(int, hm.split(":"))
+    t = min(23 * 60 + 59, h * 60 + m + n)
+    return f"{t // 60:02d}:{t % 60:02d}"
+
+
+_PRIO_TXT = {0: "baixa", 1: "normal", 2: "alta", 3: "urgente"}
+
+
+def ev_card(c: Dict, gatilho: str) -> Dict:
+    """Card -> evento para as automações ({title}, {text}, {prazo}, etiqueta, coluna...)."""
+    due = c.get("due")
+    return {"source": "card", "gatilho": gatilho, "card_id": c.get("id"), "title": c.get("title") or "",
+            "text": c.get("body") or "", "tags": list(c.get("tags") or []), "column": c.get("column") or "",
+            "kind": c.get("kind") or "", "prazo": formatar(due, "data") if due else "", "prazo_iso": due or "",
+            "prioridade": _PRIO_TXT.get(int(c.get("priority") or 0), "normal"),
+            "remetente": ((c.get("people") or [{}])[0] or {}).get("nome") or ""}
+
+
+def _ligar_cards(A: "Automacoes", app):
+    cards = getattr(app, "cards", None)
+    if cards is None or getattr(cards, "_automacoes", False):
+        return
+    o_create, o_update, o_move = cards.create, cards.update, cards.move
+
+    def depois(antes, c):
+        try:
+            if c is None:
+                return
+            if antes is None:
+                A.evento("card_criado", ev_card(c, "card_criado"))
+                return
+            if c.get("done") and not antes.get("done") or (c.get("column") == "feito" and antes.get("column") != "feito"):
+                A.evento("card_concluido", ev_card(c, "card_concluido"))
+            mud = [k for k in ("title", "body", "column", "priority", "tags", "due", "done") if antes.get(k) != c.get(k)]
+            if mud:
+                A.evento("card_alterado", dict(ev_card(c, "card_alterado"), mudou=", ".join(mud)))
+        except Exception:
+            pass
+
+    def create(data):
+        c = o_create(data)
+        depois(None, c)
+        return c
+
+    def update(cid, data):
+        antes = cards.get(cid)
+        c = o_update(cid, data)
+        depois(antes, c)
+        return c
+
+    def move(cid, column, order=None, start=None):
+        antes = cards.get(cid)
+        c = o_move(cid, column, order, start)
+        depois(antes, c)
+        return c
+
+    cards.create, cards.update, cards.move = create, update, move
+    cards._automacoes = True
+
+
+def _ligar_notas(A: "Automacoes", app):
+    try:
+        notas = app.notas
+    except Exception:
+        return
+    if notas is None or getattr(notas, "_automacoes", False):
+        return
+    o_criar, o_atual = notas.criar, notas.atualizar
+    ev = lambda n, g: {"source": "nota", "gatilho": g, "nota_id": n.get("id"), "title": n.get("titulo") or "",
+                       "text": n.get("corpo") or "", "tags": list(n.get("etiquetas") or [])}
+
+    def criar(b):
+        n = o_criar(b)
+        try:
+            A.evento("nota_criada", ev(n, "nota_criada"))
+        except Exception:
+            pass
+        return n
+
+    def atualizar(nid, b):
+        antes = notas.get(nid)
+        n = o_atual(nid, b)
+        try:
+            if antes and (antes.get("titulo") != n.get("titulo") or antes.get("corpo") != n.get("corpo")):
+                A.evento("nota_alterada", ev(n, "nota_alterada"))
+        except Exception:
+            pass
+        return n
+
+    notas.criar, notas.atualizar = criar, atualizar
+    notas._automacoes = True
+
+
+def _ligar_alertas(A: "Automacoes", app):
+    alvo = None
+    for o in (getattr(app, "alertas_agendador", None), getattr(getattr(app, "alertas_agendador", None), "alertas", None),
+              getattr(app, "alertas", None)):
+        if o is not None and callable(getattr(o, "_disparar", None)):
+            alvo = o; break
+    if alvo is None or getattr(alvo, "_automacoes", False):
+        return
+    o_disp = alvo._disparar
+
+    def _disparar(a, agora):
+        r = o_disp(a, agora)
+        try:
+            A.evento("alerta", {"source": "alerta", "title": a.get("titulo") or "", "text": a.get("msg") or "",
+                                "card_id": a.get("card_id"), "alerta_id": a.get("id")})
+        except Exception:
+            pass
+        return r
+
+    alvo._disparar = _disparar
+    alvo._automacoes = True
+
+
+def _ligar_acoes(A: "Automacoes", app):
+    """Ações novas (v2.5). Nada sai do computador: cards, notas, listas e histórico ficam no app."""
+    h = app.actions.hooks
+    card_hook = h.get("criar_card")
+    if card_hook is not None:
+        h.setdefault("lembrete", card_hook)
+
+    def _card(spec, ctx, prep):
+        cid = prep.get("card_id")
+        if not cid or app.cards.get(cid) is None:
+            return {"status": "sem card", "error": "esta automação não tem um card para mudar"}
+        mud = dict(prep.get("mudancas") or {})
+        tag = mud.pop("tag", None)
+        if tag:
+            c0 = app.cards.get(cid)
+            mud["tags"] = list(dict.fromkeys(list(c0.get("tags") or []) + [tag]))
+        col = mud.pop("column", None)
+        c = app.cards.update(cid, mud) if mud else app.cards.get(cid)
+        if col and c.get("column") != col:
+            c = app.cards.move(cid, col)
+        return {"status": "ok", "card_id": cid}
+
+    for k in ("atualizar_card", "mover_card", "concluir_card"):
+        h[k] = _card
+
+    def _prioridade(spec, ctx, prep):
+        ev = ctx.get("event") or {}
+        if ev.get("notif_id") and not prep.get("card_id"):
+            sec = getattr(app, "secretario", None)
+            try:
+                sec.store.update(ev["notif_id"], prioridade=prep.get("prioridade") or "alta")
+                return {"status": "ok"}
+            except Exception as e:
+                return {"status": "erro", "error": str(e)}
+        return _card(spec, ctx, prep)
+
+    h["prioridade"] = _prioridade
+
+    o_etq = h.get("etiquetar")
+
+    def _etiquetar(spec, ctx, prep):          # em card (gatilhos de card) etiqueta o card; senão a mensagem
+        ev = ctx.get("event") or {}
+        if ev.get("card_id") and not ev.get("notif_id") and prep.get("etiqueta"):
+            c = app.cards.get(ev["card_id"])
+            if c is not None:
+                app.cards.update(c["id"], {"tags": list(dict.fromkeys(list(c.get("tags") or []) + [prep["etiqueta"]]))})
+                return {"status": "ok", "card_id": c["id"]}
+        return o_etq(spec, ctx, prep) if o_etq else {"status": "indisponível"}
+
+    if not getattr(o_etq, "_auto", False):
+        _etiquetar._auto = True
+        h["etiquetar"] = _etiquetar
+
+    def _nota(spec, ctx, prep):
+        n = app.notas.criar(prep["nota"])
+        return {"status": "ok", "nota_id": n["id"]}
+
+    h["nota"] = _nota
+
+    def _ignorar(spec, ctx, prep):
+        arq = h.get("arquivar")
+        r = arq(spec, ctx, prep) if arq else {}
+        return dict(r or {}, status="ignorado")
+
+    h["ignorar"] = _ignorar
+
+    def _lista(spec, ctx, prep):
+        nome, item = prep.get("lista") or "Lista", prep.get("item") or ""
+        if not item:
+            return {"status": "nada para adicionar"}
+        c = next((x for x in app.cards.all() if x.get("kind") == "lista" and fold(x.get("title")) == fold(nome)), None)
+        if c is None:
+            c = app.cards.create({"title": nome, "kind": "lista", "column": "entrada", "checklist": []})
+        cl = list(c.get("checklist") or [])
+        if not any(fold(x.get("text")) == fold(item) for x in cl):
+            cl.append({"text": item, "done": False})
+            app.cards.update(c["id"], {"checklist": cl})
+        return {"status": "ok", "card_id": c["id"]}
+
+    h["adicionar_lista"] = _lista
+
+    def _registrar(spec, ctx, prep):
+        app.hist.add({"type": "log", "origem": "automacao", "message": prep.get("mensagem") or ""})
+        return {"status": "ok"}
+
+    h["registrar"] = _registrar
+
+    def _encadear(spec, ctx, prep):
+        if int(ctx.get("cadeia") or 0) >= 3:
+            return {"status": "limite", "error": "no máximo 3 automações encadeadas"}
+        b = A.achar(prep.get("automacao") or "")
+        if b is None:
+            return {"status": "não achei", "error": f"automação “{prep.get('automacao')}” não existe"}
+        tree = A.arvore(b["id"])
+        if tree is None or (tree["name"] == ctx.get("tree")):
+            return {"status": "ignorado"}
+        r = app.runner.run(tree, ctx.get("event") or {}, mode=ctx.get("mode"), cadeia=int(ctx.get("cadeia") or 0) + 1)
+        feitas = [s.get("action") for s in r["trail"] if s.get("action") in NOVAS_ACOES]
+        return {"status": "ok", "rodou": b["nome"], "acoes": feitas}
+
+    h["encadear"] = _encadear

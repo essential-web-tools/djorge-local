@@ -36,7 +36,7 @@ log = logging.getLogger("djorge.model_download")
 
 NAME = "flash"
 PRODUCT = "DOFL V2"
-SIZE_MB = 447                       # tamanho aproximado do pacote (usado quando o servidor não informa)
+SIZE_MB = 241                       # tamanho aproximado do pacote (usado quando o servidor não informa)
 CHUNK = 1 << 20
 MAX_UNZIPPED = 20 * 1024 ** 3       # proteção contra "zip bomb"
 UA = "DjorgeLocal/2 (Windows)"
@@ -152,6 +152,10 @@ def summarize(meta: dict, art: Path = None) -> dict:
     recipe = meta.get("recipe") or meta.get("dataset_version") or ""
     vocab = meta.get("vocab_size") or meta.get("vocab") or tiny.get("vocab") or mc.get("vocab") or mc.get("vocab_size")
     quant = meta.get("quantization") or meta.get("quant")
+    oq = (meta.get("onnx") or {}).get("quant") if isinstance(meta.get("onnx"), dict) else None
+    if not quant and oq:
+        from .otimizar import descrever_quant
+        quant = descrever_quant(oq)
     if not quant and art is not None:
         q = []
         if (art / "onnx" / "encoder.int8.onnx").is_file():
@@ -219,7 +223,8 @@ class ModelDownloader:
                "size_mb": size, "state": state, "progress": 1.0 if state == "instalado" else st["progress"],
                "bytes": st["bytes"], "total": st["total"], "error": st["error"],
                "source": read_source(self.cfg, self.name), "details": details, "loaded": loaded,
-               "formato": None, "motor": None, "mensagem": "", "otimizacao": None}
+               "formato": None, "motor": None, "mensagem": "", "otimizacao": None,
+               "quantizacao": "", "ms_medio": None, "cache": None, "motor_metricas": None}
         if art:
             from . import otimizar as O
             out["formato"] = "ONNX int8" if O.eh_pacote_onnx(art) else "PyTorch (formato de treino)"
@@ -227,6 +232,14 @@ class ModelDownloader:
                 out["motor"] = getattr(self.models, "engine", {}).get(self.name)
             except Exception:
                 pass
+            out["quantizacao"] = details.get("quantizacao") or ""
+            try:
+                mi = self.models.motor_info(self.name) if hasattr(self.models, "motor_info") else {}
+            except Exception:
+                mi = {}
+            out["ms_medio"] = mi.get("ms_por_pergunta_modelo") if mi else None
+            out["cache"] = mi.get("cache") if mi else None
+            out["motor_metricas"] = mi or None
             opt = O.OTIMIZADOR.info(art)
             if opt:
                 out["otimizacao"] = opt
@@ -298,6 +311,56 @@ class ModelDownloader:
                 self.models._maybe_optimize(self.name, art)
             else:
                 O.OTIMIZADOR.iniciar(art)
+        return self.info()
+
+    def instalar_de_arquivo(self, caminho_zip, fundo: bool = False) -> dict:
+        """Instala um pacote .zip já baixado pela pessoa (ex.: o pacote ONNX candidato do treino).
+        Valida (zip seguro, metadata/djorge.json legível e onnx/encoder.json com o arquivo do encoder presente),
+        extrai para a pasta de modelos (%LOCALAPPDATA%/Djorge/modelos/<nome>), grava o caminho na config e
+        carrega o modelo. fundo=True: roda numa thread (acompanhe por info()). Devolve info().
+        Levanta ValueError (síncrono) se o arquivo não for um pacote válido."""
+        zp = Path(caminho_zip)
+        if not zp.is_file() or not zipfile.is_zipfile(zp):
+            raise ValueError(f"não é um arquivo .zip: {zp}")
+        if self._thread is not None and self._thread.is_alive():
+            raise ValueError("já há uma instalação/baixa do modelo em andamento")
+        self._cancel.clear()
+
+        def run():
+            work = models_root() / f".{self.name}.arquivo"
+            try:
+                shutil.rmtree(work, ignore_errors=True)
+                work.mkdir(parents=True, exist_ok=True)
+                self._set(state="verificando", progress=0.1, error=None)
+                need = sum(i.file_size for i in zipfile.ZipFile(zp).infolist())
+                self._need_space(need)
+                safe_extract(zp, work / "x", self._cancel)
+                art = find_artifact(work / "x")
+                if art is None:
+                    raise ValueError("o arquivo não é um modelo DJORGE (falta metadata/djorge.json)")
+                json.load(open(art / "metadata" / "djorge.json", encoding="utf-8"))
+                from . import otimizar as O
+                if not O.eh_pacote_onnx(art) and not (art / "onnx" / "encoder.json").is_file():
+                    raise ValueError("o arquivo não traz o encoder ONNX (onnx/encoder.json + onnx/encoder.*.onnx)")
+                info = json.load(open(art / "onnx" / "encoder.json", encoding="utf-8"))
+                if not any((art / f).is_file() for f in (info.get("files") or {}).values()):
+                    raise ValueError("onnx/encoder.json aponta para um encoder que não está no arquivo")
+                self._set(progress=0.9)
+                self._install(art)
+                shutil.rmtree(work, ignore_errors=True)
+                self._set(state="instalado", progress=1.0, error=None)
+                self._load()
+            except Exception as e:
+                log.exception("instalar modelo de arquivo falhou")
+                shutil.rmtree(work, ignore_errors=True)
+                self._set(state="erro", error=str(e) or e.__class__.__name__)
+                if not fundo:
+                    raise
+        if fundo:
+            self._thread = threading.Thread(target=run, daemon=True, name="instalar-modelo-arquivo")
+            self._thread.start()
+        else:
+            run()
         return self.info()
 
     def wait(self, timeout=None):
