@@ -216,3 +216,16 @@ def test_dispositivo_opcional(srv, app, monkeypatch):
     out = {"reply": "Ok."}
     app.command._aviso_dispositivo(out, "baixa o modelo")
     assert "adie o download" in out["reply"]
+
+
+def test_catalogo_e_instalar_arquivo_rotas(srv):
+    st, r = srv("/api/modelos/catalogo")
+    assert st == 200 and isinstance(r["modelos"], list)
+    assert srv("/api/modelos/usar", {})[0] == 400
+    assert srv("/api/model/instalar_arquivo", {"caminho": ""})[0] == 400
+
+
+def test_toast_silencioso_no_inicio(monkeypatch):
+    from djorge_local import toasts
+    monkeypatch.setenv("DJORGE_INICIO_SILENCIOSO", "1")
+    assert toasts._silencioso()

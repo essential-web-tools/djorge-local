@@ -2580,7 +2580,9 @@ function openSettings(start = "geral") {
 async function setDesempenho(el) {
   el.innerHTML = `<div id="sd-dv"></div><div id="sd-mo"></div><h3>Leveza</h3><div id="sd-lv"></div><h3>API local</h3><div id="sd-api"></div>`;
   setModel($("#sd-mo", el)); setLeve($("#sd-lv", el)); setLocalApi($("#sd-api", el));
-  api("/api/dispositivo").then(d => { const b = $("#sd-dv", el); if (b && d && d.disponivel) b.innerHTML = `<p class="hint" style="margin-bottom:8px">${dispChip(d)}</p>`; }).catch(() => {});
+  Promise.all([api("/api/dispositivo").catch(() => null), api("/api/model/info").catch(() => null)]).then(([d, mi]) => { const b = $("#sd-dv", el); if (!b) return;
+    const ms = mi && mi.ms_medio != null ? `<span class="chip" data-tip="Tempo médio de cada decisão do modelo">${ico("clock", "xs")} ${Math.round(mi.ms_medio)} ms por decisão</span>` : "";
+    if ((d && d.disponivel) || ms) b.innerHTML = `<p class="row" style="gap:6px;margin-bottom:8px">${d ? dispChip(d) : ""}${ms}</p>`; });
 }
 const NP_CAMPO = {prazo: "o prazo", horario: "o horário", local: "o local", valor: "o valor", responsavel: "o responsável"};
 const NP_ORIG = {notificacao: "notificações", automacao: "automações", comando: "pedidos", "*": "tudo"};
@@ -2664,22 +2666,37 @@ async function setVoice(el) {
   const su = $("#v-setup", el); if (su) su.onclick = async () => { su.setAttribute("aria-busy", "true"); await tryApi("/api/voice/setup", {}); const t = setInterval(async () => { await loadVoice(); const s = (S.voice || {}).stt_setup || {};
     if (!el.isConnected || !s.state || /pronto|done|ok|erro|error|idle/.test(s.state)) { clearInterval(t); if (el.isConnected) setVoice(el); syncMic(); } else { const b = $(".pbar i", el); if (b) b.style.width = Math.round((s.progress || 0) * 100) + "%"; else setVoice(el); } }, 1000); };
 }
+const CAT_EST = {pronto: "pronto", instalado: "pronto", baixando: "baixando", erro: "erro", ausente: "não baixado", extraindo: "instalando"};
+async function drawCatalogo(box) {
+  if (!box) return; let ms;
+  try { ms = asList(await api("/api/modelos/catalogo"), "modelos"); } catch (e) { box.innerHTML = `<p class="hint">${esc(human(e))}</p>`; return; }
+  if (!box.isConnected) return;
+  box.innerHTML = ms.length ? ms.map(x => setRow(esc(x.nome || x.id) + (x.padrao ? ` <span class="chip">padrão</span>` : ""),
+    esc([CAT_EST[x.estado] || x.estado || "", x.estado === "baixando" && x.progresso != null ? Math.round(x.progresso * 100) + "%" : "", x.tamanho_mb ? mb(x.tamanho_mb) : "", x.erro || ""].filter(Boolean).join(" · ")),
+    `<div class="row" style="gap:6px">${x.em_uso ? `<span class="chip on">em uso</span>` : x.estado === "baixando" ? `<button class="btn sm" data-cat="cancelar" data-id="${esc(x.id)}">Cancelar</button>` : `<button class="btn sm" data-cat="usar" data-id="${esc(x.id)}">Usar</button>`}
+      ${x.padrao || x.em_uso ? "" : `<button class="iconbtn sm" data-cat="remover" data-id="${esc(x.id)}" aria-label="Remover" data-tip="Remover">${ico("trash", "sm")}</button>`}</div>`)).join("") : `<p class="hint">Só o modelo padrão por enquanto.</p>`;
+  $$("[data-cat]", box).forEach(b => b.onclick = async () => { b.setAttribute("aria-busy", "true");
+    if (await tryApi("/api/modelos/" + b.dataset.cat, {id: b.dataset.id})) { toast({usar: "Trocando de modelo…", remover: "Modelo removido", cancelar: "Download cancelado"}[b.dataset.cat]); pollModel(); }
+    drawCatalogo(box); });
+  if (ms.some(x => x.estado === "baixando")) setTimeout(() => drawCatalogo(box), 1500);
+}
 async function setModel(el) {
   const m = S.model || {}, s = modelUiState();
   el.innerHTML = `<p class="lead">O DOFL só decide (escolher, conferir, pontuar) — nunca inventa texto. Roda só neste computador.</p>
-    ${setRow("DOFL V2", {ausente: "Não instalado", baixando: `Baixando ${Math.round((m.progress || 0) * 100)}%`, pronto: "Instalado e carregado", carregando: "Carregando", verificando: "Verificando", erro: "Erro"}[s], `<div class="row" style="gap:6px"><button class="btn sm" id="mo-pick">Escolher modelo</button><button class="btn sm" id="mo-file">Instalar de um arquivo…</button><button class="btn sm" id="mo-open">Detalhes</button></div>`)}
-    <div id="mo-cat"></div>
+    ${setRow("DOFL V2", {ausente: "Não instalado", baixando: `Baixando ${Math.round((m.progress || 0) * 100)}%`, pronto: "Instalado e carregado", carregando: "Carregando", verificando: "Verificando", erro: "Erro"}[s], `<button class="btn sm" id="mo-open">Detalhes</button>`)}
+    <h3>Escolher modelo</h3><div id="mo-cat"><div class="sk"></div></div>
+    <div class="row" style="gap:6px;margin-top:8px"><button class="btn sm" id="mo-link">${ico("link", "sm")} Adicionar por link</button><button class="btn sm" id="mo-file">${ico("file", "sm")} Instalar de um arquivo…</button></div>
     <h3>Outros modelos</h3><div id="mo-list"><div class="sk"></div></div>`;
   $("#mo-open", el).onclick = openModel;
-  /* catálogo (agente MO): rotas preparadas; se ainda não existirem, avisa sem erro */
-  $("#mo-pick", el).onclick = async () => { const box = $("#mo-cat", el); box.innerHTML = `<div class="sk"></div>`;
-    let r = null; try { r = await api("/api/model/catalogo"); } catch (e) { box.innerHTML = `<p class="hint">A escolha de modelos chega na próxima atualização.</p>`; return; }
-    const ms = asList(r, "modelos", "catalogo", "items");
-    box.innerHTML = ms.length ? ms.map(x => setRow(esc(x.nome || x.name || x.id), esc([x.descricao || x.role || "", x.tamanho_mb ? mb(x.tamanho_mb) : ""].filter(Boolean).join(" · ")),
-      x.ativo || x.atual ? `<span class="chip on">em uso</span>` : `<button class="btn sm" data-esc="${esc(x.id || x.nome)}">${x.instalado === false ? "Baixar e usar" : "Usar"}</button>`)).join("") : `<p class="hint">Nenhum outro modelo no catálogo.</p>`;
-    $$("[data-esc]", box).forEach(b => b.onclick = async () => { b.setAttribute("aria-busy", "true"); if (await tryApi("/api/model/escolher", {id: b.dataset.esc})) { toast("Modelo escolhido"); pollModel(); setModel(el); } else b.removeAttribute("aria-busy"); }); };
-  $("#mo-file", el).onclick = () => askText("Instalar modelo de um arquivo", "Caminho do arquivo (.zip ou pasta do modelo)", "C:\\Users\\voce\\Downloads\\modelo.zip", async v => {
-    if (!v) return; try { await api("/api/model/instalar_arquivo", {caminho: v}); toast("Instalando o modelo…"); pollModel(); } catch (e) { toast(e && e.status === 404 ? "Instalar de arquivo chega na próxima atualização." : human(e), "warn"); } });
+  drawCatalogo($("#mo-cat", el));
+  $("#mo-link", el).onclick = () => askText("Adicionar modelo por link", "Link (https:, hf: ou gdrive:) ou pasta do modelo", "hf:usuario/modelo", async v => {
+    if (!v.trim()) return; if (await tryApi("/api/modelos/catalogo", {fonte: v.trim()})) { toast("Modelo adicionado"); drawCatalogo($("#mo-cat", el)); } });
+  $("#mo-file", el).onclick = async () => {
+    const instalar = async v => { if (!v) return; if (await tryApi("/api/model/instalar_arquivo", {caminho: v})) { toast("Instalando o modelo…"); pollModel(); drawCatalogo($("#mo-cat", el)); } };
+    const pw = window.pywebview && window.pywebview.api && window.pywebview.api.pick;   /* janela do app: seletor nativo */
+    if (pw) { try { const c = await window.pywebview.api.pick("file"); if (c) return instalar(c); return; } catch (e) {} }
+    askText("Instalar modelo de um arquivo", "Caminho do arquivo .zip do modelo", "C:\\Users\\voce\\Downloads\\modelo.zip", v => instalar(v.trim()));
+  };
   try { const r = await api("/api/models"); const ms = (r && r.models) || [];
     const arr = Array.isArray(ms) ? ms : Object.entries(ms).map(([k, v]) => ({name: k, ...v}));
     $("#mo-list", el).innerHTML = arr.length ? arr.map(x => setRow(esc(x.name), esc(x.role || x.path || ""), `<span class="chip ${x.loaded ? "on" : ""}">${x.loaded ? "carregado" : x.enabled === false ? "desligado" : "parado"}</span>

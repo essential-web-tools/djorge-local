@@ -917,6 +917,30 @@ def or_rotas(app, metodo: str, path: str, b: dict):
         cur[ch] = bool(b.get("ativo"))
         app.ui.set({"alertas_datas": cur})
         return 200, {"ok": True, "chave": ch, "ativo": cur[ch]}
+    if path.startswith("/api/modelos/") or path == "/api/model/instalar_arquivo":
+        from .model_download import Catalogo
+        cat = getattr(app, "_catalogo", None)
+        if cat is None:
+            cat = app._catalogo = Catalogo(app.cfg, app.models, save=app.save_config)
+        if metodo == "GET" and path == "/api/modelos/catalogo":
+            return 200, {"modelos": cat.listar()}
+        if metodo == "POST":
+            if path == "/api/modelos/catalogo":
+                if not str(b.get("fonte") or "").strip():
+                    raise ValueError("cole o link ou o caminho do modelo")
+                return 200, cat.adicionar(str(b["fonte"]).strip(), b.get("nome") or None)
+            if path in ("/api/modelos/usar", "/api/modelos/remover", "/api/modelos/cancelar"):
+                if not b.get("id"):
+                    raise ValueError("falta o id do modelo")
+                return 200, getattr(cat, path.rsplit("/", 1)[1])(b["id"])
+            if path == "/api/modelos/padrao":
+                return 200, cat.baixar_padrao()
+            if path == "/api/model/instalar_arquivo":
+                c = str(b.get("caminho") or "").strip().strip('"')
+                if not c:
+                    raise ValueError("escolha o arquivo .zip do modelo")
+                return 200, app.service("model").instalar_de_arquivo(c, fundo=True)
+        return None
     if metodo == "GET" and path == "/api/dispositivo":
         return 200, dispositivo(app)
     if metodo == "GET" and path == "/api/contexto":

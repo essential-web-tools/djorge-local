@@ -68,12 +68,25 @@ def _pywin32(titulo, msg) -> bool:
     return True
 
 
+def _silencioso() -> bool:
+    import os
+    if os.environ.get("DJORGE_INICIO_SILENCIOSO"):
+        return True
+    try:
+        from .leveza import inicio_silencioso
+        return bool(inicio_silencioso())
+    except Exception:
+        return False
+
+
 def mostrar(titulo: str, msg: str = "", url: str = None) -> bool:
     """Mostra um toast. Devolve True se algum mecanismo do Windows mostrou; False (sem erro) caso contrário."""
     titulo, msg = " ".join(str(titulo or "Djorge").split())[:120], str(msg or "")[:400]
     with _lock:
         ULTIMOS.append({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "titulo": titulo, "msg": msg, "url": url})
     if not ENABLED or platform.system() != "Windows":
+        return False
+    if _silencioso():                                    # início com o Windows: nada de toast até abrir o app
         return False
     for fn in (lambda: _winotify(titulo, msg, url), lambda: _pywin32(titulo, msg)):
         try:
